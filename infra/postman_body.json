@@ -1,0 +1,12 @@
+{
+  "output_type": "any",
+  "input_type": "text",
+  "input_value": "",
+  "tweaks": {
+    "OpenMatchingSession-ebece": {
+      "file_id": "825fc484",
+      "parquet_path": "s3://synchrono/curated/xxx.parquet",
+      "grade": 4
+    }
+  }
+}

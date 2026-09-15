@@ -1,0 +1,109 @@
+# SeaweedFS untuk service matching Synchrono.
+#
+# Mode `server` menjalankan master + volume + filer + S3 gateway sekaligus dalam
+# satu container. Cukup untuk development dan untuk service ini; kalau nanti naik
+# ke produksi, komponen-komponennya bisa dipisah.
+#
+# Port:
+#   8333 -> S3 API   <- ini yang dipakai DuckDB httpfs
+#   9333 -> master UI
+#   8888 -> filer
+#
+# Kredensial S3 didefinisikan di s3-config.json (accessKey: synchrono).
+
+services:
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    container_name: synchrono-seaweedfs
+    command: >
+      server
+      -dir=/data
+      -s3
+      -s3.port=8333
+      -s3.config=/etc/seaweedfs/s3-config.json
+      -master.volumeSizeLimitMB=2048
+      -volume.max=100
+    ports:
+      - "8333:8333"
+      - "9333:9333"
+      - "8888:8888"
+    volumes:
+      - seaweed-data:/data
+      - ./s3-config.json:/etc/seaweedfs/s3-config.json:ro
+    restart: unless-stopped
+    healthcheck:
+      # Dua hal yang sempat salah di sini, keduanya sudah diuji:
+      #
+      #  1. `localhost` TIDAK bisa dipakai — SeaweedFS bind ke IP container
+      #     (mis. 172.20.0.2), bukan ke loopback. Pakai nama service-nya.
+      #  2. Endpoint S3 (:8333) membalas 403 untuk request anonim, dan wget
+      #     menganggap itu kegagalan. Pakai status master (:9333) yang balas 200.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://seaweedfs:9333/cluster/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── Langflow: inilah "backend"-nya service matching ────────────────────
+  #
+  # Backend Synchrono memanggil flow di sini lewat API. Node-node matching
+  # dimuat dari folder components/ yang di-mount.
+  #
+  # Dijalankan di container, bukan di venv host, karena di mesin Windows ini
+  # DLL `_xxhash` diblokir Application Control policy sehingga `import langflow`
+  # gagal. Di container kebijakan itu tidak berlaku.
+  langflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.langflow
+    container_name: synchrono-langflow
+    ports:
+      - "7860:7860"
+    environment:
+      # Dari sini Langflow menemukan ketujuh node matching.
+      LANGFLOW_COMPONENTS_PATH: /components
+
+      # WAJIB di Langflow 1.12.x — tanpa ini container gagal start dengan
+      # "ValueError: Username and password must be set", dan password default
+      # lama juga ditolak. Ini kredensial DEVELOPMENT; ganti sebelum dipakai
+      # di luar mesin lokal.
+      LANGFLOW_SUPERUSER: admin
+      LANGFLOW_SUPERUSER_PASSWORD: synchrono123
+      LANGFLOW_AUTO_LOGIN: "false"
+
+      # Flow yang dibuat tersimpan di sini (volume), bukan di lapisan container,
+      # supaya tidak hilang saat image di-rebuild.
+      LANGFLOW_CONFIG_DIR: /app/langflow-data
+
+      # `_shared.py` DIPISAH ke /lib, bukan di /components. Langflow memindai
+      # setiap .py di LANGFLOW_COMPONENTS_PATH dan menuntut tiap file berisi
+      # subclass Component — file helper akan gagal dimuat kalau ditaruh di sana.
+      PYTHONPATH: /lib
+
+      # PostgreSQL berjalan di HOST (DBngin), bukan di Docker — karena itu
+      # host.docker.internal, bukan localhost.
+      PG_DSN: "host=host.docker.internal port=5432 dbname=synchrono user=postgres"
+
+      # SeaweedFS satu jaringan compose, jadi cukup nama service-nya.
+      S3_ENDPOINT: "seaweedfs:8333"
+      S3_ACCESS_KEY: synchrono
+      S3_SECRET_KEY: synchrono123
+      S3_USE_SSL: "false"
+    volumes:
+      - ../components:/components:ro
+      - ../lib:/lib:ro
+      - langflow-data:/app/langflow-data
+    # WAJIB dioverride: entrypoint bawaan image mengikat ke 127.0.0.1, sehingga
+    # port mapping Docker tidak bisa menjangkaunya (dari dalam container
+    # /health_check balas 200, dari host tidak ada respons sama sekali).
+    # Env LANGFLOW_HOST tidak dihormati — harus lewat argumen CLI.
+    command: ["langflow", "run", "--host", "0.0.0.0", "--port", "7860"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - seaweedfs
+    restart: unless-stopped
+
+volumes:
+  seaweed-data:
+  langflow-data:

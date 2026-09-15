@@ -1,0 +1,25 @@
+# Langflow + dependency service matching.
+#
+# Image resmi Langflow tidak membawa duckdb, sementara SELURUH pipeline matching
+# berjalan di atasnya. Hanya satu paket yang perlu ditambahkan — tidak ada
+# Polars, rapidfuzz, pymysql, maupun client S3, karena DuckDB sudah menangani
+# parquet di S3, koneksi PostgreSQL, dan jaro_winkler_similarity sekaligus.
+#
+# Menjalankan Langflow di container juga menyelesaikan masalah nyata di mesin
+# Windows ini: DLL `_xxhash` diblokir Application Control policy sehingga
+# `import langflow` gagal di venv host. Di dalam container, kebijakan itu tidak
+# berlaku.
+
+FROM langflowai/langflow:latest
+
+USER root
+
+# Versi dipatok agar hasil matching tidak bergeser diam-diam saat image di-rebuild.
+RUN pip install --no-cache-dir duckdb==1.5.5 python-dotenv==1.2.3
+
+# Extension DuckDB (httpfs untuk S3, postgres untuk PostgreSQL) diunduh saat
+# pertama dipakai. Diunduh di sini supaya container tidak perlu akses internet
+# saat runtime dan eksekusi flow pertama tidak tertunda.
+RUN python -c "import duckdb; c=duckdb.connect(); [c.execute(f'INSTALL {e}') for e in ('httpfs','postgres')]"
+
+USER user

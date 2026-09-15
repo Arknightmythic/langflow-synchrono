@@ -1,0 +1,4 @@
+# .env disalin dari data-matching/.env dan berisi kredensial StarRocks + MinIO
+.env
+__pycache__/
+*.pyc
