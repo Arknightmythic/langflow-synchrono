@@ -36,45 +36,24 @@ import re
 import time
 
 from _config import baca_kriteria
+from _nama import sql_ada_gelar, sql_ada_patronimik, sql_bersih
 from _normalisasi import ALIAS, bangun_view, petakan_kolom  # noqa: F401
+import _wilayah
 # Dipakai aturan grade E: nama + tanggal lahir + wilayah. Termasuk kolom
 # `wilayah` gabungan, bukan hanya pecahan per tingkat.
 from _normalisasi import ELEMEN_WILAYAH as WILAYAH
 from _shared import GENDER_L, GENDER_P, buka_koneksi
-
-# ── Kode provinsi resmi (38 provinsi) ──────────────────────────────────────
-# Dua digit pertama NIK. Di luar daftar ini = NIK tidak tepercaya.
-#
-# PERHATIKAN BLOK PAPUA. Kodenya TIDAK berurutan, dan ini sumber kesalahan yang
-# mudah terjadi: 93 tidak pernah dipakai sama sekali, sedangkan pemekaran
-# 2022-2023 menambahkan 92 (Papua Barat Daya), 95 (Papua Selatan), 96 (Papua
-# Tengah), dan 97 (Papua Pegunungan) di samping 91 dan 94 yang lama.
-#
-# Menebak blok ini sebagai 91-96 membuat seluruh penduduk Papua Pegunungan
-# dinyatakan ber-NIK tidak sah — terbukti pada berkas produksi d88150c5, yang
-# 5.246 barisnya ditolak hanya karena alasan ini.
-PROVINSI_VALID = [
-    "11", "12", "13", "14", "15", "16", "17", "18", "19",  # Sumatera
-    "21",                                                   # Kepulauan Riau
-    "31", "32", "33", "34", "35", "36",                     # Jawa
-    "51", "52", "53",                                       # Bali & Nusa Tenggara
-    "61", "62", "63", "64", "65",                           # Kalimantan
-    "71", "72", "73", "74", "75", "76",                     # Sulawesi
-    "81", "82",                                             # Maluku
-    "91", "92", "94", "95", "96", "97",                     # Papua (93 TIDAK ADA)
-]
-
-assert len(PROVINSI_VALID) == len(set(PROVINSI_VALID)) == 38, (
-    "Daftar provinsi harus tepat 38 kode unik"
-)
 
 # Urutan ini dipakai untuk `elementDetails.columns` pada muatan callback.
 ENAM_ELEMEN = ["nik", "nama", "tempat_lahir", "tanggal_lahir",
                "jenis_kelamin", "nama_ibu"]
 
 # Kolom yang ditambahkan mesin ini ke enriched parquet (spesifikasi bagian 3.2).
+# Delapan pertama sesuai spesifikasi bagian 3.2. `nama_clean` adalah tambahan:
+# nama tanpa gelar dan tanpa patronimik, siap dipakai matching tanpa perlu
+# dibersihkan ulang di sana.
 KOLOM_DERIVASI = ["nik_clean", "nik_prov", "nik_hari", "nik_bulan", "nik_tahun",
-                  "nik_trusted", "is_anomaly", "anomaly_notes"]
+                  "nik_trusted", "is_anomaly", "anomaly_notes", "nama_clean"]
 
 HURUF = {1: "A", 2: "B", 3: "C", 4: "D", 5: "E", 6: "F"}
 
@@ -134,8 +113,13 @@ def buka(job: dict) -> dict:
     print(f"[G1] sumber : {sumber}")
     print(f"[G1] tujuan : s3://{bucket}/{tujuan}")
 
+    # Rujukan wilayah dimuat sekali per sesi, dari S3 — bukan dari daftar di
+    # dalam kode. Berkasnya bisa disunting aplikasi Synchrono.
+    info_wilayah = _wilayah.muat(con)
+
     return {
         "con": con,
+        "wilayah": info_wilayah,
         "file_id": file_id,
         "bucket": bucket,
         "sumber": sumber,
@@ -211,7 +195,7 @@ def muat_raw(s: dict) -> dict:
 
 # ── Tahap 3 & 4: bersihkan NIK, tandai anomali ─────────────────────────────
 
-def _sql_nik(kol_nik: str | None) -> dict[str, str]:
+def _sql_nik(kol_nik: str | None, wilayah_siap: bool = True) -> dict[str, str]:
     """
     Ekspresi pembersihan NIK.
 
@@ -243,8 +227,10 @@ def _sql_nik(kol_nik: str | None) -> dict[str, str]:
             "tahun": "CAST(NULL AS INTEGER)",
             "hari_mentah": "CAST(NULL AS INTEGER)",
             "jk": "CAST(NULL AS VARCHAR)",
+            "kec": "CAST(NULL AS VARCHAR)",
             "len_ok": "FALSE",
             "prov_ok": "FALSE",
+            "kec_ok": "FALSE",
             "excel": "FALSE",
         }
 
@@ -265,8 +251,18 @@ def _sql_nik(kol_nik: str | None) -> dict[str, str]:
         "excel": excel,
         "len_ok": "length(__nik_clean) = 16",
         "prov": "substr(__nik_clean, 1, 2)",
-        "prov_ok": "substr(__nik_clean, 1, 2) IN (" +
-                   ", ".join(f"'{p}'" for p in PROVINSI_VALID) + ")",
+        "kec": "substr(__nik_clean, 1, 6)",
+        # Kedua pemeriksaan membaca tabel rujukan yang dimuat dari S3, bukan
+        # daftar di dalam kode. Dilaporkan TERPISAH: yang 2 digit sudah ada di
+        # spesifikasi dan dipakai portal, yang 6 digit jauh lebih tajam.
+        # Kalau rujukan tidak terbaca, pemeriksaan wilayah DIMATIKAN — bukan
+        # dianggap gagal. Tabel rujukan yang kosong membuat setiap NIK jatuh
+        # tidak sah, dan seluruh berkas akan anjlok gradenya hanya karena VPN
+        # sedang putus.
+        "prov_ok": (_wilayah.sql_prov_sah("__nik_clean") if wilayah_siap
+                    else "TRUE"),
+        "kec_ok": (_wilayah.sql_kec_sah("__nik_clean") if wilayah_siap
+                   else "TRUE"),
         "hari_mentah": hari_mentah,
         "hari": "CASE WHEN __nik_hari_mentah > 40 THEN __nik_hari_mentah - 40 "
                 "ELSE __nik_hari_mentah END",
@@ -274,6 +270,22 @@ def _sql_nik(kol_nik: str | None) -> dict[str, str]:
         "tahun": "TRY_CAST(substr(__nik_clean, 11, 2) AS INTEGER)",
         "jk": "CASE WHEN __nik_hari_mentah > 40 THEN 'p' ELSE 'l' END",
     }
+
+
+def _sql_nama(kol_nama: str | None) -> dict[str, str]:
+    """
+    Pembersihan nama: gelar depan/belakang dan patronimik bin/binti.
+
+    Berkas tanpa kolom nama tetap mendapat ketiga ekspresi ini — bernilai NULL
+    dan FALSE — supaya tahap berikutnya tidak perlu bercabang.
+    """
+    if not kol_nama:
+        return {"bersih": "CAST(NULL AS VARCHAR)",
+                "gelar": "FALSE", "bin": "FALSE"}
+    k = _kutip(kol_nama)
+    return {"bersih": sql_bersih(k),
+            "gelar": sql_ada_gelar(k),
+            "bin": sql_ada_patronimik(k)}
 
 
 def _sql_gender(kol: str | None) -> str:
@@ -294,7 +306,9 @@ def bersihkan_dan_tandai(s: dict) -> dict:
     dan window function akan dihitung ulang tiap kali.
     """
     con, peta = s["con"], s["peta"]
-    nik = _sql_nik(peta.get("nik"))
+    siap = (s.get("wilayah") or {}).get("tersedia", False)
+    nik = _sql_nik(peta.get("nik"), siap)
+    nama = _sql_nama(peta.get("nama"))
     kol_tgl = peta.get("tanggal_lahir")
 
     # Kaskade enam format tidak lagi diperlukan di sini: tahap G2 sudah
@@ -311,7 +325,10 @@ def bersihkan_dan_tandai(s: dict) -> dict:
                {nik['clean']}       AS __nik_clean,
                {nik['excel']}       AS __nik_excel,
                CAST({tgl} AS DATE)  AS __tgl,
-               {jk}                 AS __jk
+               {jk}                 AS __jk,
+               {nama['bersih']}     AS __nama_clean,
+               {nama['gelar']}      AS __nama_gelar,
+               {nama['bin']}        AS __nama_bin
           FROM norm_df r
     """)
 
@@ -322,6 +339,8 @@ def bersihkan_dan_tandai(s: dict) -> dict:
                {nik['len_ok']}      AS __nik_len_ok,
                {nik['prov']}        AS __nik_prov,
                {nik['prov_ok']}     AS __nik_prov_ok,
+               {nik['kec']}         AS __nik_kec,
+               {nik['kec_ok']}      AS __nik_kec_ok,
                {nik['hari_mentah']} AS __nik_hari_mentah,
                {nik['bulan']}       AS __nik_bulan,
                {nik['tahun']}       AS __nik_tahun
@@ -365,7 +384,9 @@ def bersihkan_dan_tandai(s: dict) -> dict:
         for e in elemen_hadir
     ] or ["NULL"]
 
-    catatan = _sql_catatan(bool(peta.get("nik")), kol_tgl, peta.get("jenis_kelamin"))
+    catatan = _sql_catatan(bool(peta.get("nik")), kol_tgl,
+                           peta.get("jenis_kelamin"),
+                           bool(peta.get("nama")))
 
     # Hanya SATU tabel yang dimaterialkan, dan di sinilah window function
     # duplikasi ikut terhitung sekali untuk selamanya.
@@ -387,18 +408,23 @@ def bersihkan_dan_tandai(s: dict) -> dict:
     # DuckDB sebagai ketergantungan melingkar. Kolom yang ditambahkan di sini
     # murni turunan baris — tidak ada pemindaian ulang yang mahal.
     ada_nik = "TRUE" if peta.get("nik") else "FALSE"
+    # Kode 6 digit ikut menentukan kepercayaan HANYA kalau ditegakkan.
+    kec_wajib = "__nik_kec_ok" if _wilayah.KECAMATAN_TEGAS else "TRUE"
     con.execute(f"""
         CREATE OR REPLACE VIEW anomali_df AS
         SELECT *,
                __trusted                                     AS nik_trusted,
                ((NOT __trusted AND {ada_nik})
-                OR length(__elemen_kosong) > 0)              AS is_anomaly,
+                OR length(__elemen_kosong) > 0
+                OR __nama_gelar OR __nama_bin)               AS is_anomaly,
+               __nama_clean                                  AS nama_clean,
                __catatan                                     AS anomaly_notes
           FROM (
             SELECT *,
                    ({ada_nik}
                     AND __nik_len_ok
                     AND __nik_prov_ok
+                    AND {kec_wajib}
                     AND NOT __nik_excel
                     AND NOT COALESCE(__nik_tgl_ngawur, TRUE)
                     AND NOT __beda_tgl
@@ -415,7 +441,8 @@ def bersihkan_dan_tandai(s: dict) -> dict:
     return {**s, "anomaly_count": n_anomali}
 
 
-def _sql_catatan(ada_nik: bool, kol_tgl: str | None, kol_jk: str | None) -> str:
+def _sql_catatan(ada_nik: bool, kol_tgl: str | None, kol_jk: str | None,
+                 ada_nama: bool = False) -> str:
     """Keterangan anomali per baris, digabung dengan '; '."""
     potong = []
 
@@ -429,6 +456,21 @@ def _sql_catatan(ada_nik: bool, kol_tgl: str | None, kol_jk: str | None) -> str:
 
             "CASE WHEN __nik_len_ok AND NOT __nik_prov_ok THEN "
             "'Kode provinsi NIK tidak dikenali: ' || __nik_prov END",
+
+        ]
+
+        # Hanya dicatat saat ditegakkan. Kalau tidak, seluruh berkas dummy akan
+        # penuh catatan untuk sesuatu yang sengaja tidak memengaruhi apa pun —
+        # dan `anomaly_notes` harus sejalan dengan `is_anomaly`.
+        if _wilayah.KECAMATAN_TEGAS:
+            potong.append(
+                # Diperiksa hanya kalau provinsinya sudah benar, supaya baris
+                # yang sama tidak dilaporkan dua kali untuk sebab yang sama.
+                "CASE WHEN __nik_len_ok AND __nik_prov_ok AND NOT __nik_kec_ok "
+                "THEN 'Kode wilayah 6 digit NIK tidak dikenali: ' || __nik_kec END"
+            )
+
+        potong += [
 
             "CASE WHEN __nik_len_ok AND __nik_tgl_ngawur THEN "
             "'Digit tanggal lahir pada NIK di luar rentang wajar' END",
@@ -452,6 +494,14 @@ def _sql_catatan(ada_nik: bool, kol_tgl: str | None, kol_jk: str | None) -> str:
             "ELSE 'pria' END || ' (' || CAST(__nik_hari_mentah AS VARCHAR) || "
             "'), namun kolom jenis kelamin terisi ' || upper(__jk) END"
         )
+
+    if ada_nama:
+        potong += [
+            "CASE WHEN __nama_gelar THEN 'Nama memuat gelar akademik atau "
+            "sebutan kehormatan; dibersihkan ke kolom nama_clean' END",
+            "CASE WHEN __nama_bin THEN 'Nama memuat patronimik bin/binti; "
+            "dibersihkan ke kolom nama_clean' END",
+        ]
 
     potong.append(
         "CASE WHEN length(__elemen_kosong) > 0 THEN 'Elemen kosong: ' || "
@@ -478,6 +528,9 @@ def skor_dan_grade(s: dict) -> dict:
         "count(*) FILTER (WHERE __beda_tgl)                        AS beda_tgl",
         "count(*) FILTER (WHERE __beda_jk)                         AS beda_jk",
         "count(*) FILTER (WHERE __nik_len_ok AND NOT __nik_prov_ok) AS prov_salah",
+        "count(*) FILTER (WHERE __nik_len_ok AND NOT __nik_kec_ok)  AS kec_salah",
+        "count(*) FILTER (WHERE __nama_gelar)                       AS nama_gelar",
+        "count(*) FILTER (WHERE __nama_bin)                         AS nama_bin",
         "count(*) FILTER (WHERE __nik_excel)                       AS excel",
         "count(DISTINCT __nik_clean) FILTER (WHERE __nik_dobel)    AS grup_dobel",
         "count(*) FILTER (WHERE is_anomaly)                        AS anomali",
@@ -680,6 +733,7 @@ def tulis_enriched(s: dict) -> dict:
         "nik_trusted",
         "is_anomaly",
         "anomaly_notes",
+        "nama_clean",
     ]
 
     con.execute(f"CREATE OR REPLACE VIEW enriched_df AS "
@@ -796,6 +850,17 @@ def susun_hasil(s: dict) -> dict:
             "nikDobMismatchCount": m["beda_tgl"],
             "nikGenderMismatchCount": m["beda_jk"],
             "nikProvinceInvalidCount": m["prov_salah"],
+            # TAMBAHAN di luar spesifikasi bagian 4.1. `nikProvinceInvalidCount`
+            # SENGAJA dipertahankan — portal sudah memakainya — dan yang di
+            # bawah ini melengkapinya, bukan menggantikannya.
+            "nikKecamatanInvalidCount": m["kec_salah"],
+            "nameWithTitleCount": m["nama_gelar"],
+            "nameWithPatronymCount": m["nama_bin"],
+        },
+        "referenceData": {
+            "wilayahSource": (s.get("wilayah") or {}).get("sumber"),
+            "wilayahAvailable": (s.get("wilayah") or {}).get("tersedia"),
+            "wilayahKecamatanCount": (s.get("wilayah") or {}).get("kecamatan"),
         },
         "elementDetails": {
             # Kolom SESUDAH normalisasi — inilah yang ada di enriched.parquet.

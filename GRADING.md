@@ -208,7 +208,8 @@ dipetakan ke elemen mana, dan mana yang `null`.
 | Yang diperiksa | Jadi metrik |
 |---|---|
 | Panjang tepat 16 digit | — |
-| Dua digit pertama termasuk 38 kode provinsi | `nikProvinceInvalidCount` |
+| Dua digit pertama termasuk kode provinsi yang sah | `nikProvinceInvalidCount` |
+| **Enam digit pertama termasuk kode kecamatan yang sah** | `nikKecamatanInvalidCount` |
 | Digit 7–8 (hari, +40 bila perempuan) cocok tanggal lahir | `nikDobMismatchCount` |
 | Digit 7–8 menyiratkan jenis kelamin yang sama | `nikGenderMismatchCount` |
 | Tidak kembar di dalam berkas | `duplicateNikCount`, `duplicateNikGroupsCount` |
@@ -216,6 +217,27 @@ dipetakan ke elemen mana, dan mana yang `null`.
 Satu baris bisa kena lebih dari satu, jadi **jumlah metrik ini wajar melebihi
 `totalAnomalies`**. Contohnya baris ber-NIK duplikat yang NIK-nya juga tidak
 cocok dengan tanggal lahirnya.
+
+### Pembersihan nama: gelar dan bin/binti
+
+    "Prof. Manah Salahudin Binti Raina Nuraini, M.Kom."  ->  "manah salahudin"
+
+Tiga bagian dibuang, urutannya penting: gelar belakang dulu (koma menandai
+batasnya), lalu gelar depan, lalu patronimik. Hasilnya masuk kolom `nama_clean`.
+
+Matching mencocokkan nama dengan Jaro-Winkler terhadap master yang menyimpan
+nama polos. Gelar dan patronimik menggeser skor kemiripan tanpa ada hubungannya
+dengan identitas orangnya.
+
+Dua metrik baru melaporkannya: `nameWithTitleCount` dan
+`nameWithPatronymCount`. Diuji pada berkas produksi `045ddc04` — 47.460 nama
+bergelar dan 71.153 nama ber-patronimik dari 200.000 baris.
+
+**Baris yang namanya dibersihkan DITANDAI anomali**, sehingga `anomalyCount`
+pada berkas semacam itu melonjak. Grade-nya TIDAK berubah: grade ditentukan
+kelengkapan dan mutu NIK, bukan kerapian nama. Berkas bisa saja grade A dengan
+ribuan anomali nama — itu artinya datanya lengkap dan NIK-nya benar, hanya
+nama-namanya perlu dibersihkan, dan itu sudah dilakukan.
 
 ### Dua bentuk NIK rusak dari spreadsheet
 
@@ -293,17 +315,60 @@ Itu perbedaan yang perlu kamu putuskan: berkas yang dulu selalu butuh pemetaan
 kolom kustom kini bisa langsung masuk matching. Kalau perilaku lama yang
 diinginkan, persempit `ALIAS` di `lib/_grading.py`.
 
-### Kode provinsi Papua tidak berurutan
+### Rujukan wilayah dibaca dari S3, bukan dari kode
 
-Blok Papua **bukan** 91–96. Kode 93 tidak pernah dipakai, sementara pemekaran
-2022–2023 menambahkan 92 (Papua Barat Daya), 95 (Papua Selatan), 96 (Papua
-Tengah), dan 97 (Papua Pegunungan) di samping 91 dan 94 yang lama.
+Daftar kode wilayah **tidak lagi ditanam di dalam kode**. Sumbernya:
 
-Menebaknya sebagai rentang berurutan membuat **seluruh penduduk Papua
-Pegunungan dinyatakan ber-NIK tidak sah**. Ini sempat terjadi dan tertangkap
-saat menilai berkas produksi `d88150c5`: 5.246 barisnya ditolak semata karena
-berkode 97, dan berkas yang seharusnya grade A jatuh ke B. Ada `assert` di
-`lib/_grading.py` yang menjaga daftarnya tetap 38 kode unik.
+```
+s3://syncrono-master/wilayah/master_wilayah_nik.parquet
+7.265 kecamatan, 38 provinsi
+```
+
+Berkas itu bisa disunting aplikasi Synchrono, jadi dialah sumber yang
+sesungguhnya. Sebelumnya ada daftar 38 kode provinsi yang ditulis di
+`lib/_grading.py` DAN disalin lagi di `lib/_normalisasi.py` — dua salinan yang
+bisa menyimpang. Keduanya sudah dihapus.
+
+Kalau berkasnya tidak terjangkau, pemeriksaan wilayah **dimatikan** dan grading
+tetap berjalan. Tabel rujukan yang kosong akan membuat setiap NIK jatuh tidak
+sah, dan itu jauh lebih merusak daripada melewatkan satu pemeriksaan. Keadaannya
+dilaporkan di `referenceData.wilayahAvailable`.
+
+### Pemeriksaan 6 digit: dilaporkan, belum ditegakkan
+
+`nikKecamatanInvalidCount` selalu dihitung, tapi kode yang tidak dikenal
+**tidak** membuat NIK jadi tidak tepercaya — bawaannya begitu, dan angkanya
+yang menjelaskan kenapa:
+
+| Berkas produksi `d88150c5` | |
+|---|---|
+| NIK berkode provinsi sah | 194.754 (97,4%) |
+| NIK berkode 6 digit sah | **23.190 (11,6%)** |
+
+Digit kabupaten dan kecamatan pada data dummy memang dikarang. Menegakkannya
+sekarang menjatuhkan berkas itu dari grade A ke E dengan 176.810 anomali.
+
+Pada data Dukcapil sungguhan kode itu semestinya sah. Nyalakan dengan
+`WILAYAH_KECAMATAN_TEGAS=1` begitu data aslinya masuk.
+
+### Penomoran Papua: ikuti rujukan, bukan ingatan
+
+Ada **dua skema penomoran** provinsi Papua yang beredar, dan memilih yang salah
+menyebabkan seluruh penduduk satu provinsi dinyatakan ber-NIK palsu.
+
+Rujukan di S3 memakai skema **Kemendagri**, berurutan:
+
+```
+91 Papua            93 Papua Selatan      95 Papua Pegunungan
+92 Papua Barat      94 Papua Tengah       96 Papua Barat Daya
+```
+
+Daftar tertanam yang lama memakai skema **BPS** (`91, 92, 94, 95, 96, 97`) —
+salah untuk sistem ini. Data dummy juga memakai 97 untuk Papua Pegunungan,
+sehingga 5.246 baris `d88150c5` kini tertolak dan berkasnya turun dari A ke B.
+Itu perilaku yang benar: rujukanlah yang berwenang, bukan tebakan.
+
+Pelajarannya sederhana — jangan menyalin daftar wilayah ke dalam kode.
 
 ### Dua perbedaan lain yang disengaja dari GraderService lama
 
@@ -383,6 +448,10 @@ spesifikasi bagian 3.2:
 | `nik_trusted` | BOOLEAN |
 | `is_anomaly` | BOOLEAN |
 | `anomaly_notes` | VARCHAR — kosong bila baris bersih |
+| `nama_clean` | VARCHAR — nama tanpa gelar dan tanpa patronimik |
+
+`nama_clean` adalah kolom ke-9, di luar spesifikasi bagian 3.2. Matching
+memakainya langsung sehingga tidak perlu membersihkan nama ulang di sana.
 
 Contoh `anomaly_notes` sungguhan dari data uji:
 

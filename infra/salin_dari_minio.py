@@ -5,9 +5,28 @@ DuckDB menyambung ke KEDUA S3 sekaligus lewat secret ber-SCOPE, jadi
 penyalinannya satu statement COPY tanpa file perantara di disk.
 """
 import os, sys, time, duckdb
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv(r"d:\ISGS\PROJECT\synchrono\data-matching\.env")
+# .env dicari RELATIF terhadap berkas ini, bukan lewat path absolut.
+#
+# Sebelumnya di sini ada path mutlak ke mesin tertentu, dan itu sudah dua kali
+# jadi masalah: berkasnya ikut berpindah tangan lalu berhenti jalan di mesin
+# orang lain. Urutannya: variabel ENV_FILE kalau disetel, lalu .env di folder
+# repo ini, lalu .env milik data-matching yang bersebelahan.
+AKAR = Path(__file__).resolve().parents[1]
+for _kandidat in (
+    Path(os.getenv("ENV_FILE", "")) if os.getenv("ENV_FILE") else None,
+    AKAR / ".env",
+    AKAR.parent / "data-matching" / ".env",
+):
+    if _kandidat and _kandidat.is_file():
+        load_dotenv(_kandidat)
+        print(f"env dibaca dari: {_kandidat}")
+        break
+else:
+    sys.exit(f"Tidak menemukan .env. Cari di {AKAR / '.env'} "
+             f"atau setel ENV_FILE.")
 
 SUMBER = sys.argv[1] if len(sys.argv) > 1 else sys.exit("pakai: salin_dari_minio.py <key-di-minio>")
 BUCKET_LAMA = os.getenv("RAW_BUCKET_NAME", "raw")

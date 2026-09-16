@@ -102,6 +102,23 @@ services:
       # ini menaruh pustakanya di /usr/lib64.
       PYTHONPATH: /synchrono/lib
 
+      # ── Rujukan wilayah NIK ────────────────────────────────────────────
+      #
+      # Daftar kode wilayah TIDAK lagi ditanam di kode. Berkas ini bisa
+      # disunting aplikasi Synchrono, jadi dialah sumber yang sesungguhnya.
+      #
+      # Kredensialnya terpisah karena berkas rujukan ada di SeaweedFS SERVER,
+      # sedangkan berkas unggahan (saat pengembangan) ada di SeaweedFS lokal.
+      # Secret-nya ber-SCOPE, jadi keduanya bisa dipakai bersamaan.
+      #
+      # Kalau tidak terjangkau, pemeriksaan wilayah DIMATIKAN dan grading tetap
+      # jalan — tabel rujukan yang kosong akan membuat setiap NIK jatuh tidak
+      # sah, dan itu jauh lebih merusak daripada melewatkan satu pemeriksaan.
+      WILAYAH_PARQUET: "s3://syncrono-master/wilayah/master_wilayah_nik.parquet"
+      WILAYAH_S3_ENDPOINT: "http://172.16.12.98:8333"
+      WILAYAH_S3_KEY: "ADMIN"
+      WILAYAH_S3_SECRET: "Password1234"
+
       # ── Grading ────────────────────────────────────────────────────────
       # Berapa job grading boleh jalan bersamaan dalam satu container. Tiap job
       # memegang koneksi DuckDB sendiri; terlalu banyak = rebutan memori.

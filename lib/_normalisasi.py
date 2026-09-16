@@ -97,12 +97,9 @@ AMBANG_MIRIP = 85
 
 N_SAMPEL = 300
 
-PROVINSI_VALID = {
-    "11", "12", "13", "14", "15", "16", "17", "18", "19", "21",
-    "31", "32", "33", "34", "35", "36", "51", "52", "53",
-    "61", "62", "63", "64", "65", "71", "72", "73", "74", "75", "76",
-    "81", "82", "91", "92", "94", "95", "96", "97",
-}
+# Kode provinsi TIDAK lagi ditulis di sini. Diambil dari tabel rujukan yang
+# dimuat `_wilayah.muat()` dari S3 — satu sumber untuk seluruh sistem, dan bisa
+# disunting aplikasi Synchrono tanpa menyentuh kode.
 
 STATUS_HIDUP = {"hidup", "mati", "meninggal", "h", "m", "wafat", "almarhum"}
 
@@ -160,8 +157,15 @@ def _lapis_mirip(kolom: list[str], peta: dict) -> tuple[dict, list]:
 
 # ── Lapis 3: tanda tangan nilai ────────────────────────────────────────────
 
-def _tanda_tangan(nilai: list) -> str | None:
-    """Tebak elemen dari ISI kolom. Header diabaikan sepenuhnya."""
+def _tanda_tangan(nilai: list, prov_sah: set[str] | None = None) -> str | None:
+    """
+    Tebak elemen dari ISI kolom. Header diabaikan sepenuhnya.
+
+    `prov_sah` kosong berarti rujukan wilayah tidak terbaca; syarat kode
+    provinsi lalu DILEWATI, dan pengenalan NIK jatuh ke panjang 16 digit saja.
+    Lebih longgar, tapi jauh lebih baik daripada berhenti mengenali NIK sama
+    sekali hanya karena satu berkas rujukan tidak terjangkau.
+    """
     isi = [str(v).strip() for v in nilai if v is not None and str(v).strip()]
     if len(isi) < 5:
         return None
@@ -173,8 +177,10 @@ def _tanda_tangan(nilai: list) -> str | None:
     # NIK: 16 digit DAN dua digit pertamanya kode provinsi yang sah. Syarat
     # kedua penting — tanpa itu, nomor rekening 16 digit ikut tertangkap.
     if rasio(r"\d{16}") > 0.8:
+        if not prov_sah:
+            return "nik"
         prov = {v[:2] for v in isi if re.fullmatch(r"\d{16}", v)}
-        if prov and len(prov & PROVINSI_VALID) / len(prov) > 0.8:
+        if prov and len(prov & prov_sah) / len(prov) > 0.8:
             return "nik"
 
     if rasio(r"\d{1,4}[-/. ]\w{1,9}[-/. ]\d{2,4}") > 0.7:
@@ -190,12 +196,13 @@ def _tanda_tangan(nilai: list) -> str | None:
     return None
 
 
-def _lapis_nilai(sampel: dict[str, list], peta: dict) -> tuple[dict, list]:
+def _lapis_nilai(sampel: dict[str, list], peta: dict,
+                 prov_sah: set[str] | None = None) -> tuple[dict, list]:
     baru, jejak = {}, []
     for kolom, nilai in sampel.items():
         if kolom in peta.values() or kolom in baru.values():
             continue
-        tebak = _tanda_tangan(nilai)
+        tebak = _tanda_tangan(nilai, prov_sah)
         if tebak and tebak not in peta and tebak not in baru:
             baru[tebak] = kolom
             contoh = next((str(v) for v in nilai if v), "")
@@ -345,6 +352,15 @@ def ambil_sampel(con, view: str, kolom: list[str]) -> dict[str, list]:
     return {k: [b[i] for b in baris] for i, k in enumerate(kolom)}
 
 
+def _prov_sah(con) -> set[str]:
+    """Himpunan kode provinsi dari tabel rujukan; kosong kalau belum dimuat."""
+    try:
+        import _wilayah
+        return _wilayah.kode_provinsi(con)
+    except Exception:  # noqa: BLE001
+        return set()
+
+
 def petakan_kolom(con, view: str, kolom: list[str],
                   izin_ai: bool = True) -> dict:
     """Jalankan kelima lapis berurutan. Berhenti begitu semua kolom terpetakan."""
@@ -359,7 +375,7 @@ def petakan_kolom(con, view: str, kolom: list[str],
         else:
             sampel = ambil_sampel(con, view, kolom)
             if lapis == 3:
-                baru, j = _lapis_nilai(sampel, peta)
+                baru, j = _lapis_nilai(sampel, peta, _prov_sah(con))
             elif lapis == 4:
                 baru, j = _lapis_kamus(con, sampel, peta)
             elif not izin_ai:

@@ -10,13 +10,18 @@ bagian mana yang salah.
 Harapan per berkas:
 
     uji-a      A  6 elemen lengkap, NIK konsisten dengan tgl lahir & gender
-    uji-b      B  6 elemen lengkap, ~20% NIK bermasalah (beda gender, provinsi
-                  salah, panjang salah, duplikat)
+    uji-b      B  6 elemen lengkap, ~20% NIK bermasalah (beda gender, kode
+                  wilayah salah, panjang salah, duplikat)
     uji-c      C  5 elemen lengkap, TANPA kolom NIK
     uji-d      D  5 elemen, tanpa NIK, sebagian kosong di bawah 100%
     uji-e      E  hanya nama + tanggal lahir + jenis kelamin
-    uji-f      F  nama kolom tidak dikenali sama sekali
-    uji-excel  F  NIK rusak jadi notasi ilmiah Excel
+    uji-f      E  nama kolom tidak dikenali — dikenali lewat kamus master
+    uji-excel  E  NIK rusak jadi notasi ilmiah Excel
+    uji-float  A  NIK berakhiran ".0", harus pulih jadi 16 digit
+    uji-samar  B  header disamarkan + enam bentuk tanggal bercampur
+    uji-nama   A  nama bergelar dan ber-bin/binti; grade tetap A karena
+                  kelengkapan dan mutu NIK-nya utuh, tapi 1.600 baris
+                  ditandai anomali dan dibersihkan ke kolom nama_clean
 
 NIK di sini DISINTESIS, bukan disalin dari master. NIK master belum tentu
 konsisten dengan kolom tanggal lahir dan jenis kelamin di baris yang sama,
@@ -97,7 +102,7 @@ NIK_RUSAK = f"""
              || lpad(CAST(month(tanggal_lahir) AS VARCHAR), 2, '0')
              || right(CAST(year(tanggal_lahir) AS VARCHAR), 2)
              || lpad(CAST(rn AS VARCHAR), 4, '0')
-        -- b=16: kode provinsi 99 tidak ada -> nikProvinceInvalidCount
+        -- b=16: kode wilayah 990101 tidak ada -> nikKecamatanInvalidCount
         WHEN b = 16 THEN '99' || substr({NIK_BENAR}, 3)
         -- b=17: hanya 15 digit             -> panjang salah
         WHEN b = 17 THEN substr({NIK_BENAR}, 1, 15)
@@ -189,6 +194,22 @@ def main() -> int:
         CASE WHEN __p THEN 'P' ELSE 'L' END AS "L/P",
         nama_ibu      AS "ibu kandung",
         'catatan bebas' AS keterangan
+    """)
+
+    # Nama bergelar dan bin/binti — menguji deteksi anomali gelar/bin dan pembersihan nama_clean
+    tulis(con, "uji-nama", f"""
+        {NIK_BENAR}   AS nik,
+        CASE b % 5
+            WHEN 0 THEN 'Dr. ' || nama_lengkap
+            WHEN 1 THEN 'Hj. ' || nama_lengkap || ', S.Pd.'
+            WHEN 2 THEN nama_lengkap || ' Bin ' || nama_ibu
+            WHEN 3 THEN 'Prof. ' || nama_lengkap || ' Binti ' || nama_ibu || ', M.Kom.'
+            ELSE nama_lengkap
+        END AS nama_lengkap,
+        tempat_lahir,
+        strftime(tanggal_lahir, '%d-%m-%Y') AS tanggal_lahir,
+        CASE WHEN __p THEN 'PEREMPUAN' ELSE 'LAKI-LAKI' END AS jenis_kelamin,
+        nama_ibu AS nama_ibu_kandung
     """)
 
     print("\nselesai.")
