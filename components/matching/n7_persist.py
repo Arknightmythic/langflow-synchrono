@@ -32,6 +32,7 @@ import time
 
 from _shared import (
     TABEL_HASIL,
+    BoolInput,
     Component,
     Data,
     HandleInput,
@@ -47,8 +48,17 @@ class PersistResults(Component):
     icon = "save"
     name = "PersistResults"
 
-    inputs = [HandleInput(name="session", display_name="Session",
-                          input_types=["Data"], required=True)]
+    inputs = [
+        HandleInput(name="session", display_name="Session",
+                    input_types=["Data"], required=True),
+        # Dry run sebelumnya HANYA ada di run_local.py, sehingga satu-satunya
+        # cara mencoba matching lewat API adalah benar-benar menulis 200 ribu
+        # baris. Itu menjebak siapa pun yang sekadar ingin melihat bentuk
+        # responsnya — termasuk koleksi Postman yang dipakai sebagai contoh.
+        # Bawaannya tetap FALSE supaya perilaku yang sudah berjalan tak berubah.
+        BoolInput(name="dry_run", display_name="Dry Run", value=False,
+                  info="Hitung hasilnya tapi JANGAN tulis ke PostgreSQL."),
+    ]
     outputs = [Output(display_name="Summary", name="summary", method="simpan")]
 
     # Mengembalikan Message, BUKAN Data. Endpoint /api/v1/run hanya menampilkan
@@ -57,7 +67,7 @@ class PersistResults(Component):
     # dan datanya tertulis, tapi pemanggil menerima "outputs": [] yang kosong.
     # Ini berlaku untuk output_type "text" maupun "any".
     def simpan(self) -> Message:
-        hasil = self._simpan(self.session, dry_run=False)
+        hasil = self._simpan(self.session, dry_run=bool(self.dry_run))
         return Message(text=json.dumps(hasil, ensure_ascii=False, indent=2))
 
     @staticmethod

@@ -1,0 +1,419 @@
+{
+  "info": {
+    "name": "Synchrono — Langflow Services",
+    "description": "Grading, konfigurasi aturan, dan matching.\n\nDibangkitkan oleh infra/buat_postman.py dari kondisi Langflow yang sedang berjalan — node id di dalam `tweaks` diambil langsung dari flow, bukan ditulis tangan.\n\nIsi variabel `api_key` dulu, atau jalankan folder 0. Auth yang akan mengisinya otomatis.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "0. Auth",
+      "item": [
+        {
+          "name": "0a. Login (dapat bearer token)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{username}}"
+                },
+                {
+                  "key": "password",
+                  "value": "{{password}}"
+                }
+              ]
+            },
+            "description": "Token dari sini HANYA untuk endpoint pengelolaan (/api/v1/flows, /api/v1/all, /api/v1/api_key). Endpoint /api/v1/run MENOLAKNYA — pakai x-api-key."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var d = pm.response.json();",
+                  "if (d.access_token) pm.collectionVariables.set('bearer', d.access_token);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "0b. Buat API key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{bearer}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/api_key/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "api_key",
+                ""
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"postman\"\n}"
+            },
+            "description": "Field `api_key` pada balasan HANYA muncul sekali. Simpan; tidak bisa dilihat lagi."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var d = pm.response.json();",
+                  "if (d.api_key) pm.collectionVariables.set('api_key', d.api_key);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "0c. Daftar API key",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{bearer}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/api_key/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "api_key",
+                ""
+              ]
+            },
+            "description": "Nilai key-nya tidak ikut ditampilkan, hanya namanya."
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Grading — Dispatch (POST job)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "x-api-key",
+            "value": "{{api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/run/grading-dispatch?stream=false",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "run",
+            "grading-dispatch"
+          ],
+          "query": [
+            {
+              "key": "stream",
+              "value": "false"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"GradingDispatch-a3967\": {\n      \"payload\": \"{\\\"fileId\\\": \\\"uji-b\\\", \\\"filename\\\": \\\"uji-b.csv\\\", \\\"storageType\\\": \\\"s3\\\", \\\"s3Bucket\\\": \\\"bucket-test\\\", \\\"s3Endpoint\\\": \\\"http://localhost:8333\\\", \\\"csvKey\\\": \\\"uploads/uji-b/original.csv\\\", \\\"parquetKey\\\": \\\"uploads/uji-b/data.parquet\\\", \\\"rowCount\\\": 2000, \\\"institution\\\": {\\\"id\\\": \\\"inst-001\\\", \\\"name\\\": \\\"Kementerian Sosial\\\"}, \\\"callback\\\": {\\\"url\\\": \\\"\\\", \\\"secretToken\\\": \\\"\\\"}}\"\n    }\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Balas 202 QUEUED dalam <5 detik. Grading berjalan di latar belakang.\n\nflow: Synchrono Grading Dispatch\nnode id: GradingDispatch-a3967"
+      }
+    },
+    {
+      "name": "2. Grading — Status (polling)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "x-api-key",
+            "value": "{{api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/run/grading-status?stream=false",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "run",
+            "grading-status"
+          ],
+          "query": [
+            {
+              "key": "stream",
+              "value": "false"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"GradingStatus-3cc03\": {\n      \"file_id\": \"uji-b\"\n    }\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Panggil berulang sampai `done: true`. Isi `job_id` untuk job tertentu.\n\nflow: Synchrono Grading Status\nnode id: GradingStatus-3cc03"
+      }
+    },
+    {
+      "name": "3. Config — Baca aturan",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "x-api-key",
+            "value": "{{api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/run/config-rules?stream=false",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "run",
+            "config-rules"
+          ],
+          "query": [
+            {
+              "key": "stream",
+              "value": "false"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"GradingRuleGet-9c9c5\": {\n      \"grade_id\": \"\"\n    }\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "Kosongkan grade_id untuk semua grade; isi '2' untuk satu grade.\n\nflow: Synchrono Config Rules\nnode id: GradingRuleGet-9c9c5"
+      }
+    },
+    {
+      "name": "4. Config — Ubah aturan",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "x-api-key",
+            "value": "{{api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/run/config-rules-update?stream=false",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "run",
+            "config-rules-update"
+          ],
+          "query": [
+            {
+              "key": "stream",
+              "value": "false"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"GradingRuleUpdate-ea0f7\": {\n      \"payload\": \"{\\\"gradeId\\\": 2, \\\"updatedBy\\\": \\\"reno\\\", \\\"dryRun\\\": true, \\\"criteria\\\": {\\\"minCompleteness\\\": {\\\"tempat_lahir\\\": 0.75}, \\\"minNikTrusted\\\": 0.75}, \\\"score\\\": {\\\"min\\\": 72}, \\\"matching\\\": {\\\"autoScoreMin\\\": 86.0}}\",\n      \"dry_run\": false\n    }\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "dryRun=true memvalidasi dan menampilkan diff tanpa menulis.\n\nflow: Synchrono Config Rules Update\nnode id: GradingRuleUpdate-ea0f7"
+      }
+    },
+    {
+      "name": "5. Grading — Pipeline mentah (penelusuran)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "x-api-key",
+            "value": "{{api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/run/grading?stream=false",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "run",
+            "grading"
+          ],
+          "query": [
+            {
+              "key": "stream",
+              "value": "false"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"OpenGradingSession-ab8d5\": {\n      \"file_id\": \"uji-b\",\n      \"s3_bucket\": \"bucket-test\",\n      \"parquet_key\": \"uploads/uji-b/data.parquet\",\n      \"s3_endpoint\": \"\",\n      \"enriched_key\": \"\"\n    }\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "SINKRON — memblokir sampai selesai. Untuk menelusuri, bukan untuk backend.\n\nflow: Synchrono Grading Pipeline\nnode id: OpenGradingSession-ab8d5"
+      }
+    },
+    {
+      "name": "6. Matching — Jalankan (SINKRON)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "x-api-key",
+            "value": "{{api_key}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/api/v1/run/bacf3051-6540-45e6-8915-b8912db35d6a?stream=false",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "run",
+            "bacf3051-6540-45e6-8915-b8912db35d6a"
+          ],
+          "query": [
+            {
+              "key": "stream",
+              "value": "false"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"OpenMatchingSession-6d062\": {\n      \"file_id\": \"d88150c5\",\n      \"parquet_path\": \"s3://synchrono/curated/20260908_100245_d88150c5_data_dukcapil_gradeA.parquet\",\n      \"grade\": 1,\n      \"pakai_enriched\": true\n    },\n    \"PersistResults-8b7e3\": {\n      \"dry_run\": true\n    }\n  }\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "description": "PERHATIAN: flow ini belum punya endpoint_name, jadi dipanggil dengan UUID. Node id-nya juga ACAK — berubah tiap kali flow dibangun ulang, tidak seperti flow grading dan config. Bangkitkan ulang koleksi ini sesudah menjalankan buat_flow.py.\n\nContoh ini memakai dry_run=true sehingga TIDAK menulis apa pun. Setel false untuk menyimpan hasil — penulisannya upsert, jadi aman diulang.\n\nflow: Synchrono Matching\nflow_id: bacf3051-6540-45e6-8915-b8912db35d6a\nnode masuk : OpenMatchingSession-6d062\nnode simpan: PersistResults-8b7e3"
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:7860"
+    },
+    {
+      "key": "username",
+      "value": "admin"
+    },
+    {
+      "key": "password",
+      "value": "synchrono123"
+    },
+    {
+      "key": "bearer",
+      "value": ""
+    },
+    {
+      "key": "api_key",
+      "value": ""
+    }
+  ]
+}

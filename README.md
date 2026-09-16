@@ -21,6 +21,10 @@ Backend Synchrono  ──HTTP──►  Langflow (flow matching)
 maupun client S3 — DuckDB menangani parquet di S3, koneksi PostgreSQL, dan
 `jaro_winkler_similarity` sekaligus.
 
+> **Daftar lengkap API + koleksi Postman: [`API.md`](API.md).**
+> Enam endpoint aktif, cara memperoleh API key, dan tiga jebakan yang
+> sudah terbukti. Koleksi siap impor: `infra/postman_synchrono.json`.
+
 > **Bekerja tanpa VPN (lembur): [`LURING.md`](LURING.md).**
 > Server StarRocks/MinIO mati di luar jam kantor. Matching dan grading
 > sudah sepenuhnya mandiri di mesin lokal — dokumen itu mencatat apa yang
