@@ -1,0 +1,10 @@
+{
+  "output_type": "chat",
+  "input_type": "text",
+  "input_value": "",
+  "tweaks": {
+    "GradingDispatch-a3967": {
+      "payload": "{\"fileId\": \"csv_1789441689523_iq5ws\", \"filename\": \"data_kependudukan.csv\", \"storageType\": \"s3\", \"s3Bucket\": \"bucket-test\", \"s3Endpoint\": \"http://localhost:8333\", \"csvKey\": \"uploads/csv_1789441689523_iq5ws/original.csv\", \"parquetKey\": \"uploads/csv_1789441689523_iq5ws/data.parquet\", \"rowCount\": 50000, \"institution\": {\"id\": \"inst-001\", \"name\": \"Kementerian Sosial\"}, \"callback\": {\"url\": \"http://host.docker.internal:3000/api/internal/grading/callback\", \"secretToken\": \"syncrono-grading-callback-secret-key\"}}"
+    }
+  }
+}

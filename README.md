@@ -21,6 +21,24 @@ Backend Synchrono  ──HTTP──►  Langflow (flow matching)
 maupun client S3 — DuckDB menangani parquet di S3, koneksi PostgreSQL, dan
 `jaro_winkler_similarity` sekaligus.
 
+> **Bekerja tanpa VPN (lembur): [`LURING.md`](LURING.md).**
+> Server StarRocks/MinIO mati di luar jam kantor. Matching dan grading
+> sudah sepenuhnya mandiri di mesin lokal — dokumen itu mencatat apa yang
+> sudah disalin dan cara menyegarkannya.
+
+> **Normalisasi kolom & tanggal: [`NORMALISASI.md`](NORMALISASI.md).**
+> Berkas dengan nama kolom tidak baku dan tanggal bercampur tetap
+> dikenali. Matching membaca berkas hasilnya, bukan parquet mentah.
+
+> **Aturan grade bisa disetel lewat API: [`KONFIGURASI.md`](KONFIGURASI.md).**
+> Dua API untuk menu Rule di UI Synchrono — lihat dan ubah ambang tiap
+> grade. Perubahan berlaku seketika, tanpa restart.
+
+> **Grading ada di dokumen terpisah: [`GRADING.md`](GRADING.md).**
+> Service grading berbagi container Langflow, PostgreSQL, dan SeaweedFS yang
+> sama, tapi punya node, flow, dan dua API-nya sendiri (dispatch + polling
+> status). Matching berjalan sinkron; grading asinkron.
+
 ---
 
 ## Status verifikasi
@@ -189,20 +207,25 @@ argumen CLI, bukan env:
 command: ["langflow", "run", "--host", "0.0.0.0", "--port", "7860"]
 ```
 
-**3. File helper tidak boleh ada di folder komponen.** Langflow memindai **setiap**
-`.py` di `LANGFLOW_COMPONENTS_PATH` dan menuntut tiap file berisi subclass
-`Component`:
+**3. File helper tidak boleh ada di folder komponen.** Bukan karena Langflow
+menolaknya — berkas tanpa subclass `Component` justru **diabaikan diam-diam** —
+melainkan karena berkas di `LANGFLOW_COMPONENTS_PATH` **tidak bisa saling
+mengimpor**. Langflow memuat tiap berkas sebagai *bundle module* terisolasi dan
+folder itu tidak pernah masuk `sys.path`, jadi `from _shared import ...` gagal
+walau berkasnya ada di folder yang sama persis:
 
 ```
-TypeError: No Component subclass found in the code string.
+Extension load error: error[module-import-failed]: Failed to import bundle module
+/components/grading/z_uji_import.py: ModuleNotFoundError: No module named '_uji_helper'
 ```
 
-Karena itu strukturnya dipisah — dan subfolder `matching/` sekaligus menjadi nama
-grup di sidebar:
+Satu-satunya jalan agar modul bersama bisa diimpor adalah lewat `PYTHONPATH`,
+sehingga ia harus berada di **luar** folder komponen. Subfolder `matching/`
+sekaligus menjadi nama grup di sidebar:
 
 ```
 components/matching/   → node saja   → /components   (LANGFLOW_COMPONENTS_PATH)
-lib/_shared.py         → helper      → /lib          (PYTHONPATH)
+lib/_shared.py         → helper      → /synchrono/lib (PYTHONPATH)
 ```
 
 **4. Nama input dan output tidak boleh sama.** Ini yang paling halus: node tetap
@@ -226,7 +249,7 @@ karena namanya kebetulan sudah berbeda. Penamaan sekarang ada di §5.
 | Variabel | Nilai | Kenapa |
 |---|---|---|
 | `LANGFLOW_COMPONENTS_PATH` | `/components` | tempat Langflow menemukan node |
-| `PYTHONPATH` | `/lib` | agar `from _shared import …` bisa diselesaikan |
+| `PYTHONPATH` | `/synchrono/lib` | agar `from _shared import …` bisa diselesaikan |
 | `LANGFLOW_SUPERUSER(_PASSWORD)` | `admin` / `synchrono123` | wajib, lihat poin 1 |
 | `LANGFLOW_CONFIG_DIR` | `/app/langflow-data` | flow tersimpan di volume, tahan rebuild |
 | `PG_DSN` | `host=host.docker.internal …` | PostgreSQL ada di host, bukan Docker |
@@ -250,7 +273,7 @@ Invoke-RestMethod -Uri "http://localhost:7860/health_check"
 Jalur venv host tetap tersedia:
 
 ```powershell
-$akar = "D:\ISGS\PROJECT\synchrono\langflow-matching"
+$akar = "D:\ISGS\PROJECT\synchrono\langflow-synchrono"
 $env:LANGFLOW_COMPONENTS_PATH   = "$akar\components"
 $env:PYTHONPATH                 = "$akar\lib"
 $env:LANGFLOW_SUPERUSER         = "admin"
@@ -449,7 +472,7 @@ Sekarang `master_df` hanyalah view ke PostgreSQL; DuckDB mengambil seperlunya sa
 ## 10. Struktur folder
 
 ```
-langflow-matching/
+langflow-synchrono/
 ├── README.md
 ├── run_local.py                  uji 7 node tanpa Langflow (default dry run)
 ├── components/                   → di-mount ke /components
@@ -461,7 +484,7 @@ langflow-matching/
 │       ├── n5_run_join.py
 │       ├── n6_score_classify.py
 │       └── n7_persist.py
-├── lib/                          → di-mount ke /lib, masuk PYTHONPATH
+├── lib/                          → di-mount ke /synchrono/lib, masuk PYTHONPATH
 │   └── _shared.py                koneksi, SQL normalisasi, rumus skor
 └── infra/
     ├── docker-compose.yml        SeaweedFS + Langflow

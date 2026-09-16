@@ -300,6 +300,7 @@ def ambil(data, *kunci, wajib: bool = True):
 try:
     from langflow.custom import Component  # type: ignore
     from langflow.io import (  # type: ignore
+        BoolInput,
         HandleInput,
         IntInput,
         MessageTextInput,
@@ -339,4 +340,4 @@ except ImportError:  # pragma: no cover
     def _stub(**kwargs):
         return kwargs
 
-    MessageTextInput = HandleInput = IntInput = Output = _stub  # type: ignore
+    MessageTextInput = HandleInput = IntInput = BoolInput = Output = _stub  # type: ignore

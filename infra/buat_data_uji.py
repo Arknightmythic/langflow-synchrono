@@ -13,7 +13,7 @@ grade_rules.review_missing_count) DAN skor ada di rentang 85-90.
 """
 import sys, pathlib, duckdb
 
-sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "components"))
+sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "lib"))
 from _shared import buka_koneksi  # noqa: E402
 
 N = int(sys.argv[1]) if len(sys.argv) > 1 else 1000

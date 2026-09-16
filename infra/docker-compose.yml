@@ -71,14 +71,76 @@ services:
       LANGFLOW_SUPERUSER_PASSWORD: synchrono123
       LANGFLOW_AUTO_LOGIN: "false"
 
-      # Flow yang dibuat tersimpan di sini (volume), bukan di lapisan container,
-      # supaya tidak hilang saat image di-rebuild.
       LANGFLOW_CONFIG_DIR: /app/langflow-data
 
-      # `_shared.py` DIPISAH ke /lib, bukan di /components. Langflow memindai
-      # setiap .py di LANGFLOW_COMPONENTS_PATH dan menuntut tiap file berisi
-      # subclass Component — file helper akan gagal dimuat kalau ditaruh di sana.
-      PYTHONPATH: /lib
+      # WAJIB, dan TIDAK cukup hanya mengandalkan LANGFLOW_CONFIG_DIR.
+      #
+      # Langflow 1.12.x menaruh SQLite-nya di dalam folder paketnya sendiri
+      # (/app/.venv/lib/python3.14/site-packages/langflow/langflow.db), bukan di
+      # config dir. Folder itu ada di lapisan container, jadi SELURUH flow dan
+      # API key lenyap setiap kali container di-recreate atau image di-rebuild —
+      # dan hilangnya diam-diam, tanpa pesan galat apa pun.
+      #
+      # Empat garis miring memang benar: tiga untuk skema sqlite://, satu lagi
+      # pembuka path absolut.
+      LANGFLOW_DATABASE_URL: "sqlite:////app/langflow-data/langflow.db"
+
+      # Modul bersama DIPISAH dari /components, dan ini WAJIB.
+      #
+      # Langflow memuat tiap berkas di LANGFLOW_COMPONENTS_PATH sebagai "bundle
+      # module" yang terisolasi, dan folder itu TIDAK ikut masuk sys.path.
+      # Akibatnya berkas di sana tidak bisa saling mengimpor — component yang
+      # menulis `from _shared import ...` gagal dengan
+      # "ModuleNotFoundError: No module named '_shared'" meski berkasnya ada di
+      # folder yang sama persis. (Diuji langsung, bukan dugaan.)
+      #
+      # Satu-satunya jalan agar modul bersama bisa diimpor adalah lewat
+      # PYTHONPATH, jadi ia harus berada di LUAR /components.
+      #
+      # Tujuannya /synchrono/lib, BUKAN /lib. Mem-bind-mount ke /lib menimpa
+      # direktori pustaka sistem container; sempat berjalan hanya karena image
+      # ini menaruh pustakanya di /usr/lib64.
+      PYTHONPATH: /synchrono/lib
+
+      # ── Grading ────────────────────────────────────────────────────────
+      # Berapa job grading boleh jalan bersamaan dalam satu container. Tiap job
+      # memegang koneksi DuckDB sendiri; terlalu banyak = rebutan memori.
+      GRADING_MAX_CONCURRENT: "2"
+      # Job yang tidak berdetak selama ini dinyatakan gagal. Inilah yang
+      # menyelamatkan job saat container restart di tengah proses.
+      GRADING_STALE_MINUTES: "15"
+      GRADING_CALLBACK_RETRIES: "3"
+      GRADING_CALLBACK_TIMEOUT: "20"
+
+      # ── Normalisasi kolom: bantuan AI ──────────────────────────────────
+      #
+      # AI adalah lapis KELIMA, dipanggil hanya kalau keempat lapis
+      # deterministik (alias, nama mirip, bentuk nilai, kamus master) gagal.
+      # Satu panggilan per berkas, ~1,3 detik.
+      #
+      #   off           tidak memanggil AI sama sekali
+      #   nama_saja     AI hanya menerima NAMA KOLOM  <- bawaan
+      #   dengan_sampel AI juga menerima contoh nilai
+      #
+      # Bawaannya `nama_saja` bukan kehati-hatian berlebihan: diuji dengan
+      # 12 nama kolom samaran, model memetakan 12/12 benar TANPA melihat satu
+      # nilai pun. Contoh nilai jarang benar-benar dibutuhkan.
+      NORMALISASI_AI: "nama_saja"
+      NORMALISASI_AI_MODEL: "gemma4:31b"
+      NORMALISASI_AI_TIMEOUT: "60"
+      NORMALISASI_AI_SAMPEL: "5"
+
+      # KOSONG = AI mati. Isi dengan Ollama on-prem untuk menyalakannya.
+      #
+      # PERHATIKAN BEDANYA. https://ollama.com adalah layanan hosted pihak
+      # ketiga, BUKAN on-prem — meski sama-sama bernama Ollama. Mengarahkan ke
+      # sana berarti nama kolom (dan, kalau `dengan_sampel`, juga NIK dan nama
+      # ibu kandung) keluar dari jaringan.
+      #
+      # Karena itu `dengan_sampel` DITOLAK pada endpoint non-lokal kecuali
+      # NORMALISASI_AI_IZIN_SAMPEL_LUAR=1 disetel secara sadar.
+      NORMALISASI_AI_BASE_URL: ""
+      # OLLAMA_API_KEY: ""
 
       # PostgreSQL berjalan di HOST (DBngin), bukan di Docker — karena itu
       # host.docker.internal, bukan localhost.
@@ -91,7 +153,13 @@ services:
       S3_USE_SSL: "false"
     volumes:
       - ../components:/components:ro
-      - ../lib:/lib:ro
+      - ../lib:/synchrono/lib:ro
+      # Skrip infra ikut dimasukkan supaya bisa dijalankan dengan `docker exec`.
+      # Di mesin ini extension httpfs DuckDB diblokir Application Control, jadi
+      # apa pun yang menyentuh SeaweedFS harus jalan di dalam container.
+      - .:/synchrono/infra:ro
+      - ../run_grading_local.py:/synchrono/run_grading_local.py:ro
+      - ../run_local.py:/synchrono/run_local.py:ro
       - langflow-data:/app/langflow-data
     # WAJIB dioverride: entrypoint bawaan image mengikat ke 127.0.0.1, sehingga
     # port mapping Docker tidak bisa menjangkaunya (dari dalam container

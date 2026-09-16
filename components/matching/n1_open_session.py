@@ -12,7 +12,8 @@ SeaweedFS dan PostgreSQL. Node berikutnya memakai ulang koneksi yang sama —
 itulah sebabnya data tidak pernah berpindah antar node.
 """
 
-from _shared import Component, Data, IntInput, MessageTextInput, Output, buka_koneksi
+from _shared import (BoolInput, Component, Data, IntInput, MessageTextInput,
+                     Output, buka_koneksi)
 
 
 class OpenMatchingSession(Component):
@@ -28,14 +29,18 @@ class OpenMatchingSession(Component):
                          info="Path S3 lengkap, mis. s3://synchrono/curated/xxx.parquet"),
         IntInput(name="grade", display_name="Grade", value=1,
                  info="1-5. Grade 6 (custom mapping) belum didukung."),
+        BoolInput(name="pakai_enriched", display_name="Pakai Enriched", value=True,
+                  info="Pakai hasil grading yang kolomnya sudah ternormalisasi."),
     ]
     outputs = [Output(display_name="Session", name="session", method="buka")]
 
     def buka(self) -> Data:
-        return self._buka(self.file_id, self.parquet_path, int(self.grade))
+        return self._buka(self.file_id, self.parquet_path, int(self.grade),
+                          bool(self.pakai_enriched))
 
     @staticmethod
-    def _buka(file_id: str, parquet_path: str, grade: int) -> Data:
+    def _buka(file_id: str, parquet_path: str, grade: int,
+              pakai_enriched: bool = True) -> Data:
         file_id = str(file_id).strip()
         parquet_path = str(parquet_path).strip()
 
@@ -50,16 +55,43 @@ class OpenMatchingSession(Component):
             )
 
         con = buka_koneksi()
+
+        # Kalau grading sudah selesai untuk berkas ini, yang dipakai adalah
+        # HASILNYA, bukan parquet mentah dari muatan backend.
+        #
+        # Di berkas enriched, kolomnya sudah bernama baku dan tanggalnya sudah
+        # satu format — dua hal yang sebelumnya harus ditebak ulang di sini dan
+        # sering gagal: satu berkas uji kehilangan 19% tanggalnya karena
+        # formatnya bercampur. Backend tidak perlu diubah; jalurnya dicari dari
+        # `grading_jobs` berdasarkan file_id yang sudah dikirim.
+        sumber, catatan = parquet_path, "parquet mentah dari muatan backend"
+        if pakai_enriched:
+            baris = con.execute("""
+                SELECT s3_bucket, enriched_key FROM pg.public.grading_jobs
+                 WHERE file_id = ? AND status = 'COMPLETED'
+                   AND enriched_key IS NOT NULL
+                 ORDER BY created_at DESC LIMIT 1
+            """, [file_id]).fetchall()
+            if baris:
+                sumber = f"s3://{baris[0][0]}/{baris[0][1]}"
+                catatan = "hasil grading (kolom ternormalisasi + enrichment)"
+            else:
+                catatan = ("belum ada hasil grading untuk file_id ini — "
+                           "memakai parquet mentah dari muatan")
+
         print(f"[N1] sesi dibuka — file_id={file_id} grade={grade}")
-        print(f"[N1] parquet: {parquet_path}")
+        print(f"[N1] parquet: {sumber}")
+        print(f"[N1] sumber : {catatan}")
 
         return Data(data={
             "con": con,
             "file_id": file_id,
-            "parquet_path": parquet_path,
+            "parquet_path": sumber,
+            "parquet_diminta": parquet_path,
+            "sumber_parquet": catatan,
             "grade": grade,
         })
 
 
-def jalankan(file_id, parquet_path, grade):
-    return OpenMatchingSession._buka(file_id, parquet_path, grade)
+def jalankan(file_id, parquet_path, grade, pakai_enriched=True):
+    return OpenMatchingSession._buka(file_id, parquet_path, grade, pakai_enriched)

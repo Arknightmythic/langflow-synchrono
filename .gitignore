@@ -2,3 +2,7 @@
 .env
 __pycache__/
 *.pyc
+
+# Cadangan data dari StarRocks/MinIO untuk kerja luring. Isinya data
+# kependudukan sungguhan — jangan pernah masuk repositori.
+infra/cadangan/

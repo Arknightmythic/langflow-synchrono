@@ -1,0 +1,11 @@
+{
+  "output_type": "chat",
+  "input_type": "text",
+  "input_value": "",
+  "tweaks": {
+    "GradingRuleUpdate-ea0f7": {
+      "payload": "{\"gradeId\": 2, \"updatedBy\": \"reno\", \"dryRun\": true, \"criteria\": {\"minCompleteness\": {\"tempat_lahir\": 0.75}, \"minNikTrusted\": 0.75}, \"score\": {\"min\": 72}, \"matching\": {\"autoScoreMin\": 86.0}}",
+      "dry_run": false
+    }
+  }
+}

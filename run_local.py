@@ -18,8 +18,21 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / "lib"))
-sys.path.insert(0, str(Path(__file__).parent / "components" / "matching"))
+# Lokasi node berbeda antara host dan container: di host ia bersebelahan dengan
+# berkas ini, di container ia di-mount ke /components. Dicari, bukan ditebak —
+# di mesin Windows ini extension httpfs DuckDB diblokir Application Control
+# policy, sehingga skrip ini pada praktiknya HANYA bisa jalan di container.
+_DISINI = Path(__file__).resolve().parent
+for _kandidat in (_DISINI / "lib", Path("/synchrono/lib")):
+    if _kandidat.is_dir():
+        sys.path.insert(0, str(_kandidat))
+        break
+for _kandidat in (_DISINI / "components" / "matching", Path("/components/matching")):
+    if _kandidat.is_dir():
+        sys.path.insert(0, str(_kandidat))
+        break
+else:
+    raise SystemExit("Folder node matching tidak ditemukan (components/matching)")
 
 import n1_open_session as n1        # noqa: E402
 import n2_prepare_incoming as n2    # noqa: E402
@@ -37,6 +50,8 @@ def main() -> int:
     p.add_argument("--grade", type=int, required=True, choices=[1, 2, 3, 4, 5])
     p.add_argument("--write", action="store_true",
                    help="Upsert hasil ke PostgreSQL (tanpa ini hanya dry run).")
+    p.add_argument("--parquet-mentah", action="store_true",
+                   help="Paksa memakai parquet dari --parquet, bukan hasil grading.")
     args = p.parse_args()
 
     print(f"\n(mode: {'TULIS ke PostgreSQL' if args.write else 'dry run'})")
@@ -47,7 +62,8 @@ def main() -> int:
     mulai = time.perf_counter()
 
     print("\n--- N1 open session ---")
-    s = n1.jalankan(args.file_id, args.parquet, args.grade)
+    s = n1.jalankan(args.file_id, args.parquet, args.grade,
+                    pakai_enriched=not args.parquet_mentah)
     print("\n--- N2 prepare incoming ---")
     s = n2.jalankan(s)
     print("\n--- N3 prepare master ---")

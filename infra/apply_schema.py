@@ -73,11 +73,40 @@ def lit(v) -> str:
 
 
 def pecah_statement(sql: str) -> list[str]:
-    """Pisah file SQL jadi statement, abaikan komentar dan baris kosong."""
+    """
+    Pisah file SQL jadi statement, abaikan komentar dan baris kosong.
+
+    Titik koma DI DALAM string literal tidak dianggap pemisah. Memecah dengan
+    `sql.split(";")` tampak cukup sampai ada satu deskripsi yang memuat titik
+    koma — statement-nya lalu terbelah diam-diam di tengah kalimat, dan yang
+    terkirim ke PostgreSQL adalah potongan tak bermakna. Itu sempat terjadi
+    pada teks criteria_description grade D.
+    """
     tanpa_komentar = "\n".join(
         b for b in sql.splitlines() if not b.strip().startswith("--")
     )
-    return [s.strip() for s in tanpa_komentar.split(";") if s.strip()]
+
+    hasil, sedang, dalam_kutip = [], [], False
+    i = 0
+    while i < len(tanpa_komentar):
+        huruf = tanpa_komentar[i]
+        if huruf == "'":
+            # '' di dalam string adalah kutip ter-escape, bukan penutup.
+            if dalam_kutip and tanpa_komentar[i + 1:i + 2] == "'":
+                sedang.append("''")
+                i += 2
+                continue
+            dalam_kutip = not dalam_kutip
+            sedang.append(huruf)
+        elif huruf == ";" and not dalam_kutip:
+            hasil.append("".join(sedang))
+            sedang = []
+        else:
+            sedang.append(huruf)
+        i += 1
+    hasil.append("".join(sedang))
+
+    return [s.strip() for s in hasil if s.strip()]
 
 
 def main() -> int:
@@ -109,11 +138,15 @@ def main() -> int:
         return 0
 
     # ── DDL ──────────────────────────────────────────────────────────────
-    print("== menerapkan DDL ==")
-    for stmt in pecah_statement((DISINI / "schema.sql").read_text(encoding="utf-8")):
-        jalankan(stmt)
-        nama = re.search(r"(TABLE|INDEX)\s+(IF NOT EXISTS\s+)?(\S+)", stmt, re.I)
-        print(f"   ok  {nama.group(3) if nama else stmt[:40]}")
+    # Urutan penting: schema_grading.sql memuat foreign key ke ref_grades,
+    # jadi schema.sql harus lebih dulu.
+    for berkas in ("schema.sql", "schema_grading.sql", "schema_config.sql"):
+        print(f"== menerapkan DDL — {berkas} ==")
+        for stmt in pecah_statement((DISINI / berkas).read_text(encoding="utf-8")):
+            jalankan(stmt)
+            nama = re.search(r"(TABLE|INDEX)\s+(IF NOT EXISTS\s+)?(\S+)", stmt, re.I)
+            print(f"   ok  {nama.group(3) if nama else stmt[:40]}")
+        print()
 
     # ── Seed referensi & aturan ──────────────────────────────────────────
     print("\n== seed tabel referensi & grade_rules ==")

@@ -1,0 +1,10 @@
+{
+  "output_type": "chat",
+  "input_type": "text",
+  "input_value": "",
+  "tweaks": {
+    "GradingRuleGet-9c9c5": {
+      "grade_id": ""
+    }
+  }
+}
