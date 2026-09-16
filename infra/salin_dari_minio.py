@@ -7,7 +7,7 @@ penyalinannya satu statement COPY tanpa file perantara di disk.
 import os, sys, time, duckdb
 from dotenv import load_dotenv
 
-load_dotenv(r"d:\ISGS\PROJECT\synchrono\data-matching\.env")
+load_dotenv(r"C:\Users\admin\Documents\Code\dukcapil\langflow-synchrono\.env")
 
 SUMBER = sys.argv[1] if len(sys.argv) > 1 else sys.exit("pakai: salin_dari_minio.py <key-di-minio>")
 BUCKET_LAMA = os.getenv("RAW_BUCKET_NAME", "raw")
