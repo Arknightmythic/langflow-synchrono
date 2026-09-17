@@ -47,6 +47,10 @@ S3_KEY = os.getenv("S3_ACCESS_KEY", "synchrono")
 S3_SECRET = os.getenv("S3_SECRET_KEY", "synchrono123")
 S3_USE_SSL = os.getenv("S3_USE_SSL", "false").lower() == "true"
 
+# Lihat catatan panjang di buka_koneksi(). Kosong = bawaan DuckDB.
+DUCKDB_MEMORY_LIMIT = os.getenv("DUCKDB_MEMORY_LIMIT", "").strip()
+DUCKDB_TEMP_DIR = os.getenv("DUCKDB_TEMP_DIR", "").strip()
+
 # Nama view yang dirujuk oleh SQL di tabel `matching_queries`. JANGAN diubah —
 # kelima query itu disalin apa adanya dari sistem yang sudah berjalan.
 VIEW_INCOMING = "incoming_df"
@@ -68,6 +72,28 @@ CREATE OR REPLACE MACRO j(a, b) AS
 def buka_koneksi() -> duckdb.DuckDBPyConnection:
     """Koneksi DuckDB in-memory dengan SeaweedFS + PostgreSQL sudah tersambung."""
     con = duckdb.connect()
+
+    # BATAS MEMORI DUCKDB — di container, ini menentukan hidup atau mati.
+    #
+    # Bawaan DuckDB adalah 80% RAM YANG IA LIHAT, dan di dalam container ia
+    # melihat RAM MESIN, bukan batas cgroup-nya. Jadi ia dengan tenang
+    # mengalokasi melewati batas container, lalu kernel membunuhnya —
+    # exit code 137, tanpa satu pun pesan galat dari DuckDB.
+    #
+    # Diukur pada container berbatas 5,79 GB: 3 juta baris x 35 kolom selesai
+    # memakai 3,96 GB, sementara 5 juta baris mati OOM. Dengan batas disetel,
+    # DuckDB TIDAK mati — ia menumpahkan ke disk dan tetap menyelesaikan
+    # pekerjaannya, hanya lebih lambat. Gagal lambat jauh lebih baik daripada
+    # gagal dibunuh.
+    #
+    # Setel sekitar 60-70% batas memori container. Kosong = pakai bawaan DuckDB
+    # (berisiko di container).
+    if DUCKDB_MEMORY_LIMIT:
+        con.execute(f"SET memory_limit = '{DUCKDB_MEMORY_LIMIT}'")
+    # Tempat tumpahan. Harus folder yang bisa ditulis DAN punya ruang lega —
+    # tumpahan bisa berkali-kali lipat ukuran berkas masukan.
+    if DUCKDB_TEMP_DIR:
+        con.execute(f"SET temp_directory = '{DUCKDB_TEMP_DIR}'")
 
     for ext in ("httpfs", "postgres"):
         con.execute(f"INSTALL {ext}")

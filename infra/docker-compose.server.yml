@@ -125,6 +125,28 @@ services:
       # data Dukcapil sungguhan masuk; pada data dummy ini menjatuhkan grade.
       WILAYAH_KECAMATAN_TEGAS: "${WILAYAH_KECAMATAN_TEGAS:-0}"
 
+      # ── Batas memori DuckDB ─────────────────────────────────────────────
+      #
+      # WAJIB di container, dan bukan penyetelan halus. Bawaan DuckDB adalah
+      # 80% RAM YANG IA LIHAT — dan di dalam container ia melihat RAM MESIN,
+      # bukan batas cgroup-nya. Jadi ia mengalokasi melewati batas container
+      # lalu kernel membunuhnya: exit code 137, tanpa pesan galat apa pun.
+      #
+      # Diukur pada container berbatas 5,79 GB dengan berkas 35 kolom:
+      #     tanpa batas : 3 juta baris OK (3,96 GB) --  5 juta MATI OOM
+      #     batas 3 GB  : 5 juta OK (3,45 GB)       -- 10 juta OK (3,54 GB)
+      #
+      # Memorinya justru LEBIH RENDAH dengan batas disetel, dan mendatar dari
+      # 5 ke 10 juta baris. Batas ini tidak mengorbankan apa pun; ia membuat
+      # DuckDB mengelola buffer-nya, bukan menimbun.
+      #
+      # SETEL SEKITAR 60% BATAS MEMORI CONTAINER SERVER. Kalau server punya
+      # 16 GB untuk container ini, 10GB masuk akal.
+      DUCKDB_MEMORY_LIMIT: "${DUCKDB_MEMORY_LIMIT:-3GB}"
+      # Tempat tumpahan kalau batas di atas tetap terlampaui. Butuh ruang lega —
+      # tumpahan bisa berkali-kali lipat ukuran berkas masukan.
+      DUCKDB_TEMP_DIR: "${DUCKDB_TEMP_DIR:-/tmp/duckdb_spill}"
+
       # ── Grading ────────────────────────────────────────────────────────
       GRADING_MAX_CONCURRENT: "${GRADING_MAX_CONCURRENT:-2}"
       GRADING_STALE_MINUTES: "15"
