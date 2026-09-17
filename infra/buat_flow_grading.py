@@ -24,7 +24,7 @@ import json
 import os
 from pathlib import Path
 
-from flow_util import BASE, bangun, katalog, masuk
+from flow_util import BASE, bangun, katalog, masuk, simpan_contoh
 
 DISINI = Path(__file__).parent
 
@@ -111,10 +111,8 @@ def main() -> int:
         "tweaks": {node_s: {"file_id": "csv_1789441689523_iq5ws"}},
     }
 
-    (DISINI / "postman_grading_dispatch.json").write_text(
-        json.dumps(contoh_dispatch, indent=2, ensure_ascii=False), encoding="utf-8")
-    (DISINI / "postman_grading_status.json").write_text(
-        json.dumps(contoh_status, indent=2, ensure_ascii=False), encoding="utf-8")
+    simpan_contoh(DISINI / "postman_grading_dispatch.json", contoh_dispatch)
+    simpan_contoh(DISINI / "postman_grading_status.json", contoh_status)
 
     garis = "=" * 74
     print(f"\n{garis}")

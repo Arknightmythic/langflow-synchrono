@@ -1,0 +1,102 @@
+# Langflow Synchrono — DEPLOY KE SERVER (172.16.12.98).
+#
+# Beda pokok dengan docker-compose.yml (pengembangan lokal):
+#
+#   1. TIDAK menjalankan SeaweedFS sendiri. Memakai SeaweedFS yang sudah ada
+#      di server (172.16.12.98:8333). Jadi tidak ada service seaweedfs di sini.
+#   2. PostgreSQL dan SeaweedFS diarahkan ke server, bukan ke host lokal.
+#   3. Rujukan wilayah dibaca dari SeaweedFS server yang sama dengan berkas
+#      unggahan — jadi WILAYAH_S3_ENDPOINT dikosongkan (memakai secret utama),
+#      bukan lagi kredensial terpisah.
+#
+# Nilai rahasia (kata sandi PostgreSQL) TIDAK ditaruh di sini. Diisi lewat
+# berkas .env di sebelah compose ini — salin dari .env.server.example.
+#
+# Menjalankan:
+#     cp .env.server.example .env
+#     # isi PG_PASSWORD di .env
+#     docker compose -f docker-compose.server.yml --env-file .env up -d --build
+#
+# Langkah lengkap: lihat DEPLOY.md.
+
+services:
+  langflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.langflow
+    container_name: synchrono-langflow
+    ports:
+      - "7860:7860"
+    environment:
+      LANGFLOW_COMPONENTS_PATH: /components
+
+      # Kredensial admin Langflow. GANTI dari nilai pengembangan sebelum benar-
+      # benar dipakai — ini yang menjaga siapa boleh membuat API key.
+      LANGFLOW_SUPERUSER: "${LANGFLOW_SUPERUSER:-admin}"
+      LANGFLOW_SUPERUSER_PASSWORD: "${LANGFLOW_SUPERUSER_PASSWORD:?isi di .env}"
+      LANGFLOW_AUTO_LOGIN: "false"
+
+      LANGFLOW_CONFIG_DIR: /app/langflow-data
+      # WAJIB — tanpa ini flow & API key lenyap tiap container di-recreate.
+      # Empat garis miring memang benar (tiga untuk skema, satu path absolut).
+      LANGFLOW_DATABASE_URL: "sqlite:////app/langflow-data/langflow.db"
+
+      # Modul bersama di PYTHONPATH, di LUAR /components (Langflow memuat
+      # /components sebagai bundle terisolasi yang tidak masuk sys.path).
+      PYTHONPATH: /synchrono/lib
+
+      # ── PostgreSQL server ──────────────────────────────────────────────
+      # Server menjalankan PostgreSQL dengan otentikasi kata sandi. Kata
+      # sandinya diisi lewat .env, tidak ditulis di berkas ini.
+      PG_DSN: "host=${PG_HOST:-172.16.12.98} port=${PG_PORT:-5432} dbname=${PG_DB:-synchrono} user=${PG_USER:-postgres} password=${PG_PASSWORD:?isi di .env}"
+
+      # ── SeaweedFS server ───────────────────────────────────────────────
+      # Berkas unggahan portal ada di bucket syncrono-uploads di server ini.
+      S3_ENDPOINT: "${S3_ENDPOINT:-172.16.12.98:8333}"
+      S3_ACCESS_KEY: "${S3_ACCESS_KEY:-ADMIN}"
+      S3_SECRET_KEY: "${S3_SECRET_KEY:-Password1234}"
+      S3_USE_SSL: "false"
+
+      # ── Rujukan wilayah ────────────────────────────────────────────────
+      # Ada di SeaweedFS server yang SAMA dengan berkas unggahan, jadi endpoint
+      # dikosongkan: _wilayah.muat() memakai secret utama S3 di atas. 7.265
+      # kecamatan, sudah ada di s3://syncrono-master/wilayah/.
+      WILAYAH_PARQUET: "s3://syncrono-master/wilayah/master_wilayah_nik.parquet"
+      WILAYAH_S3_ENDPOINT: ""
+      WILAYAH_S3_KEY: ""
+      WILAYAH_S3_SECRET: ""
+      # 0 = kode kecamatan tak dikenal hanya DILAPORKAN. Nyalakan (1) begitu
+      # data Dukcapil sungguhan masuk; pada data dummy ini menjatuhkan grade.
+      WILAYAH_KECAMATAN_TEGAS: "${WILAYAH_KECAMATAN_TEGAS:-0}"
+
+      # ── Grading ────────────────────────────────────────────────────────
+      GRADING_MAX_CONCURRENT: "${GRADING_MAX_CONCURRENT:-2}"
+      GRADING_STALE_MINUTES: "15"
+      GRADING_CALLBACK_RETRIES: "3"
+      GRADING_CALLBACK_TIMEOUT: "20"
+
+      # ── Normalisasi: bantuan AI ────────────────────────────────────────
+      # off secara bawaan. Server punya Ollama on-prem di :11434 — untuk
+      # menyalakannya, isi NORMALISASI_AI_BASE_URL di .env dengan
+      # http://172.16.12.98:11434/v1 dan setel NORMALISASI_AI=nama_saja.
+      NORMALISASI_AI: "${NORMALISASI_AI:-nama_saja}"
+      NORMALISASI_AI_MODEL: "${NORMALISASI_AI_MODEL:-gemma4:31b}"
+      NORMALISASI_AI_BASE_URL: "${NORMALISASI_AI_BASE_URL:-}"
+      OLLAMA_API_KEY: "${OLLAMA_API_KEY:-ollama}"
+    volumes:
+      # Hanya yang berjalan saat runtime. Skrip pengembangan (pembuat data uji,
+      # cadangan, dsb.) tidak di-mount — lihat DEPLOY.md untuk daftar berkas
+      # yang benar-benar perlu dinaikkan.
+      - ../components:/components:ro
+      - ../lib:/synchrono/lib:ro
+      - .:/synchrono/infra:ro
+      - langflow-data:/app/langflow-data
+    command: ["langflow", "run", "--host", "0.0.0.0", "--port", "7860"]
+    # host.docker.internal tetap dipetakan supaya sama dengan compose lokal;
+    # di server, PG & S3 dijangkau lewat IP 172.16.12.98 langsung.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  langflow-data:

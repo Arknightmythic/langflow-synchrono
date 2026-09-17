@@ -166,3 +166,22 @@ def bangun(token: str, nama_flow: str, deskripsi: str, endpoint: str,
 
     print(f"  flow {aksi}: {nama_flow}  ({len(nodes)} node, {len(edges)} sambungan)")
     return fid, id_node[rantai[0][0]]
+
+
+def simpan_contoh(path, obj) -> None:
+    """
+    Tulis berkas contoh Postman, tapi JANGAN gagal kalau foldernya read-only.
+
+    Saat deploy ke server, folder infra di-mount read-only (docker-compose.
+    server.yml). Flow dibangun lewat API — itu yang penting dan sudah selesai
+    sebelum baris ini. Berkas contoh Postman hanya kenyamanan pengembangan;
+    kegagalan menulisnya tidak boleh menggagalkan pembangunan flow.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+    try:
+        _Path(path).write_text(
+            _json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
+    except OSError as e:
+        print(f"  (lewati contoh {_Path(path).name}: {e.strerror} — "
+              f"wajar kalau infra di-mount read-only)")

@@ -17,7 +17,7 @@ Keduanya berbagi container dan basis data yang sama.
 import json
 from pathlib import Path
 
-from flow_util import BASE, bangun, katalog, masuk
+from flow_util import BASE, bangun, katalog, masuk, simpan_contoh
 
 DISINI = Path(__file__).parent
 
@@ -74,10 +74,8 @@ def main() -> int:
         },
     }
 
-    (DISINI / "postman_config_get.json").write_text(
-        json.dumps(contoh_get, indent=2, ensure_ascii=False), encoding="utf-8")
-    (DISINI / "postman_config_update.json").write_text(
-        json.dumps(contoh_update, indent=2, ensure_ascii=False), encoding="utf-8")
+    simpan_contoh(DISINI / "postman_config_get.json", contoh_get)
+    simpan_contoh(DISINI / "postman_config_update.json", contoh_update)
 
     garis = "=" * 74
     print(f"\n{garis}")

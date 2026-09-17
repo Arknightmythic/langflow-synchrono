@@ -42,7 +42,7 @@ class GradingDispatch(Component):
         ),
         MessageTextInput(name="file_id", display_name="File ID", required=False),
         MessageTextInput(name="s3_bucket", display_name="S3 Bucket", required=False,
-                         value="bucket-test"),
+                         value="syncrono-uploads"),
         MessageTextInput(name="parquet_key", display_name="Parquet Key", required=False,
                          info="mis. uploads/{fileId}/data.parquet"),
         MessageTextInput(name="s3_endpoint", display_name="S3 Endpoint", required=False),

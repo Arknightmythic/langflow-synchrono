@@ -25,7 +25,7 @@ class OpenGradingSession(Component):
         MessageTextInput(name="file_id", display_name="File ID", required=True,
                          info="ID berkas di database Synchrono, mis. csv_1789441689523_iq5ws"),
         MessageTextInput(name="s3_bucket", display_name="S3 Bucket", required=True,
-                         value="bucket-test", info="Bucket tempat parquet mentah berada"),
+                         value="syncrono-uploads", info="Bucket tempat parquet mentah berada"),
         MessageTextInput(name="parquet_key", display_name="Parquet Key", required=True,
                          info="Kunci objek parquet mentah, mis. uploads/{fileId}/data.parquet"),
         MessageTextInput(name="s3_endpoint", display_name="S3 Endpoint", required=False,
