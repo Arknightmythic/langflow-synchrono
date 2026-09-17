@@ -81,14 +81,20 @@ def buka(job: dict) -> dict:
     """
     file_id = str(job.get("file_id") or "").strip()
     bucket = str(job.get("s3_bucket") or "").strip()
+
+    # `parquetKey` yang utama. Kalau portal belum sempat mengubah unggahannya
+    # jadi parquet, `csvKey` dipakai — CSV dibaca langsung (lihat _sql_sumber).
     kunci = str(job.get("parquet_key") or "").strip()
+    if not kunci:
+        kunci = str(job.get("csv_key") or "").strip()
 
     if not file_id:
         raise ValueError("fileId kosong")
     if not bucket:
         raise ValueError("s3Bucket kosong")
     if not kunci:
-        raise ValueError("parquetKey kosong")
+        raise ValueError("parquetKey maupun csvKey kosong — "
+                         "tidak ada berkas yang bisa dibaca")
 
     con = buka_koneksi()
 
@@ -133,6 +139,41 @@ def _kunci_env() -> tuple[str, str]:
     return S3_KEY, S3_SECRET
 
 
+# Berkas yang dibaca sebagai teks berpemisah, bukan parquet.
+POLA_TEKS = re.compile(r"\.(csv|tsv|txt)$", re.I)
+
+
+def _sql_sumber(jalur: str) -> str:
+    """
+    Ekspresi pembacaan sumber — parquet atau CSV, dipilih dari akhiran namanya.
+
+    Portal SEHARUSNYA mengubah unggahan jadi parquet lebih dulu, dan itu tetap
+    jalur yang dianjurkan: parquet menyimpan tipe kolom, jauh lebih kecil, dan
+    jauh lebih cepat dibaca pada berkas ratusan ribu baris. Tapi menolak CSV
+    sama sekali berarti satu langkah konversi yang belum jadi di portal
+    memblokir seluruh grading — padahal DuckDB bisa membacanya langsung.
+
+    `all_varchar` BUKAN pilihan gaya, dan ini sudah diuji:
+
+      * Tanpa itu, NIK 16 digit terbaca sebagai BIGINT. Nilainya memang masih
+        utuh, tapi jalurnya jadi berbeda dari parquet kiriman portal yang
+        seluruh kolomnya teks — dan perbedaan jalur adalah tempat bug bersembunyi.
+      * Lebih penting: `tanggal_lahir` terdeteksi sebagai DATE, sehingga
+        seluruh normalisasi tanggal (deteksi konvensi DD-MM vs MM-DD, tahun dua
+        digit, serial Excel) DILEWATI diam-diam.
+
+    `sample_size = -1` membaca seluruh berkas saat mendeteksi struktur, bukan
+    hanya beberapa ribu baris pertama.
+
+    Yang TIDAK perlu ditangani sendiri, sudah diuji ke DuckDB: BOM dari Excel
+    dibuang otomatis (kolom pertama tidak jadi bernama '﻿nik'), dan
+    pemisah titik koma terdeteksi sendiri.
+    """
+    if POLA_TEKS.search(jalur):
+        return f"read_csv_auto('{jalur}', all_varchar = true, sample_size = -1)"
+    return f"read_parquet('{jalur}')"
+
+
 # ── Tahap 2: baca parquet mentah ───────────────────────────────────────────
 
 def muat_raw(s: dict) -> dict:
@@ -147,14 +188,16 @@ def muat_raw(s: dict) -> dict:
     perlu lagi tahu bahwa aslinya bernama "no_identitas" atau "tgl lhr".
     """
     con = s["con"]
-    con.execute(f"CREATE OR REPLACE VIEW raw_df AS SELECT * FROM read_parquet('{s['sumber']}')")
+    con.execute(f"CREATE OR REPLACE VIEW raw_df AS "
+                f"SELECT * FROM {_sql_sumber(s['sumber'])}")
 
     kolom_asli = [r[0] for r in con.execute("DESCRIBE raw_df").fetchall()]
     jumlah = con.execute("SELECT count(*) FROM raw_df").fetchone()[0]
     if jumlah == 0:
-        raise ValueError(f"Parquet kosong: {s['sumber']}")
+        raise ValueError(f"Berkas sumber kosong: {s['sumber']}")
 
-    print(f"[G2] {jumlah:,} baris, {len(kolom_asli)} kolom")
+    bentuk = "CSV" if POLA_TEKS.search(s["sumber"]) else "parquet"
+    print(f"[G2] {jumlah:,} baris, {len(kolom_asli)} kolom  (dibaca sebagai {bentuk})")
 
     hasil = petakan_kolom(con, "raw_df", kolom_asli,
                           izin_ai=s.get("izin_ai", True))

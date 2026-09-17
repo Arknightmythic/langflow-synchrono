@@ -124,6 +124,63 @@ docker compose -f docker-compose.server.yml logs langflow --tail 30
 
 ---
 
+### Mengulang deploy sesudah `git pull`
+
+```bash
+cd ~/development/synchrono-langflow/langflow-synchrono/infra
+
+# 1. matikan yang lama
+docker compose -f docker-compose.server.yml --env-file .env down
+
+# 2. bangun ulang image + naikkan (migrasi & seeding jalan sendiri)
+docker compose -f docker-compose.server.yml --env-file .env up -d --build
+```
+
+`--build` WAJIB kalau `Dockerfile.langflow` ikut berubah; tanpa itu Docker
+memakai image lama dan perubahannya tidak berlaku.
+
+**`.env` tidak ikut tertimpa `git pull`** (ia di-gitignore), jadi kata sandi dan
+setelanmu aman. Yang berubah hanya `.env.server.example`; bandingkan sendiri
+kalau ada kunci baru di sana.
+
+#### Kapan perlu `down -v` (menghapus volume)
+
+`-v` menghapus volume `langflow-data` — **beserta seluruh flow dan API key**.
+Hanya perlu dalam dua keadaan:
+
+* **Sekali saja, kalau deploy pertama gagal dengan `PermissionError` pada
+  `/app/langflow-data/secret_key`.** Volume itu terlanjur dibuat milik root, dan
+  perbaikan di `Dockerfile.langflow` hanya berlaku untuk volume yang masih
+  kosong. Tidak ada yang hilang — Langflow belum sempat menulis apa pun.
+* Kalau memang ingin memulai Langflow dari nol.
+
+```bash
+docker compose -f docker-compose.server.yml --env-file .env down -v
+docker compose -f docker-compose.server.yml --env-file .env up -d --build
+```
+
+Sesudahnya flow harus dibangun ulang (langkah 5) dan API key dibuat ulang
+(langkah 6) — keduanya ikut terhapus bersama volume.
+
+**Basis data TIDAK ikut terhapus.** PostgreSQL ada di luar compose ini, jadi
+`down -v` tidak menyentuhnya. Migrasi yang sudah tercatat tetap tercatat, dan
+`up` berikutnya hanya melewatinya.
+
+#### Memeriksa hasilnya
+
+```bash
+# migrasi & seeding — ini yang pertama dilihat kalau ada yang aneh
+docker compose -f docker-compose.server.yml logs skema
+
+# Langflow hidup?
+curl -s http://localhost:7860/health_check
+```
+
+Kalau `skema` gagal, Langflow memang sengaja tidak menyala. Pesannya menunjuk
+langsung ke `PG_HOST`/`PG_PORT`/`PG_PASSWORD` di `.env`.
+
+---
+
 ## 4. Memeriksa basis data
 
 Langkah 3 sudah menjalankan migrasi dan seeding. Ini hanya untuk memastikan:
@@ -201,9 +258,15 @@ komponen), jadi aman ditanam di portal:
 
 ## 6. API key
 
+Kata sandinya dibaca langsung dari `.env`, jadi tidak ada placeholder yang bisa
+keliru tersalin apa adanya:
+
 ```bash
+SANDI=$(grep -E '^LANGFLOW_SUPERUSER_PASSWORD=' .env | cut -d= -f2- | tr -d '"')
+AKUN=$(grep -E '^LANGFLOW_SUPERUSER=' .env | cut -d= -f2- | tr -d '"')
+
 TOKEN=$(curl -s -X POST http://localhost:7860/api/v1/login \
-  -d "username=admin&password=<LANGFLOW_SUPERUSER_PASSWORD>" | \
+  -d "username=${AKUN:-admin}&password=$SANDI" | \
   python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
 
 curl -s -X POST http://localhost:7860/api/v1/api_key/ \
@@ -212,6 +275,16 @@ curl -s -X POST http://localhost:7860/api/v1/api_key/ \
 ```
 
 Nilai `api_key` **hanya muncul sekali**. Portal memakainya di header `x-api-key`.
+
+> Kalau muncul `KeyError: 'access_token'` lalu
+> `{"detail":"No authentication credentials provided"}`, artinya login gagal dan
+> `$TOKEN` kosong — hampir selalu karena kata sandinya salah, bukan karena
+> pembuatan key-nya bermasalah. Periksa dengan:
+>
+> ```bash
+> curl -s -X POST http://localhost:7860/api/v1/login \
+>   -d "username=admin&password=$SANDI"
+> ```
 
 ---
 
@@ -251,6 +324,31 @@ docker compose -f docker-compose.server.yml exec langflow \
 docker compose -f docker-compose.server.yml cp \
     langflow:/tmp/csv_uji ./csv_uji
 ```
+
+---
+
+## 7b. Engine menerima CSV, bukan hanya parquet
+
+Jalur yang dianjurkan tetap **parquet**: tipe kolomnya tersimpan, ukurannya jauh
+lebih kecil, dan pembacaannya jauh lebih cepat pada berkas ratusan ribu baris.
+
+Tapi engine tidak lagi menolak CSV. Kalau `parquetKey` (atau `csvKey`) menunjuk
+berkas berakhiran `.csv`, `.tsv`, atau `.txt`, ia dibaca langsung — jadi satu
+langkah konversi yang belum jadi di portal tidak memblokir seluruh grading.
+
+```json
+{ "fileId": "pop_...", "s3Bucket": "syncrono-uploads",
+  "parquetKey": "uploads/pop_.../raw/data.csv" }
+```
+
+`csvKey` saja juga cukup; kalau `parquetKey` kosong, `csvKey` yang dipakai.
+
+Diuji: kelima berkas uji A-E menghasilkan grade dan skor yang **sama persis**
+dibaca sebagai CSV maupun sebagai parquet.
+
+Yang ditangani sendiri oleh pembacanya: BOM dari Excel dibuang, pemisah titik
+koma terdeteksi, dan seluruh kolom dibaca sebagai teks supaya NIK tidak berubah
+jadi angka dan normalisasi tanggal tidak terlewat.
 
 ---
 
