@@ -125,6 +125,27 @@ def _sql_daftar(kolom: str, nilai: list[str], hasil: str) -> str:
     return f"WHEN {_bersih(kolom)} IN ({isi}) THEN '{hasil}'"
 
 
+# Nama kolom di enriched parquet -> nama baku yang dipakai SQL matching.
+#
+# Berkas enriched ditulis dengan nama sesuai spesifikasi integrasi bagian 4.1
+# (`nama_lengkap`, `nama_ibu_kandung`), sementara seluruh query matching di
+# tabel `matching_queries` merujuk `nama` dan `nama_ibu`. Pemetaan ini yang
+# menyambungkan keduanya, jadi berkas enriched tetap bisa dipakai matching
+# tanpa satu pun query perlu diubah.
+ALIAS_ENRICHED = {
+    "nama": ("nama", "nama_lengkap"),
+    "nama_ibu": ("nama_ibu", "nama_ibu_kandung"),
+}
+
+
+def _sumber_kolom(baku: str, kolom_ada: set[str]) -> str | None:
+    """Nama kolom yang sebenarnya ada di berkas untuk satu elemen baku."""
+    for kandidat in ALIAS_ENRICHED.get(baku, (baku,)):
+        if kandidat in kolom_ada:
+            return kandidat
+    return None
+
+
 def sql_view_incoming(kolom_ada: set[str]) -> str:
     """
     Bangun SELECT normalisasi untuk parquet incoming.
@@ -142,9 +163,12 @@ def sql_view_incoming(kolom_ada: set[str]) -> str:
 
     for kol in ("nama", "tempat_lahir", "provinsi", "kabupaten",
                 "kecamatan", "kelurahan", "nama_ibu"):
-        if kol in kolom_ada:
-            pilih.append(f"{kol}")
-            pilih.append(f"{_bersih(kol)} AS {kol}_clean")
+        sumber = _sumber_kolom(kol, kolom_ada)
+        if sumber:
+            # Di-alias ke nama baku, supaya query matching tidak perlu tahu
+            # berkasnya memakai nama spesifikasi atau nama baku.
+            pilih.append(f"{sumber} AS {kol}")
+            pilih.append(f"{_bersih(sumber)} AS {kol}_clean")
 
     if "tanggal_lahir" in kolom_ada:
         pilih.append("tanggal_lahir")

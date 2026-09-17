@@ -53,7 +53,25 @@ ENAM_ELEMEN = ["nik", "nama", "tempat_lahir", "tanggal_lahir",
 # nama tanpa gelar dan tanpa patronimik, siap dipakai matching tanpa perlu
 # dibersihkan ulang di sana.
 KOLOM_DERIVASI = ["nik_clean", "nik_prov", "nik_hari", "nik_bulan", "nik_tahun",
-                  "nik_trusted", "is_anomaly", "anomaly_notes", "nama_clean"]
+                  "nik_trusted", "is_anomaly", "anomaly_type", "anomaly_notes",
+                  "nama_clean"]
+
+# Nama kolom di BERKAS KELUARAN, kalau berbeda dari nama baku di dalam pipeline.
+#
+# Di dalam engine, elemen kependudukan selalu bernama `nama` dan `nama_ibu` —
+# itu nama baku hasil normalisasi, dipakai seluruh tahap grading maupun
+# matching. Spesifikasi integrasi (bagian 4.1) menuliskan kolom yang sama
+# dengan nama `nama_lengkap` dan `nama_ibu_kandung`, dan portal membaca berkas
+# ini langsung lewat DuckDB untuk tab "Validasi & Anomali".
+#
+# Penggantian nama dilakukan HANYA di titik penulisan berkas, bukan di seluruh
+# pipeline. Kalau nama bakunya ikut diubah, setiap ekspresi SQL di lima tahap
+# lain harus ikut diubah — dan matching, normalisasi, serta aturan grade E
+# semuanya merujuk nama baku itu.
+NAMA_KELUARAN = {
+    "nama": "nama_lengkap",
+    "nama_ibu": "nama_ibu_kandung",
+}
 
 HURUF = {1: "A", 2: "B", 3: "C", 4: "D", 5: "E", 6: "F"}
 
@@ -106,7 +124,10 @@ def _pilih_sumber(job: dict, tujuan: str) -> str:
         return ""
 
     parquet = ambil("parquet_key")
-    mentah = ambil("csv_key", "raw_source_key")
+    # `rawSourceKey` lebih dulu: itu SATU-SATUNYA kunci sumber di spesifikasi
+    # integrasi bagian 3.1 — `parquetKey` dan `csvKey` tidak ada di sana sama
+    # sekali, dan portal mengirimnya sebagai tambahan warisan.
+    mentah = ambil("raw_source_key", "csv_key")
 
     if parquet and parquet.strip("/") != tujuan.strip("/"):
         return parquet
@@ -345,6 +366,7 @@ def _sql_nik(kol_nik: str | None, wilayah_siap: bool = True) -> dict[str, str]:
             "prov_ok": "FALSE",
             "kec_ok": "FALSE",
             "excel": "FALSE",
+            "non_numerik": "FALSE",
         }
 
     mentah = f"trim(CAST({_kutip(kol_nik)} AS VARCHAR))"
@@ -357,11 +379,20 @@ def _sql_nik(kol_nik: str | None, wilayah_siap: bool = True) -> dict[str, str]:
         ELSE regexp_replace({mentah}, '[^0-9]', '', 'g')
     END"""
 
+    # Nilai mentah memuat karakter selain angka. Dua bentuk yang SUDAH kita
+    # pulihkan tidak dihitung bukan-angka, karena datanya tidak hilang:
+    # float utuh ("32010...0") dan notasi ilmiah Excel. Yang terakhir tetap
+    # dihitung — digit belakangnya memang tidak bisa dikembalikan.
+    non_numerik = (f"nullif({mentah}, '') IS NOT NULL AND {mentah} <> '-' "
+                   f"AND NOT regexp_matches({mentah}, '^[0-9]+$') "
+                   rf"AND NOT regexp_matches({mentah}, '^[0-9]+\.0*$')")
+
     hari_mentah = "TRY_CAST(substr(__nik_clean, 7, 2) AS INTEGER)"
     return {
         "ada": "TRUE",
         "clean": clean,
         "excel": excel,
+        "non_numerik": non_numerik,
         "len_ok": "length(__nik_clean) = 16",
         "prov": "substr(__nik_clean, 1, 2)",
         "kec": "substr(__nik_clean, 1, 6)",
@@ -437,6 +468,7 @@ def bersihkan_dan_tandai(s: dict) -> dict:
         SELECT r.*,
                {nik['clean']}       AS __nik_clean,
                {nik['excel']}       AS __nik_excel,
+               {nik['non_numerik']} AS __nik_non_numerik,
                CAST({tgl} AS DATE)  AS __tgl,
                {jk}                 AS __jk,
                {nama['bersih']}     AS __nama_clean,
@@ -497,9 +529,10 @@ def bersihkan_dan_tandai(s: dict) -> dict:
         for e in elemen_hadir
     ] or ["NULL"]
 
-    catatan = _sql_catatan(bool(peta.get("nik")), kol_tgl,
-                           peta.get("jenis_kelamin"),
-                           bool(peta.get("nama")))
+    arg_anomali = (bool(peta.get("nik")), kol_tgl,
+                   peta.get("jenis_kelamin"), bool(peta.get("nama")))
+    catatan = _sql_catatan(*arg_anomali)
+    jenis = _sql_jenis(*arg_anomali)
 
     # Hanya SATU tabel yang dimaterialkan, dan di sinilah window function
     # duplikasi ikut terhitung sekali untuk selamanya.
@@ -531,7 +564,8 @@ def bersihkan_dan_tandai(s: dict) -> dict:
                 OR length(__elemen_kosong) > 0
                 OR __nama_gelar OR __nama_bin)               AS is_anomaly,
                __nama_clean                                  AS nama_clean,
-               __catatan                                     AS anomaly_notes
+               __catatan                                     AS anomaly_notes,
+               __jenis                                       AS anomaly_type
           FROM (
             SELECT *,
                    ({ada_nik}
@@ -543,7 +577,8 @@ def bersihkan_dan_tandai(s: dict) -> dict:
                     AND NOT __beda_tgl
                     AND NOT __beda_jk
                     AND NOT __nik_dobel)  AS __trusted,
-                   {catatan}              AS __catatan
+                   {catatan}              AS __catatan,
+                   {jenis}                AS __jenis
               FROM vonis_df
           )
     """)
@@ -554,75 +589,138 @@ def bersihkan_dan_tandai(s: dict) -> dict:
     return {**s, "anomaly_count": n_anomali}
 
 
-def _sql_catatan(ada_nik: bool, kol_tgl: str | None, kol_jk: str | None,
-                 ada_nama: bool = False) -> str:
-    """Keterangan anomali per baris, digabung dengan '; '."""
-    potong = []
+def _daftar_anomali(ada_nik: bool, kol_tgl: str | None, kol_jk: str | None,
+                    ada_nama: bool = False) -> list[tuple[str, str, str]]:
+    """
+    Satu daftar (kode, kondisi, teks) — sumber tunggal untuk DUA kolom.
+
+    `anomaly_notes` dan `anomaly_type` dibangun dari daftar yang sama persis,
+    jadi keduanya TIDAK MUNGKIN menyimpang. Kalau ditulis sebagai dua daftar
+    terpisah, cepat atau lambat ada jenis anomali yang muncul di teksnya tapi
+    tidak di kodenya — dan ketidakcocokan itu baru ketahuan saat seseorang
+    menghitung dan angkanya tidak pernah cocok.
+
+    Kodenya sengaja pendek, ASCII, dan STABIL. Portal boleh mengandalkannya
+    untuk memfilter dan mengelompokkan; teks di `anomaly_notes` boleh berubah
+    kapan saja karena ia untuk dibaca manusia, bukan untuk dicocokkan mesin.
+    """
+    d: list[tuple[str, str, str]] = []
+    nik_kosong = "list_contains(__elemen_kosong, 'nik')"
 
     if ada_nik:
-        potong += [
-            "CASE WHEN __nik_excel THEN 'NIK rusak akibat notasi ilmiah Excel "
-            "(digit belakang tidak dapat dipulihkan)' END",
+        d += [
+            ("EMPTY_NIK", nik_kosong, "'Kolom NIK kosong'"),
 
-            "CASE WHEN NOT __nik_len_ok THEN 'Panjang NIK ' || "
-            "CAST(length(__nik_clean) AS VARCHAR) || ' digit, seharusnya 16' END",
+            # Notasi ilmiah Excel ikut ke sini: nilainya memang bukan angka
+            # murni. Teksnya yang membedakan, karena hanya pada kasus itu ada
+            # digit yang benar-benar hilang dan tidak bisa dipulihkan.
+            ("NON_NUMERIC_NIK", "__nik_non_numerik",
+             "CASE WHEN __nik_excel THEN 'NIK rusak akibat notasi ilmiah Excel "
+             "(digit belakang tidak dapat dipulihkan)' "
+             "ELSE 'NIK memuat karakter selain angka' END"),
 
-            "CASE WHEN __nik_len_ok AND NOT __nik_prov_ok THEN "
-            "'Kode provinsi NIK tidak dikenali: ' || __nik_prov END",
+            ("INVALID_NIK_LENGTH", f"NOT {nik_kosong} AND NOT __nik_len_ok",
+             "'Panjang NIK ' || CAST(length(__nik_clean) AS VARCHAR) || "
+             "' digit, seharusnya 16'"),
 
+            ("NIK_PROVINCE_INVALID", "__nik_len_ok AND NOT __nik_prov_ok",
+             "'Kode provinsi NIK tidak dikenali: ' || __nik_prov"),
         ]
 
         # Hanya dicatat saat ditegakkan. Kalau tidak, seluruh berkas dummy akan
         # penuh catatan untuk sesuatu yang sengaja tidak memengaruhi apa pun —
         # dan `anomaly_notes` harus sejalan dengan `is_anomaly`.
         if _wilayah.KECAMATAN_TEGAS:
-            potong.append(
-                # Diperiksa hanya kalau provinsinya sudah benar, supaya baris
-                # yang sama tidak dilaporkan dua kali untuk sebab yang sama.
-                "CASE WHEN __nik_len_ok AND __nik_prov_ok AND NOT __nik_kec_ok "
-                "THEN 'Kode wilayah 6 digit NIK tidak dikenali: ' || __nik_kec END"
-            )
+            # Diperiksa hanya kalau provinsinya sudah benar, supaya baris yang
+            # sama tidak dilaporkan dua kali untuk sebab yang sama.
+            d.append(("NIK_KECAMATAN_INVALID",
+                      "__nik_len_ok AND __nik_prov_ok AND NOT __nik_kec_ok",
+                      "'Kode wilayah 6 digit NIK tidak dikenali: ' || __nik_kec"))
 
-        potong += [
+        d += [
+            ("NIK_DOB_INVALID", "__nik_len_ok AND __nik_tgl_ngawur",
+             "'Digit tanggal lahir pada NIK di luar rentang wajar'"),
 
-            "CASE WHEN __nik_len_ok AND __nik_tgl_ngawur THEN "
-            "'Digit tanggal lahir pada NIK di luar rentang wajar' END",
-
-            "CASE WHEN __nik_dobel THEN 'NIK duplikat di dalam berkas ("
-            "muncul ' || CAST(__nik_kembar AS VARCHAR) || ' kali)' END",
+            ("DUPLICATE_NIK", "__nik_dobel",
+             "'NIK duplikat di dalam berkas (muncul ' || "
+             "CAST(__nik_kembar AS VARCHAR) || ' kali)'"),
         ]
 
     if kol_tgl and ada_nik:
-        potong.append(
-            "CASE WHEN __beda_tgl THEN 'Beda Tanggal Lahir: digit NIK "
-            "menunjuk ' || CAST(__nik_hari AS VARCHAR) || '/' || "
-            "CAST(__nik_bulan AS VARCHAR) || ', kolom tanggal lahir terisi ' || "
-            "strftime(__tgl, '%d/%m/%Y') END"
-        )
+        d.append(("NIK_DOB_MISMATCH", "__beda_tgl",
+                  "'Beda Tanggal Lahir: digit NIK menunjuk ' || "
+                  "CAST(__nik_hari AS VARCHAR) || '/' || "
+                  "CAST(__nik_bulan AS VARCHAR) || "
+                  "', kolom tanggal lahir terisi ' || strftime(__tgl, '%d/%m/%Y')"))
 
     if kol_jk and ada_nik:
-        potong.append(
-            "CASE WHEN __beda_jk THEN 'Beda Jenis Kelamin: digit hari NIK "
-            "mengindikasikan ' || CASE WHEN __nik_jk = 'p' THEN 'wanita' "
-            "ELSE 'pria' END || ' (' || CAST(__nik_hari_mentah AS VARCHAR) || "
-            "'), namun kolom jenis kelamin terisi ' || upper(__jk) END"
-        )
+        d.append(("NIK_GENDER_MISMATCH", "__beda_jk",
+                  "'Beda Jenis Kelamin: digit hari NIK mengindikasikan ' || "
+                  "CASE WHEN __nik_jk = 'p' THEN 'wanita' ELSE 'pria' END || "
+                  "' (' || CAST(__nik_hari_mentah AS VARCHAR) || "
+                  "'), namun kolom jenis kelamin terisi ' || upper(__jk)"))
 
     if ada_nama:
-        potong += [
-            "CASE WHEN __nama_gelar THEN 'Nama memuat gelar akademik atau "
-            "sebutan kehormatan; dibersihkan ke kolom nama_clean' END",
-            "CASE WHEN __nama_bin THEN 'Nama memuat patronimik bin/binti; "
-            "dibersihkan ke kolom nama_clean' END",
+        d += [
+            ("NAME_HAS_TITLE", "__nama_gelar",
+             "'Nama memuat gelar akademik atau sebutan kehormatan; "
+             "dibersihkan ke kolom nama_clean'"),
+            ("NAME_HAS_PATRONYM", "__nama_bin",
+             "'Nama memuat patronimik bin/binti; "
+             "dibersihkan ke kolom nama_clean'"),
         ]
 
-    potong.append(
-        "CASE WHEN length(__elemen_kosong) > 0 THEN 'Elemen kosong: ' || "
-        "array_to_string(__elemen_kosong, ', ') END"
-    )
+    # Kolom kosong dipecah sesuai spesifikasi: NIK dan nama punya kodenya
+    # sendiri, sisanya masuk MISSING_CORE_ELEMENT. `EMPTY_NIK` sudah di atas.
+    d += [
+        ("EMPTY_NAME", "list_contains(__elemen_kosong, 'nama')",
+         "'Kolom nama lengkap kosong'"),
+        ("MISSING_CORE_ELEMENT",
+         "length(list_filter(__elemen_kosong, x -> x NOT IN ('nik','nama'))) > 0",
+         "'Elemen kosong: ' || array_to_string("
+         "list_filter(__elemen_kosong, x -> x NOT IN ('nik','nama')), ', ')"),
+    ]
+    return d
 
+
+def _gabung(potong: list[str]) -> str:
     return (f"array_to_string(list_filter([{', '.join(potong)}], "
             "x -> x IS NOT NULL), '; ')")
+
+
+def _sql_catatan(*a, **k) -> str:
+    """Keterangan anomali per baris, untuk dibaca manusia. Digabung '; '."""
+    return _gabung([f"CASE WHEN {kondisi} THEN {teks} END"
+                    for _, kondisi, teks in _daftar_anomali(*a, **k)])
+
+
+def _sql_jenis(*a, **k) -> str:
+    """
+    Kode jenis anomali per baris, untuk difilter mesin. Digabung '; '.
+
+    Satu baris bisa punya lebih dari satu jenis — urutannya sama dengan
+    `anomaly_notes`, jadi kode ke-n bersesuaian dengan catatan ke-n.
+
+    Nilainya memakai KODE STANDAR dari spesifikasi integrasi bagian 4.2 —
+    `NIK_DOB_MISMATCH`, `DUPLICATE_NIK`, `EMPTY_NIK`, dan seterusnya — bukan
+    kode karangan sendiri, karena portal memfilter berdasarkan daftar itu.
+
+    Empat kode adalah TAMBAHAN di luar daftar spesifikasi, untuk hal yang
+    memang dideteksi engine tapi belum ada padanannya di sana:
+    `NIK_KECAMATAN_INVALID`, `NIK_DOB_INVALID`, `NAME_HAS_TITLE`,
+    `NAME_HAS_PATRONYM`. Menyembunyikannya hanya karena belum terdaftar berarti
+    membuang informasi yang sudah dihitung.
+
+    Baris tanpa anomali bernilai `CLEAN`, bukan string kosong — spesifikasi
+    bagian 4.2 menyebutnya begitu, dan itu membuat filter portal punya nilai
+    yang bisa dipilih untuk "data bersih".
+
+    Memfilter di portal:  WHERE anomaly_type LIKE '%DUPLICATE_NIK%'
+    Menghitung per jenis: unnest(string_split(anomaly_type, '; '))
+    """
+    gabungan = _gabung([f"CASE WHEN {kondisi} THEN '{kode}' END"
+                        for kode, kondisi, _ in _daftar_anomali(*a, **k)])
+    return f"CASE WHEN {gabungan} = '' THEN 'CLEAN' ELSE {gabungan} END"
 
 
 # ── Tahap 5: metrik, skor, grade ───────────────────────────────────────────
@@ -837,7 +935,9 @@ def tulis_enriched(s: dict) -> dict:
         print(f"[G5] kolom asli ditimpa karena bentrok nama: {', '.join(dibuang)}")
 
     nik_ada = bool(peta.get("nik"))
-    pilih = [_kutip(k) for k in asli] + [
+    pilih = [
+        f"{_kutip(k)} AS {_kutip(NAMA_KELUARAN.get(k, k))}" for k in asli
+    ] + [
         ("__nik_clean AS nik_clean" if nik_ada else "CAST(NULL AS VARCHAR) AS nik_clean"),
         ("__nik_prov  AS nik_prov" if nik_ada else "CAST(NULL AS VARCHAR) AS nik_prov"),
         ("CASE WHEN __nik_len_ok THEN __nik_hari  END AS nik_hari"),
@@ -845,6 +945,7 @@ def tulis_enriched(s: dict) -> dict:
         ("CASE WHEN __nik_len_ok THEN __nik_tahun END AS nik_tahun"),
         "nik_trusted",
         "is_anomaly",
+        "anomaly_type",
         "anomaly_notes",
         "nama_clean",
     ]
