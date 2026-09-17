@@ -556,10 +556,29 @@ def bersihkan_dan_tandai(s: dict) -> dict:
     ada_nik = "TRUE" if peta.get("nik") else "FALSE"
     # Kode 6 digit ikut menentukan kepercayaan HANYA kalau ditegakkan.
     kec_wajib = "__nik_kec_ok" if _wilayah.KECAMATAN_TEGAS else "TRUE"
+
+    # Berkas TANPA kolom NIK (grade C, D, E) tidak punya NIK untuk dinilai, jadi
+    # `nik_trusted` bernilai NULL — sama seperti nik_clean, nik_prov, nik_hari,
+    # nik_bulan, dan nik_tahun yang memang sudah NULL di berkas itu.
+    #
+    # Sebelumnya kolom ini sendirian bernilai FALSE, dan portal menampilkannya
+    # sebagai "Untrusted" untuk berkas yang sama sekali tidak punya NIK —
+    # padahal FALSE berarti "NIK ini bermasalah", bukan "tidak ada NIK".
+    #
+    # NULL juga membuat definisi spesifikasi bagian 5.1 jadi tepat apa adanya:
+    # `untrustedNikCount` = jumlah baris ber-nik_trusted FALSE. Dengan NULL,
+    # jumlahnya nol — dan itu memang angka yang dilaporkan engine. Dengan FALSE,
+    # pembacaan harfiahnya menuntut SELURUH baris dihitung sebagai NIK bermasalah.
+    #
+    # `__trusted` di dalam pipeline tetap boolean apa adanya; yang diubah hanya
+    # kolom yang tertulis ke berkas. Jadi is_anomaly dan penentuan grade tidak
+    # ikut bergeser.
+    trusted_keluar = "__trusted" if peta.get("nik") else "CAST(NULL AS BOOLEAN)"
+
     con.execute(f"""
         CREATE OR REPLACE VIEW anomali_df AS
         SELECT *,
-               __trusted                                     AS nik_trusted,
+               {trusted_keluar}                              AS nik_trusted,
                ((NOT __trusted AND {ada_nik})
                 OR length(__elemen_kosong) > 0
                 OR __nama_gelar OR __nama_bin)               AS is_anomaly,
