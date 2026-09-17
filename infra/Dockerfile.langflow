@@ -22,4 +22,18 @@ RUN pip install --no-cache-dir duckdb==1.5.5 python-dotenv==1.2.3
 # saat runtime dan eksekusi flow pertama tidak tertunda.
 RUN python -c "import duckdb; c=duckdb.connect(); [c.execute(f'INSTALL {e}') for e in ('httpfs','postgres')]"
 
+# Folder data Langflow dibuat & dimiliki user (uid 1000, grup root/0) SEBELUM
+# volume di-mount. WAJIB di server Linux: image ini berjalan sebagai user
+# non-root, tapi Docker membuat named volume sebagai root:root — sehingga
+# Langflow gagal menulis /app/langflow-data/secret_key dengan
+# "PermissionError: [Errno 13]". Di Docker Desktop tidak terlihat karena izin
+# volumenya longgar; di Linux terlihat.
+#
+# Named volume yang MASIH KOSONG mewarisi kepemilikan folder ini saat pertama
+# di-mount — jadi volume baru langsung bisa ditulis. (Volume lama yang teranjur
+# dibuat root harus dihapus dulu: docker compose ... down -v.)
+RUN mkdir -p /app/langflow-data \
+ && chown -R 1000:0 /app/langflow-data \
+ && chmod -R g+rwX /app/langflow-data
+
 USER user

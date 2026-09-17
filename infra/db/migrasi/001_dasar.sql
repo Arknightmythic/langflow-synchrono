@@ -1,3 +1,10 @@
+-- Tabel dasar: referensi, master, uploaded_files, institution
+--
+-- MIGRASI — dijalankan SEKALI, lalu dicatat di `schema_migrations`.
+-- Jangan disunting setelah pernah diterapkan di mana pun: migrate.py
+-- membandingkan checksum dan akan memperingatkan kalau berubah. Perubahan
+-- skema berikutnya ditulis sebagai berkas migrasi BARU bernomor lebih besar.
+
 -- ============================================================================
 -- Skema PostgreSQL untuk service matching Synchrono (berdiri sendiri)
 --

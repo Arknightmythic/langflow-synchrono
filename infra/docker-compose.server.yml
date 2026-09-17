@@ -12,14 +12,69 @@
 # Nilai rahasia (kata sandi PostgreSQL) TIDAK ditaruh di sini. Diisi lewat
 # berkas .env di sebelah compose ini — salin dari .env.server.example.
 #
-# Menjalankan:
+# Menjalankan — SATU perintah, skema ikut diterapkan:
 #     cp .env.server.example .env
 #     # isi PG_PASSWORD di .env
 #     docker compose -f docker-compose.server.yml --env-file .env up -d --build
 #
 # Langkah lengkap: lihat DEPLOY.md.
 
+# DSN ditulis SEKALI di sini lalu dipakai dua service. Kalau ditulis dua kali,
+# cepat atau lambat yang satu diubah dan yang lain tertinggal — dan gejalanya
+# membingungkan: skema masuk ke satu basis data, Langflow membaca yang lain.
+x-pg-dsn: &pg_dsn "host=${PG_HOST:-172.16.12.98} port=${PG_PORT:-5430} dbname=${PG_DB:-synchrono} user=${PG_USER:-root} password=${PG_PASSWORD:?isi di .env}"
+
 services:
+  # ── Migrasi + seeder, sekali jalan lalu berhenti ──────────────────────
+  #
+  # Dijalankan SEBELUM Langflow, dan Langflow menunggunya selesai dengan sukses.
+  # Tanpa ini, `up -d` menyalakan Langflow di atas basis data kosong dan SEMUA
+  # endpoint balas 500 — dengan penyebab yang hanya terlihat di log.
+  #
+  # DUA LANGKAH TERPISAH, DAN ITU DISENGAJA:
+  #
+  #   migrate.py  mengubah BENTUK basis data. Tiap berkas migrasi dicatat di
+  #               `schema_migrations` dan tidak pernah dijalankan dua kali.
+  #   seed.py     mengisi DATA awal dengan ON CONFLICT DO NOTHING. Ia mengisi
+  #               yang belum ada dan TIDAK PERNAH menimpa yang sudah ada.
+  #
+  # Karena itu ambang yang sudah disetel operator lewat API config tidak akan
+  # dikembalikan ke nilai bawaan tiap kali `docker compose up` dijalankan.
+  # (Diuji: nilai yang diubah tetap bertahan setelah migrate + seed diulang.)
+  #
+  # Menunggu PostgreSQL siap, bukan langsung menyerah. Saat server baru menyala,
+  # PostgreSQL sering belum menerima koneksi pada detik-detik pertama.
+  skema:
+    build:
+      context: .
+      dockerfile: Dockerfile.langflow
+    container_name: synchrono-skema
+    environment:
+      PG_DSN: *pg_dsn
+      # Berapa kali menunggu PostgreSQL sebelum menyerah (jeda 5 detik).
+      # 12 = satu menit; cukup untuk PostgreSQL yang baru ikut menyala.
+      SKEMA_PERCOBAAN: "${SKEMA_PERCOBAAN:-12}"
+    volumes:
+      - .:/synchrono/infra:ro
+    command:
+      - sh
+      - -c
+      - |
+        cd /synchrono/infra
+        for i in $$(seq 1 "$${SKEMA_PERCOBAAN:-12}"); do
+          if python migrate.py && python seed.py; then
+            echo "[skema] migrasi & seeding selesai."
+            exit 0
+          fi
+          echo "[skema] PostgreSQL belum siap / gagal — percobaan $$i, ulang 5 detik lagi"
+          sleep 5
+        done
+        echo "[skema] GAGAL setelah $${SKEMA_PERCOBAAN:-12} percobaan. Periksa PG_HOST/PG_PORT/PG_PASSWORD di .env."
+        exit 1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: "no"
+
   langflow:
     build:
       context: .
@@ -48,7 +103,8 @@ services:
       # ── PostgreSQL server ──────────────────────────────────────────────
       # Server menjalankan PostgreSQL dengan otentikasi kata sandi. Kata
       # sandinya diisi lewat .env, tidak ditulis di berkas ini.
-      PG_DSN: "host=${PG_HOST:-172.16.12.98} port=${PG_PORT:-5432} dbname=${PG_DB:-synchrono} user=${PG_USER:-postgres} password=${PG_PASSWORD:?isi di .env}"
+      # PERHATIKAN portnya 5430, bukan 5432 yang lazim.
+      PG_DSN: *pg_dsn
 
       # ── SeaweedFS server ───────────────────────────────────────────────
       # Berkas unggahan portal ada di bucket syncrono-uploads di server ini.
@@ -92,6 +148,12 @@ services:
       - .:/synchrono/infra:ro
       - langflow-data:/app/langflow-data
     command: ["langflow", "run", "--host", "0.0.0.0", "--port", "7860"]
+    # Menunggu skema selesai diterapkan. Kalau `skema` gagal (mis. kata sandi
+    # salah), Langflow SENGAJA tidak ikut menyala — lebih baik gagal terang-
+    # terangan daripada menyala dengan seluruh endpoint balas 500.
+    depends_on:
+      skema:
+        condition: service_completed_successfully
     # host.docker.internal tetap dipetakan supaya sama dengan compose lokal;
     # di server, PG & S3 dijangkau lewat IP 172.16.12.98 langsung.
     extra_hosts:

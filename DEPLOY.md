@@ -18,12 +18,20 @@ Diperiksa langsung sebelum panduan ini ditulis:
 | SeaweedFS `172.16.12.98:8333` (ADMIN / Password1234) | hidup |
 | `s3://syncrono-master/wilayah/master_wilayah_nik.parquet` | ada, 7.265 kecamatan |
 | Bucket `syncrono-uploads`, `syncrono-exports` | ada, masih kosong |
-| PostgreSQL `172.16.12.98:5432` | hidup, **butuh kata sandi** |
+| PostgreSQL `172.16.12.98:**5430**` (root / root), db `synchrono` | hidup, tapi **KOSONG — nol tabel** |
 | Langflow `:7860` | belum ada — ini yang dinaikkan |
 
-**Satu hal yang belum diketahui: kata sandi PostgreSQL server.** Server menolak
-koneksi tanpa kata sandi. Isi di `.env` (langkah 3). Tanpa itu semua endpoint
-balas 500.
+**Port PostgreSQL-nya 5430, bukan 5432**, dan usernya `root`, bukan `postgres`.
+Mudah keliru karena 5432 adalah yang lazim.
+
+**Database `synchrono` ada dan bisa disambung, tapi isinya kosong** — belum ada
+satu pun tabel di schema `public`. Itu normal untuk server baru: skemanya dibuat
+oleh langkah 4. Selama langkah itu belum dijalankan, semua endpoint balas 500
+karena `grading_jobs` dan `grade_criteria` tidak ada.
+
+Tabel `master` juga akan kosong sesudahnya. Grading **tidak** membutuhkannya —
+yang terpengaruh hanya lapis ke-4 pengenalan kolom (kamus master), yang otomatis
+dilewati kalau master kosong. Matching baru butuh master terisi.
 
 ---
 
@@ -38,8 +46,9 @@ infra/
     Dockerfile.langflow
     docker-compose.server.yml
     .env.server.example        -> disalin jadi .env
-    apply_schema.py
-    schema.sql schema_grading.sql schema_config.sql
+    migrate.py seed.py
+    db/migrasi/*.sql            (perubahan bentuk basis data)
+    db/seeder/*                 (data awal)
     matching_queries.json       (hanya kalau matching dipakai)
     flow_util.py
     buat_flow_grading.py buat_flow_config.py
@@ -62,8 +71,8 @@ Contoh menyalin dengan rsync (dari mesin ini, sesuaikan host):
 rsync -av --relative \
   lib/ components/ \
   infra/Dockerfile.langflow infra/docker-compose.server.yml \
-  infra/.env.server.example infra/apply_schema.py \
-  infra/schema.sql infra/schema_grading.sql infra/schema_config.sql \
+  infra/.env.server.example infra/migrate.py infra/seed.py \
+  infra/db/ \
   infra/matching_queries.json infra/flow_util.py \
   infra/buat_flow_grading.py infra/buat_flow_config.py infra/buat_flow.py \
   user@172.16.12.98:/opt/synchrono/langflow-synchrono/
@@ -83,6 +92,29 @@ nano .env
 docker compose -f docker-compose.server.yml --env-file .env up -d --build
 ```
 
+**Migrasi dan seeding berjalan otomatis** lewat service `skema`, yang jalan
+lebih dulu dan ditunggu Langflow sampai selesai. Ia menunggu PostgreSQL siap
+(12 kali, jeda 5 detik).
+
+Keduanya aman diulang tiap `up`, dan itu bukan kebetulan:
+
+* **`migrate.py`** mengubah *bentuk* basis data. Tiap berkas migrasi dicatat di
+  `schema_migrations` dan tidak pernah dijalankan dua kali.
+* **`seed.py`** mengisi *data awal* dengan `ON CONFLICT DO NOTHING` — mengisi
+  yang belum ada, tidak pernah menimpa yang sudah ada.
+
+Jadi ambang yang sudah kamu setel lewat API config **tidak akan kembali ke nilai
+bawaan** saat deploy berikutnya. Sudah diuji: nilai yang diubah tetap bertahan
+setelah migrate + seed dijalankan ulang.
+
+Kalau `skema` gagal — misalnya kata sandi salah — **Langflow sengaja tidak ikut
+menyala**. Itu disengaja: lebih baik gagal terang-terangan daripada menyala
+dengan seluruh endpoint balas 500. Lihat sebabnya di:
+
+```bash
+docker compose -f docker-compose.server.yml logs skema
+```
+
 Cek Langflow hidup:
 
 ```bash
@@ -92,19 +124,52 @@ docker compose -f docker-compose.server.yml logs langflow --tail 30
 
 ---
 
-## 4. Menyiapkan basis data
+## 4. Memeriksa basis data
 
-Skema idempotent (`IF NOT EXISTS`, `ON CONFLICT`) — aman dijalankan berulang.
-Ia membuat `grading_jobs`, `grade_criteria`, `grade_bands`, tabel referensi, dan
-menyemai `grade_rules`. Kata sandi terbaca dari `.env` lewat `PG_DSN`.
+Langkah 3 sudah menjalankan migrasi dan seeding. Ini hanya untuk memastikan:
 
 ```bash
+# migrasi mana yang sudah diterapkan
 docker compose -f docker-compose.server.yml exec langflow \
-    python /synchrono/infra/apply_schema.py
+    python /synchrono/infra/migrate.py --status
 
-# periksa hasilnya
+# jalankan ulang keduanya secara manual (aman diulang)
+docker compose -f docker-compose.server.yml run --rm skema
+```
+
+Pada pemasangan baru, isi tabelnya harus seperti ini:
+
+```
+   ref_grades          6      grade_rules         6
+   ref_process         2      grade_bands         6
+   ref_sync_statuses   3      grade_criteria      4
+   ref_match_results   5      matching_queries    5
+```
+
+`grading_jobs` kosong itu benar — ia terisi saat job pertama masuk. `master`
+kosong juga benar; grading tidak membutuhkannya.
+
+### Menambah perubahan skema nanti
+
+Jangan menyunting berkas migrasi yang sudah pernah diterapkan. `migrate.py`
+membandingkan checksum dan akan memperingatkan, tapi sengaja tidak
+menjalankannya ulang. Buat berkas baru bernomor lebih besar:
+
+```
+infra/db/migrasi/005_nama_perubahan.sql
+```
+
+`docker compose up -d` berikutnya menerapkannya sendiri.
+
+### Mengembalikan satu tabel ke nilai bawaan
+
+Seeder tidak pernah menimpa, jadi ini dua langkah sadar — bukan efek samping
+deploy:
+
+```bash
+psql -h 172.16.12.98 -p 5430 -U root -d synchrono -c "DELETE FROM grade_rules;"
 docker compose -f docker-compose.server.yml exec langflow \
-    python /synchrono/infra/apply_schema.py --verify
+    python /synchrono/infra/seed.py --hanya 002
 ```
 
 ---
@@ -193,11 +258,31 @@ docker compose -f docker-compose.server.yml cp \
 
 | Gejala | Sebab paling sering |
 |---|---|
+| `PermissionError … /app/langflow-data/secret_key` | Named volume dibuat root, Langflow jalan sebagai uid 1000 — lihat di bawah |
 | Semua endpoint 500 | Kata sandi PG salah/kosong di `.env`. Cek `logs \| grep -i postgres` |
 | `NoSuchBucket` | `syncrono-uploads` belum ada, atau `parquetKey` salah |
 | Grade jatuh ke E untuk data bagus | `WILAYAH_KECAMATAN_TEGAS=1` pada data dummy — set `0` |
 | Flow hilang setelah recreate | `LANGFLOW_DATABASE_URL` tidak ke volume — sudah benar di compose ini |
 | `Could not resolve host seaweedfs` | Container tidak bisa jangkau `172.16.12.98:8333` — cek jaringan server |
+
+### PermissionError pada `/app/langflow-data/secret_key`
+
+Muncul di server Linux, tidak di Docker Desktop. Image Langflow berjalan sebagai
+user non-root (uid 1000), tapi Docker membuat named volume sebagai `root:root`,
+sehingga Langflow tak bisa menulis ke `/app/langflow-data`.
+
+`Dockerfile.langflow` sudah membuat folder itu dengan kepemilikan yang benar
+(uid 1000, grup 0, group-writable) supaya **volume baru yang masih kosong**
+mewarisinya. Kalau volume terlanjur dibuat root pada percobaan gagal, hapus dulu
+lalu bangun ulang:
+
+```bash
+docker compose -f docker-compose.server.yml down -v      # -v menghapus volume kosong
+docker compose -f docker-compose.server.yml --env-file .env up -d --build
+```
+
+`down -v` di compose ini hanya menghapus `langflow-data` (kosong karena Langflow
+belum sempat menulis apa pun), jadi tidak ada yang hilang.
 
 > **Catatan wilayah.** Selama data masih dummy, biarkan
 > `WILAYAH_KECAMATAN_TEGAS=0`: kode kecamatan yang tak dikenal hanya dilaporkan,
