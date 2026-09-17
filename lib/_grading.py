@@ -72,33 +72,104 @@ def _terisi(kolom: str | None) -> str:
 
 # ── Tahap 1: buka sesi ─────────────────────────────────────────────────────
 
+def _endpoint_mustahil(endpoint: str) -> bool:
+    """Endpoint yang tidak mungkin benar kalau dilihat dari dalam container."""
+    host = re.sub(r"^https?://", "", endpoint).split(":")[0].strip().lower()
+    return host in ("localhost", "127.0.0.1", "0.0.0.0", "::1", "")
+
+
+def _pilih_sumber(job: dict, tujuan: str) -> str:
+    """
+    Tentukan berkas MASUKAN, dari beberapa kunci yang mungkin dikirim portal.
+
+    Muatan portal memuat empat kunci sekaligus, dan artinya tidak seragam:
+
+        csvKey             berkas unggahan asli          <- ADA
+        rawSourceKey       sama dengan csvKey            <- ADA
+        parquetKey         tempat parquet AKAN dibuat    <- belum ada
+        enrichedParquetKey sama dengan parquetKey        <- belum ada
+
+    Jadi `parquetKey` di sana BUKAN berkas masukan melainkan nama berkas
+    keluaran — dan membacanya berarti membaca berkas yang belum ada, atau lebih
+    buruk, membaca hasil job sebelumnya lalu menimpanya.
+
+    Aturannya: pakai `parquetKey` kalau ia benar-benar berkas lain dari tujuan.
+    Kalau ia sama dengan tujuan, ia jelas bukan masukan — mundur ke berkas
+    unggahan asli. Menolak mentah-mentah tidak menolong siapa pun: muatannya
+    sudah memuat berkas yang benar, hanya di kunci yang berbeda.
+    """
+    def ambil(*nama) -> str:
+        for n in nama:
+            v = str(job.get(n) or "").strip()
+            if v:
+                return v
+        return ""
+
+    parquet = ambil("parquet_key")
+    mentah = ambil("csv_key", "raw_source_key")
+
+    if parquet and parquet.strip("/") != tujuan.strip("/"):
+        return parquet
+
+    if mentah:
+        if parquet:
+            print(f"[G1] parquetKey '{parquet}' sama dengan berkas keluaran — "
+                  f"itu nama tujuan, bukan sumber. Memakai berkas unggahan "
+                  f"'{mentah}'.")
+        return mentah
+
+    if parquet:
+        # Sama dengan tujuan DAN tidak ada berkas unggahan yang bisa dipakai.
+        # Kalau diteruskan, engine membaca hasil lamanya sendiri lalu
+        # menimpanya — data asli hilang tanpa satu pun galat.
+        raise ValueError(
+            f"parquetKey menunjuk berkas keluaran ({parquet}) dan tidak ada "
+            f"csvKey/rawSourceKey sebagai gantinya. parquetKey harus berkas "
+            f"UNGGAHAN; kalau sama dengan enrichedParquetKey, hasil grading "
+            f"akan menimpa data aslinya."
+        )
+
+    raise ValueError("parquetKey, csvKey, maupun rawSourceKey kosong — "
+                     "tidak ada berkas yang bisa dibaca")
+
+
 def buka(job: dict) -> dict:
     """
     Koneksi DuckDB siap pakai + parameter job.
 
-    `s3_endpoint` dari muatan backend menimpa nilai environment. Portal berhak
-    menunjuk SeaweedFS yang berbeda dari yang dipakai matching.
+    `s3_endpoint` dari muatan backend menimpa nilai environment, KECUALI kalau
+    ia menunjuk localhost — lihat catatannya di bawah. Berkas masukan dipilih
+    oleh `_pilih_sumber`.
     """
     file_id = str(job.get("file_id") or "").strip()
     bucket = str(job.get("s3_bucket") or "").strip()
-
-    # `parquetKey` yang utama. Kalau portal belum sempat mengubah unggahannya
-    # jadi parquet, `csvKey` dipakai — CSV dibaca langsung (lihat _sql_sumber).
-    kunci = str(job.get("parquet_key") or "").strip()
-    if not kunci:
-        kunci = str(job.get("csv_key") or "").strip()
 
     if not file_id:
         raise ValueError("fileId kosong")
     if not bucket:
         raise ValueError("s3Bucket kosong")
-    if not kunci:
-        raise ValueError("parquetKey maupun csvKey kosong — "
-                         "tidak ada berkas yang bisa dibaca")
+
+    tujuan = str(job.get("enriched_key")
+                 or f"uploads/{file_id}/enriched.parquet").strip()
+    kunci = _pilih_sumber(job, tujuan)
 
     con = buka_koneksi()
 
     endpoint = str(job.get("s3_endpoint") or "").strip()
+    if endpoint and _endpoint_mustahil(endpoint):
+        # `localhost` dari dalam container ini berarti CONTAINER INI SENDIRI —
+        # dan SeaweedFS tidak pernah berjalan di sini. Jadi nilai seperti itu
+        # tidak mungkin benar, apa pun maksud pengirimnya: yang ia maksud adalah
+        # localhost MESINNYA, yang tidak punya arti di sisi kami.
+        #
+        # Diabaikan, bukan diikuti sampai gagal. Sebelumnya ini menggagalkan
+        # setiap job dengan "Could not connect to server ... localhost:8333",
+        # padahal env engine sudah menunjuk SeaweedFS yang benar.
+        print(f"[G1] s3Endpoint '{endpoint}' DIABAIKAN — 'localhost' di dalam "
+              f"container menunjuk container ini sendiri. Memakai S3_ENDPOINT "
+              f"dari environment.")
+        endpoint = ""
+
     if endpoint:
         # DuckDB menginginkan host:port tanpa skema.
         bersih = re.sub(r"^https?://", "", endpoint).rstrip("/")
@@ -113,7 +184,6 @@ def buka(job: dict) -> dict:
         """)
 
     sumber = f"s3://{bucket}/{kunci}"
-    tujuan = job.get("enriched_key") or f"uploads/{file_id}/enriched.parquet"
 
     print(f"[G1] file_id={file_id}")
     print(f"[G1] sumber : {sumber}")

@@ -129,6 +129,10 @@ def susun_job(muatan: dict, bawaan: dict | None = None) -> dict:
         "s3_bucket": str(a("s3Bucket", "s3_bucket", wajib=True)),
         "s3_endpoint": a("s3Endpoint", "s3_endpoint"),
         "csv_key": a("csvKey", "csv_key"),
+        # Portal mengirim `rawSourceKey` berdampingan dengan `csvKey`, isinya
+        # sama: berkas unggahan asli. Dibawa juga supaya `_pilih_sumber` punya
+        # dua kesempatan menemukan berkas masukan yang benar.
+        "raw_source_key": a("rawSourceKey", "raw_source_key"),
         "parquet_key": str(a("parquetKey", "parquet_key", wajib=True)),
         "enriched_key": a("enrichedParquetKey", "enriched_key"),
         "row_count": baris,
