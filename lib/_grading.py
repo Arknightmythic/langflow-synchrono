@@ -523,11 +523,25 @@ def bersihkan_dan_tandai(s: dict) -> dict:
         "__jk IS NOT NULL AND __nik_len_ok AND __jk <> __nik_jk"
     ) if peta.get("jenis_kelamin") else "FALSE"
 
-    elemen_hadir = [e for e in ENAM_ELEMEN if e in peta]
+    # KOLOM YANG TIDAK ADA DIHITUNG KOSONG UNTUK SETIAP BARIS.
+    #
+    # Sebelumnya hanya elemen yang terpetakan yang diperiksa, sehingga berkas
+    # tanpa kolom NIK sama sekali tidak pernah menghasilkan `EMPTY_NIK` —
+    # barisnya terbaca "Bersih" padahal NIK-nya memang tidak ada.
+    #
+    # Spesifikasi bagian 4.2 mendefinisikan `EMPTY_NIK` sebagai "Kolom NIK tidak
+    # terisi", dan kolom yang tidak ada jelas tidak terisi. Hal yang sama berlaku
+    # untuk `EMPTY_NAME` dan `MISSING_CORE_ELEMENT`.
+    #
+    # `_terisi(None)` menghasilkan "FALSE", jadi elemen yang tak terpetakan
+    # selalu masuk daftar kosong tanpa perlu cabang khusus.
+    #
+    # Ini TIDAK menggeser grade maupun skor: keduanya dihitung dari kelengkapan
+    # dan mutu NIK di `skor_dan_grade`, bukan dari daftar ini.
     kosong_cek = [
-        f"CASE WHEN {_terisi(peta[e])} THEN NULL ELSE '{e}' END"
-        for e in elemen_hadir
-    ] or ["NULL"]
+        f"CASE WHEN {_terisi(peta.get(e))} THEN NULL ELSE '{e}' END"
+        for e in ENAM_ELEMEN
+    ]
 
     arg_anomali = (bool(peta.get("nik")), kol_tgl,
                    peta.get("jenis_kelamin"), bool(peta.get("nama")))
@@ -580,6 +594,13 @@ def bersihkan_dan_tandai(s: dict) -> dict:
         SELECT *,
                {trusted_keluar}                              AS nik_trusted,
                ((NOT __trusted AND {ada_nik})
+                -- Kode 6 digit tak dikenali SELALU membuat baris bertanda
+                -- anomali, walau `WILAYAH_KECAMATAN_TEGAS` mati. Tanpa baris
+                -- ini, `anomaly_type` bisa memuat NIK_KECAMATAN_INVALID
+                -- sementara `is_anomaly` bernilai false — dan portal yang
+                -- memfilter "baris beranomali" akan kehilangan justru baris
+                -- yang baru saja ia beri kode.
+                OR ({ada_nik} AND __nik_len_ok AND NOT __nik_kec_ok)
                 OR length(__elemen_kosong) > 0
                 OR __nama_gelar OR __nama_bin)               AS is_anomaly,
                __nama_clean                                  AS nama_clean,
@@ -626,10 +647,15 @@ def _daftar_anomali(ada_nik: bool, kol_tgl: str | None, kol_jk: str | None,
     d: list[tuple[str, str, str]] = []
     nik_kosong = "list_contains(__elemen_kosong, 'nik')"
 
+    # DI LUAR cabang `ada_nik`, dan itu justru intinya. Berkas yang sama sekali
+    # tidak punya kolom NIK adalah kasus paling jelas dari "kolom NIK tidak
+    # terisi" — kalau entri ini ditaruh di dalam cabang, kasus itu malah tidak
+    # pernah tertangkap dan barisnya terbaca "Bersih".
+    d.append(("EMPTY_NIK", nik_kosong,
+              "'Kolom NIK tidak terisi'"))
+
     if ada_nik:
         d += [
-            ("EMPTY_NIK", nik_kosong, "'Kolom NIK kosong'"),
-
             # Notasi ilmiah Excel ikut ke sini: nilainya memang bukan angka
             # murni. Teksnya yang membedakan, karena hanya pada kasus itu ada
             # digit yang benar-benar hilang dan tidak bisa dipulihkan.
@@ -646,15 +672,26 @@ def _daftar_anomali(ada_nik: bool, kol_tgl: str | None, kol_jk: str | None,
              "'Kode provinsi NIK tidak dikenali: ' || __nik_prov"),
         ]
 
-        # Hanya dicatat saat ditegakkan. Kalau tidak, seluruh berkas dummy akan
-        # penuh catatan untuk sesuatu yang sengaja tidak memengaruhi apa pun —
-        # dan `anomaly_notes` harus sejalan dengan `is_anomaly`.
-        if _wilayah.KECAMATAN_TEGAS:
-            # Diperiksa hanya kalau provinsinya sudah benar, supaya baris yang
-            # sama tidak dilaporkan dua kali untuk sebab yang sama.
-            d.append(("NIK_KECAMATAN_INVALID",
-                      "__nik_len_ok AND __nik_prov_ok AND NOT __nik_kec_ok",
-                      "'Kode wilayah 6 digit NIK tidak dikenali: ' || __nik_kec"))
+        # SELALU diperiksa, dan TIDAK disyaratkan provinsinya sudah benar.
+        #
+        # Kode 6 digit adalah penunjuk wilayah paling rinci pada NIK: ia
+        # menentukan kabupaten dan kecamatan sekaligus, sementara 2 digit
+        # pertama hanya provinsi. Jadi berhenti di `NIK_PROVINCE_INVALID`
+        # berarti membuang keterangan yang lebih tajam.
+        #
+        # Dulu entri ini disyaratkan `__nik_prov_ok`, supaya baris yang sama
+        # tidak dilaporkan dua kali. Tapi keduanya menjawab pertanyaan berbeda —
+        # "provinsinya tidak ada" dan "kecamatannya tidak ada" — dan portal
+        # memfilter per kode, jadi dua kode pada satu baris justru lebih
+        # berguna daripada satu.
+        #
+        # `WILAYAH_KECAMATAN_TEGAS` tetap menentukan apakah temuan ini membuat
+        # NIK TIDAK TEPERCAYA (dan karenanya menggeser grade). Yang berubah di
+        # sini hanya apakah ia DILAPORKAN — dan melaporkan sesuatu yang sudah
+        # dihitung tidak pernah merugikan.
+        d.append(("NIK_KECAMATAN_INVALID",
+                  "__nik_len_ok AND NOT __nik_kec_ok",
+                  "'Kode wilayah 6 digit NIK tidak dikenali: ' || __nik_kec"))
 
         d += [
             ("NIK_DOB_INVALID", "__nik_len_ok AND __nik_tgl_ngawur",
