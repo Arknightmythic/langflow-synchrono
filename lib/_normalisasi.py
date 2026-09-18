@@ -229,26 +229,101 @@ def _siapkan_kamus(con) -> bool:
         return False
 
 
+def _skor_kamus(con, sampel: dict[str, list],
+                sisa: list[str]) -> dict[str, list[tuple[str, float]]]:
+    """
+    Skor kecocokan kamus untuk SEMUA kolom sisa, dalam satu pernyataan.
+
+    KENAPA LEWAT ARROW, BUKAN PARAMETER
+
+    Versi sebelumnya memasukkan 300 nilai contoh per kolom lewat `executemany`,
+    lalu men-join-nya. Diukur pada berkas Dukcapil 35 kolom: 18-20 detik, dan
+    join-nya sendiri hanya 3 milidetik. Sisanya ongkos menyeberangkan nilai dari
+    Python ke DuckDB — sekitar 2-3 ms PER NILAI, lurus terhadap jumlahnya, dan
+    tidak berubah oleh bentuk pernyataan apa pun yang dicoba (`executemany`,
+    satu INSERT ber-300 parameter, satu parameter berisi list, tabel dipakai
+    ulang, tanpa tabel, maupun satu pernyataan untuk seluruh kolom).
+
+    Arrow menghapus ongkos itu: `con.register()` memperlihatkan buffer-nya apa
+    adanya, tanpa menyalin nilai satu per satu. Terukur 17,9 detik -> 0,26
+    detik, dengan keputusan pemetaan yang sama persis di seluruh kolom.
+
+    Kalau pyarrow tidak ada, jalur lama dipakai — lambat, tapi tetap benar.
+    """
+    isi = {}
+    for kolom in sisa:
+        nilai = [str(v).strip().lower() for v in sampel[kolom]
+                 if v is not None and str(v).strip()]
+        if len(nilai) >= 5:
+            isi[kolom] = nilai
+    if not isi:
+        return {}
+
+    hasil: dict[str, list[tuple[str, float]]] = {}
+    try:
+        import pyarrow as pa
+    except ImportError:
+        # Jalur lama, per kolom. Dipertahankan apa adanya supaya berkas yang
+        # digrading di lingkungan tanpa pyarrow tetap mendapat pemetaan yang
+        # sama, hanya lebih lambat.
+        print("[NORM] pyarrow tidak ada — lapis kamus memakai jalur lambat")
+        for kolom, nilai in isi.items():
+            con.execute("CREATE OR REPLACE TEMP TABLE _uji_nilai (v VARCHAR)")
+            con.executemany("INSERT INTO _uji_nilai VALUES (?)", [(v,) for v in nilai])
+            hasil[kolom] = con.execute("""
+                SELECT k.elemen, count(DISTINCT u.rowid) * 1.0
+                       / (SELECT count(*) FROM _uji_nilai)
+                  FROM _uji_nilai u JOIN kamus_master k ON k.nilai = u.v
+                 GROUP BY k.elemen ORDER BY 2 DESC
+            """).fetchall()
+        return hasil
+
+    # `idx` menggantikan rowid: yang dihitung baris yang cocok, bukan nilai
+    # unik. Tanpa itu kolom dengan banyak nilai berulang akan menghasilkan
+    # skor yang berbeda dari jalur lama.
+    kol_kolom, kol_nilai = [], []
+    for kolom, nilai in isi.items():
+        kol_kolom.extend([kolom] * len(nilai))
+        kol_nilai.extend(nilai)
+
+    con.register("_uji_kamus", pa.table({
+        "idx": list(range(len(kol_nilai))),
+        "kolom": kol_kolom,
+        "nilai": kol_nilai,
+    }))
+    try:
+        rows = con.execute("""
+            WITH n AS (SELECT kolom, count(*) AS total FROM _uji_kamus GROUP BY kolom)
+            SELECT u.kolom, k.elemen,
+                   count(DISTINCT u.idx) * 1.0 / any_value(n.total)
+              FROM _uji_kamus u
+              JOIN n ON n.kolom = u.kolom
+              JOIN kamus_master k ON k.nilai = u.nilai
+             GROUP BY u.kolom, k.elemen
+             ORDER BY 1, 3 DESC
+        """).fetchall()
+    finally:
+        con.unregister("_uji_kamus")
+
+    for kolom in isi:
+        hasil[kolom] = []
+    for kolom, elemen, skor in rows:
+        hasil[kolom].append((elemen, skor))
+    return hasil
+
+
 def _lapis_kamus(con, sampel: dict[str, list], peta: dict) -> tuple[dict, list]:
     sisa = [k for k in sampel if k not in peta.values()]
     if not sisa or not _siapkan_kamus(con):
         return {}, []
 
+    skor_semua = _skor_kamus(con, sampel, sisa)
+
     baru, jejak = {}, []
     for kolom in sisa:
-        nilai = [str(v).strip().lower() for v in sampel[kolom]
-                 if v is not None and str(v).strip()]
-        if len(nilai) < 5:
+        hasil = skor_semua.get(kolom)
+        if not hasil:
             continue
-
-        con.execute("CREATE OR REPLACE TEMP TABLE _uji_nilai (v VARCHAR)")
-        con.executemany("INSERT INTO _uji_nilai VALUES (?)", [(v,) for v in nilai])
-
-        hasil = con.execute("""
-            SELECT k.elemen, count(DISTINCT u.rowid) * 1.0 / (SELECT count(*) FROM _uji_nilai)
-              FROM _uji_nilai u JOIN kamus_master k ON k.nilai = u.v
-             GROUP BY k.elemen ORDER BY 2 DESC
-        """).fetchall()
 
         # Elemen yang SUDAH diambil kolom lain dikeluarkan dari perbandingan.
         # Margin harus diukur terhadap pilihan yang masih tersedia — kalau

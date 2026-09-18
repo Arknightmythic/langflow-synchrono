@@ -73,6 +73,61 @@ services:
 
       LANGFLOW_CONFIG_DIR: /app/langflow-data
 
+      # ── Batas konkurensi Langflow ────────────────────────────────────────
+      #
+      # Langflow PUNYA rate limiter (`rate_limit_enabled: true`,
+      # `rate_limit_per_minute: 5`), tapi ditelusuri di kodenya ia hanya
+      # dipasang di tiga tempat: api/v1/login.py, api/v2/workflow_public.py,
+      # dan build flow PUBLIC di api/v1/chat.py. Jalur yang dipakai portal,
+      # POST /api/v1/run/<flow> (api/v1/endpoints.py), TIDAK disentuh.
+      # Buktinya ada di angkanya sendiri: 5/menit itu 0,083 rps, sementara
+      # terukur 4,6 rps. Jadi plafon itu bukan ulah limiter.
+      #
+      # Yang membatasi: uvicorn bawaan jalan dengan SATU worker. Semua
+      # permintaan API antre di satu proses Python, dan GIL-nya menahan
+      # throughput meski empat inti tersedia.
+      #
+      # Menaikkannya AMAN untuk deployment ini karena status job disimpan di
+      # tabel `grading_jobs` PostgreSQL, bukan di memori proses — polling boleh
+      # mendarat di worker mana pun. Yang TIDAK aman adalah antrean build milik
+      # Langflow sendiri, yang memang hidup di memori satu worker; karena itu
+      # Langflow menolak start tanpa flag di bawah.
+      #
+      # TERUKUR (berkas 10 juta baris, polling 2 rps, mesin 4 inti / 5,79 GB):
+      #
+      #                        1 worker     4 worker
+      #   plafon status rps       4,62         4,84
+      #   p95 polling saat
+      #     grading 5 juta     6.155 ms     1.528 ms     4,0x lebih baik
+      #     grading 10 juta    2.177 ms     1.224 ms     1,8x lebih baik
+      #   grading 10 juta        318,8 s      280,5 s
+      #   memori idle           1,22 GB      3,08 GB
+      #
+      # Plafon rps-nya nyaris tidak bergerak — yang membatasinya ongkos CPU per
+      # permintaan, bukan jumlah worker. Yang benar-benar membaik responsivitas
+      # polling SELAMA grading panjang berjalan, dan itu yang dirasakan portal.
+      # 8 worker tidak menambah apa-apa lagi (4,92 rps) tapi memakan 4,40 GB.
+      #
+      # DEFAULTNYA 1, DAN ITU DISENGAJA. Dengan lebih dari satu worker, kanvas
+      # dan playground Langflow BERHENTI BEKERJA — antrean build-nya hidup di
+      # memori satu worker, sementara GET /api/v1/build/<job_id>/events
+      # dibagi rata ke worker lain. Langflow sendiri menolak start tanpa flag
+      # di bawah, dan mencetak peringatan panjang saat dilewati.
+      #
+      # Naikkan HANYA kalau deployment ini dipakai lewat API saja:
+      #
+      #     LANGFLOW_WORKERS=4 docker compose up -d langflow
+      #
+      # Dan periksa memorinya dulu: 4 worker menahan 3,08 GB, sementara
+      # DUCKDB_MEMORY_LIMIT disetel 3 GB. Keduanya muat di mesin 5,79 GB —
+      # 10 juta baris terbukti selesai, tidak OOM — tapi marginnya tipis.
+      LANGFLOW_WORKERS: "${LANGFLOW_WORKERS:-1}"
+      LANGFLOW_DANGEROUSLY_ALLOW_MULTI_WORKER_WITHOUT_SHARED_QUEUE: "true"
+
+      # Tracing menambah pekerjaan per pemanggilan flow dan tidak dipakai di
+      # sini — tidak ada backend tracing yang dikonfigurasi.
+      LANGFLOW_DEACTIVATE_TRACING: "true"
+
       # WAJIB, dan TIDAK cukup hanya mengandalkan LANGFLOW_CONFIG_DIR.
       #
       # Langflow 1.12.x menaruh SQLite-nya di dalam folder paketnya sendiri
