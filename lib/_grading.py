@@ -279,7 +279,29 @@ def muat_raw(s: dict) -> dict:
     perlu lagi tahu bahwa aslinya bernama "no_identitas" atau "tgl lhr".
     """
     con = s["con"]
-    con.execute(f"CREATE OR REPLACE VIEW raw_df AS "
+    # CSV DIMATERIALKAN, PARQUET TIDAK. Ini bukan penyeragaman yang terlewat.
+    #
+    # `raw_df` sebagai VIEW berarti berkasnya dibaca ULANG tiap kali dipindai,
+    # dan satu jalan grading memindainya sekitar delapan kali: count(*),
+    # pengambilan sampel, deteksi konvensi tanggal, deteksi huruf, deteksi
+    # serial Excel, lalu materialisasi vonis di G3.
+    #
+    # Pada parquet itu murah — formatnya kolumnar, hanya kolom yang dipakai
+    # yang dibaca, dan strukturnya sudah tercatat di berkas. Pada CSV tiap
+    # pemindaian mengurai SELURUH berkas sebagai teks, ditambah `sample_size
+    # = -1` yang membaca seluruh isinya hanya untuk menebak struktur.
+    #
+    # Terukur pada berkas 1 juta baris x 35 kolom:
+    #
+    #     sumber parquet   11,6 detik
+    #     sumber CSV      193,5 detik      <- G2 saja 124 detik
+    #     satu pemindaian CSV               11,3 detik
+    #     materialisasi CSV sekali          12,5 detik, pemindaian berikutnya 0,00
+    #
+    # Karena itu CSV dimaterialkan sekali di sini. Parquet tetap VIEW:
+    # memateralkannya hanya menambah pemakaian memori tanpa manfaat.
+    csv = bool(POLA_TEKS.search(s["sumber"]))
+    con.execute(f"CREATE OR REPLACE {'TEMP TABLE' if csv else 'VIEW'} raw_df AS "
                 f"SELECT * FROM {_sql_sumber(s['sumber'])}")
 
     kolom_asli = [r[0] for r in con.execute("DESCRIBE raw_df").fetchall()]
@@ -287,7 +309,7 @@ def muat_raw(s: dict) -> dict:
     if jumlah == 0:
         raise ValueError(f"Berkas sumber kosong: {s['sumber']}")
 
-    bentuk = "CSV" if POLA_TEKS.search(s["sumber"]) else "parquet"
+    bentuk = "CSV" if csv else "parquet"
     print(f"[G2] {jumlah:,} baris, {len(kolom_asli)} kolom  (dibaca sebagai {bentuk})")
 
     hasil = petakan_kolom(con, "raw_df", kolom_asli,

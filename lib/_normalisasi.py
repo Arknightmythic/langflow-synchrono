@@ -441,6 +441,21 @@ def petakan_kolom(con, view: str, kolom: list[str],
     """Jalankan kelima lapis berurutan. Berhenti begitu semua kolom terpetakan."""
     peta, jejak = _lapis_alias(kolom)
 
+    # SAMPELNYA DIAMBIL SEKALI, bukan sekali per lapis.
+    #
+    # Lapis 3, 4, dan 5 dulu memanggil `ambil_sampel` masing-masing. Karena
+    # sampelnya memakai `REPEATABLE (42)` atas view yang sama, ketiganya
+    # menghasilkan 300 baris yang SAMA PERSIS — yang berbeda hanya cara
+    # memakainya. Jadi dua dari tiga pemanggilan itu murni terbuang.
+    #
+    # Terukur pada berkas 1 juta baris: 0,57 + 0,37 + 0,40 detik pada sumber
+    # parquet. Pada sumber CSV jauh lebih mahal, karena tiap pemanggilan
+    # berarti satu kali mengurai seluruh berkas.
+    #
+    # Tetap malas: berkas yang seluruh kolomnya sudah dikenali lapis 1 atau 2
+    # tidak pernah mengambil sampel sama sekali.
+    sampel = None
+
     for lapis in (2, 3, 4, 5):
         if len([k for k in kolom if k not in peta.values()]) == 0:
             break
@@ -448,7 +463,8 @@ def petakan_kolom(con, view: str, kolom: list[str],
         if lapis == 2:
             baru, j = _lapis_mirip(kolom, peta)
         else:
-            sampel = ambil_sampel(con, view, kolom)
+            if sampel is None:
+                sampel = ambil_sampel(con, view, kolom)
             if lapis == 3:
                 baru, j = _lapis_nilai(sampel, peta, _prov_sah(con))
             elif lapis == 4:
