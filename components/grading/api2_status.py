@@ -18,7 +18,8 @@ FAILED dan backend bisa mengirim ulang, alih-alih menunggu selamanya.
 import json
 
 from _jobs import ambil_job, panen_mangkrak
-from _shared import Component, Message, MessageTextInput, Output, buka_koneksi
+from _kolam import pinjam
+from _shared import Component, Message, MessageTextInput, Output
 
 
 class GradingStatus(Component):
@@ -41,12 +42,9 @@ class GradingStatus(Component):
         if not file_id and not job_id:
             raise ValueError("Isi salah satu: file_id atau job_id")
 
-        con = buka_koneksi()
-        try:
+        with pinjam() as con:
             panen_mangkrak(con)
             job = ambil_job(con, file_id=file_id, job_id=job_id)
-        finally:
-            con.close()
 
         if job is None:
             jawab = {

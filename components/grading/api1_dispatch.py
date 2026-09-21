@@ -25,7 +25,8 @@ DUA CARA MENGISINYA
 import json
 
 from _jobs import catat_job, panen_mangkrak, susun_job
-from _shared import Component, Message, MessageTextInput, Output, buka_koneksi
+from _kolam import pinjam
+from _shared import Component, Message, MessageTextInput, Output
 from _worker import lepas
 
 
@@ -73,16 +74,13 @@ class GradingDispatch(Component):
             "callback_token": self.callback_token,
         })
 
-        con = buka_koneksi()
-        try:
+        with pinjam() as con:
             # Sekalian bereskan job yang pekerjanya hilang karena restart.
             # Tempat paling masuk akal: setiap unggahan baru pasti melewati sini.
             dipanen = panen_mangkrak(con)
             if dipanen:
                 print(f"[API1] {dipanen} job mangkrak ditandai gagal")
             catat_job(con, job)
-        finally:
-            con.close()
 
         lepas(job)
 

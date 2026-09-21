@@ -20,7 +20,8 @@ berkas tertangkap di A lebih dulu dan B mati tanpa pesan galat apa pun.
 import json
 
 from _config import perbarui
-from _shared import BoolInput, Component, Message, MessageTextInput, Output, buka_koneksi
+from _kolam import pinjam
+from _shared import BoolInput, Component, Message, MessageTextInput, Output
 
 
 class GradingRuleUpdate(Component):
@@ -64,16 +65,13 @@ class GradingRuleUpdate(Component):
         # dryRun boleh datang dari muatan maupun dari kolom di kanvas.
         kering = bool(muatan.get("dryRun", False)) or bool(self.dry_run)
 
-        con = buka_koneksi()
-        try:
+        with pinjam() as con:
             hasil = perbarui(
                 con, gid,
                 {k: muatan.get(k) for k in ("criteria", "score", "matching")},
                 oleh=muatan.get("updatedBy") or muatan.get("updated_by"),
                 dry_run=kering,
             )
-        finally:
-            con.close()
 
         if hasil["problems"]:
             print(f"[API4] grade {gid} DITOLAK: {len(hasil['problems'])} masalah")

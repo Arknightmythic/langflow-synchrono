@@ -18,7 +18,8 @@ keenam grade dan menerangkan kenapa dua di antaranya tidak punya tombol edit.
 import json
 
 from _config import baca_semua
-from _shared import Component, Message, MessageTextInput, Output, buka_koneksi
+from _kolam import pinjam
+from _shared import Component, Message, MessageTextInput, Output
 
 
 class GradingRuleGet(Component):
@@ -46,11 +47,8 @@ class GradingRuleGet(Component):
             if gid not in range(1, 7):
                 raise ValueError(f"grade_id harus 1-6, dapat: {gid}")
 
-        con = buka_koneksi()
-        try:
+        with pinjam() as con:
             hasil = baca_semua(con, gid)
-        finally:
-            con.close()
 
         if gid is not None and not hasil["grades"]:
             raise ValueError(f"Grade {gid} tidak ada di konfigurasi.")
