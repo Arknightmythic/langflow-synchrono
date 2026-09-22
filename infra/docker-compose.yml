@@ -195,6 +195,16 @@ services:
       # Tempat tumpahan kalau batas di atas tetap terlampaui. Butuh ruang lega.
       DUCKDB_TEMP_DIR: "/tmp/duckdb_spill"
 
+      # ── Kolam koneksi DuckDB ────────────────────────────────────────────
+      # `per_request` mengembalikan perilaku sebelum kolam dipasang, tanpa
+      # menyentuh kode. Berguna untuk mengukur ongkos kolamnya berdampingan.
+      DUCKDB_MODE: "${DUCKDB_MODE:-kolam}"
+      # DUCKDB_MEMORY_LIMIT di atas berlaku PER KONEKSI — tiap koneksi adalah
+      # basis data in-memory tersendiri.
+      DUCKDB_POOL_SIZE: "${DUCKDB_POOL_SIZE:-8}"
+      DUCKDB_POOL_TIMEOUT: "${DUCKDB_POOL_TIMEOUT:-30}"
+      DUCKDB_POOL_MAX_UMUR: "${DUCKDB_POOL_MAX_UMUR:-1800}"
+
       # ── Grading ────────────────────────────────────────────────────────
       # Berapa job grading boleh jalan bersamaan dalam satu container. Tiap job
       # memegang koneksi DuckDB sendiri; terlalu banyak = rebutan memori.

@@ -147,6 +147,34 @@ services:
       # tumpahan bisa berkali-kali lipat ukuran berkas masukan.
       DUCKDB_TEMP_DIR: "${DUCKDB_TEMP_DIR:-/tmp/duckdb_spill}"
 
+      # ── Kolam koneksi DuckDB ────────────────────────────────────────────
+      #
+      # Empat node API meminjam koneksi yang sudah terbuka alih-alih membuka
+      # yang baru setiap panggilan. Membuka satu koneksi terukur 327,6 ms, dan
+      # itu dua pertiga waktu panggilan endpoint ringan.
+      #
+      # `per_request` mengembalikan perilaku sebelum kolam dipasang, tanpa
+      # menyentuh kode — jalur mundur kalau kolamnya suatu saat bermasalah.
+      DUCKDB_MODE: "${DUCKDB_MODE:-kolam}"
+      # PENTING saat memilih angkanya: tiap koneksi adalah basis data
+      # in-memory tersendiri, sehingga DUCKDB_MEMORY_LIMIT di atas berlaku PER
+      # KONEKSI, bukan untuk seluruh proses. Jadi angka ini ikut menentukan
+      # batas atas pemakaian memori, bukan sekadar tingkat konkurensi.
+      #
+      # Dalam praktiknya keempat endpoint ringan hanya membaca beberapa baris,
+      # jadi mereka tidak pernah mendekati batas itu. Kapasitas terukur pun
+      # jenuh di 4 penelepon bersamaan, sehingga menurunkannya ke 4 tidak
+      # mengorbankan throughput apa pun di server yang memorinya sempit.
+      DUCKDB_POOL_SIZE: "${DUCKDB_POOL_SIZE:-8}"
+      # Batas tunggu saat semua koneksi sedang dipakai. Lewat dari ini, lebih
+      # baik gagal jujur daripada menggantung sampai klien menyerah sendiri.
+      DUCKDB_POOL_TIMEOUT: "${DUCKDB_POOL_TIMEOUT:-30}"
+      # Koneksi yang lebih tua dari ini dibuang saat dikembalikan. Langflow di
+      # server hidup berhari-hari, dan ATTACH ke PostgreSQL yang sudah lama
+      # menganggur bisa mati diam-diam — bukan saat diperiksa, melainkan saat
+      # dipakai, di tengah permintaan pengguna. 0 = tidak pernah didaur ulang.
+      DUCKDB_POOL_MAX_UMUR: "${DUCKDB_POOL_MAX_UMUR:-1800}"
+
       # ── Grading ────────────────────────────────────────────────────────
       GRADING_MAX_CONCURRENT: "${GRADING_MAX_CONCURRENT:-2}"
       GRADING_STALE_MINUTES: "15"
