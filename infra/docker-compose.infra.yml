@@ -1,0 +1,93 @@
+# PostgreSQL + SeaweedFS untuk server yang belum punya keduanya.
+#
+# Compose ini SENGAJA terpisah dari docker-compose.server.yml. Basis data dan
+# penyimpanan objek berumur jauh lebih panjang daripada aplikasinya: engine
+# grading dinaikkan ulang tiap kali kodenya berubah, sedangkan yang di sini
+# idealnya tidak pernah ikut turun. Memisahkannya membuat `down` pada engine
+# tidak pernah menyentuh data.
+#
+#     docker compose -f docker-compose.infra.yml --env-file .env up -d
+#
+# `.env` yang dipakai SAMA dengan milik engine. Itu disengaja: kata sandi
+# PostgreSQL hanya ditulis di satu tempat, jadi tidak mungkin server dan klien
+# memakai sandi yang berbeda tanpa ketahuan.
+#
+# PORT — sengaja bukan bawaan, dan dipilih menghindari yang sudah terpakai
+# (redis 6379, sonarqube 9000):
+#
+#     5430 -> PostgreSQL     (bawaan 5432)
+#     8355 -> SeaweedFS S3   (bawaan 8333)  <- ini yang dibaca DuckDB httpfs
+#     9335 -> SeaweedFS master, untuk memeriksa kesehatan (bawaan 9333)
+#
+# Port volume dan filer TIDAK dipublikasikan: DuckDB hanya bicara ke gerbang
+# S3, dan sisanya cukup dijangkau dari dalam container.
+
+services:
+
+  postgres:
+    image: postgres:16
+    container_name: synchrono-postgres
+    environment:
+      # Nama pengguna dan basis datanya mengikuti .env supaya cocok dengan
+      # PG_DSN yang dirangkai engine. Ubah di .env, bukan di sini.
+      POSTGRES_USER: "${PG_USER:-root}"
+      POSTGRES_PASSWORD: "${PG_PASSWORD:?isi PG_PASSWORD di .env}"
+      POSTGRES_DB: "${PG_DB:-synchrono}"
+      # Tanpa ini, initdb memakai locale container dan pengurutan teks bisa
+      # berbeda dari server lain — sumber selisih hasil yang sulit dilacak.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "5430:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-root} -d ${PG_DB:-synchrono}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    container_name: synchrono-seaweedfs
+    # Mode `server` menjalankan master + volume + filer + gerbang S3 sekaligus
+    # dalam satu container. Cukup untuk beban ini; kalau nanti perlu, tiap
+    # komponennya bisa dipisah tanpa mengubah cara engine menyambung.
+    #
+    # Port internalnya disamakan dengan port yang dipublikasikan (8355, bukan
+    # 8333). Menyamakannya menghindari satu kelas masalah: beberapa klien S3
+    # menyusun ulang alamat dari port yang dilihat server, dan kalau keduanya
+    # berbeda, alamat yang disusunnya menunjuk ke port yang tidak terbuka.
+    command: >
+      server
+      -dir=/data
+      -s3
+      -s3.port=8355
+      -s3.config=/etc/seaweedfs/s3-config.json
+      -master.port=9335
+      -master.volumeSizeLimitMB=2048
+      -volume.max=100
+    ports:
+      - "8355:8355"
+      - "9335:9335"
+    volumes:
+      - seaweed-data:/data
+      - ./s3-config.json:/etc/seaweedfs/s3-config.json:ro
+    restart: unless-stopped
+    healthcheck:
+      # Dua hal yang sempat salah di versi lokal, keduanya sudah terbukti:
+      #
+      #  1. `localhost` TIDAK bisa dipakai — SeaweedFS mengikat ke IP container,
+      #     bukan ke loopback. Pakai nama servicenya.
+      #  2. Gerbang S3 membalas 403 untuk permintaan anonim, dan wget
+      #     menganggapnya gagal. Pakai status master yang membalas 200.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://seaweedfs:9335/cluster/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  pg-data:
+  seaweed-data:
