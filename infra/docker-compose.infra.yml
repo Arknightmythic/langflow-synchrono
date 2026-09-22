@@ -66,11 +66,22 @@ services:
       -s3.port=8355
       -s3.config=/etc/seaweedfs/s3-config.json
       -master.port=9335
+      -filer.port=8890
+      -volume.port=8085
       -master.volumeSizeLimitMB=2048
       -volume.max=100
     ports:
       - "8355:8355"
       - "9335:9335"
+      # Filer UI — penjelajah berkas lewat browser, berguna untuk menaruh
+      # berkas rujukan tanpa perlu klien S3. Port volume ikut dibuka karena
+      # tautan unduhan di filer menunjuk langsung ke volume server; tanpa itu
+      # daftar berkasnya tampil tapi tiap unduhan gagal.
+      #
+      # Keduanya TIDAK dibutuhkan engine — DuckDB hanya bicara ke gerbang S3.
+      # Tutup lagi kalau tidak dipakai.
+      - "8890:8890"
+      - "8085:8085"
     volumes:
       - seaweed-data:/data
       - ./s3-config.json:/etc/seaweedfs/s3-config.json:ro
