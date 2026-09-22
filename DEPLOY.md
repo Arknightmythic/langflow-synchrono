@@ -139,6 +139,35 @@ docker compose -f docker-compose.server.yml --env-file .env up -d --build
 `--build` WAJIB kalau `Dockerfile.langflow` ikut berubah; tanpa itu Docker
 memakai image lama dan perubahannya tidak berlaku.
 
+#### 3. Kalau yang berubah ada di `components/`, BANGUN ULANG FLOW-nya
+
+```bash
+docker compose -f docker-compose.server.yml --env-file .env \
+  exec langflow sh -c "cd /synchrono/infra && python buat_flow_grading.py && python buat_flow_config.py"
+```
+
+**Langkah ini mudah terlewat dan kegagalannya tidak bersuara.** Langflow tidak
+menjalankan berkas di `components/`; ia menjalankan **salinan kode yang
+tersimpan di dalam flow** saat flow itu dibangun. Jadi `git pull` lalu restart
+akan tetap menjalankan kode LAMA: tidak ada galat, tidak ada peringatan, dan
+endpointnya tetap menjawab 200 dengan perilaku sebelumnya. Satu-satunya tanda
+adalah perubahanmu seperti tidak berefek apa-apa.
+
+Yang perlu diingat:
+
+* Aman diulang. Kedua skrip idempoten, dan **node id-nya tetap** —
+  `GradingStatus-3cc03` dan kawan-kawan tidak berubah, jadi portal dan koleksi
+  Postman tidak perlu disentuh.
+* **API key tidak ikut terhapus.** Kunci tidak disimpan di dalam flow.
+* `buat_flow.py` (matching) **jangan** ikut dijalankan kecuali memang perlu:
+  node id matching masih acak, dan membangunnya ulang mengubah id-nya sehingga
+  pemanggilnya harus disesuaikan.
+* Folder `infra` di-mount read-only di server. Itu tidak masalah — kedua skrip
+  membangun flow lewat API, dan berkas contoh Postman-nya dilewati diam-diam.
+
+Kalau yang berubah hanya `lib/`, langkah ini **tidak** perlu: folder itu
+di-mount dan diimpor lewat `PYTHONPATH`, jadi restart container sudah cukup.
+
 **`.env` tidak ikut tertimpa `git pull`** (ia di-gitignore), jadi kata sandi dan
 setelanmu aman. Yang berubah hanya `.env.server.example`; bandingkan sendiri
 kalau ada kunci baru di sana.
