@@ -85,6 +85,27 @@ class ScoreAndClassify(Component):
                     CASE WHEN nik_master IS NULL THEN 0   ELSE {missing} END AS missing_count
                 FROM {TABEL_JOIN}
             ),
+            -- Pemenang dipilih dengan AGREGASI, bukan window function.
+            --
+            -- `QUALIFY ROW_NUMBER() OVER (PARTITION BY ...)` menuntut seluruh
+            -- kandidat satu partisi hadir sekaligus, sehingga memorinya tumbuh
+            -- sebanding jumlah pasangan — miliaran pada master besar. Agregasi
+            -- hanya menyimpan SATU state per baris incoming: berapa pun
+            -- kandidatnya, memorinya tetap.
+            --
+            -- Urutannya dipertahankan persis: `-skor` menaik = skor menurun,
+            -- lalu `nik_master` menaik. Sama dengan ORDER BY skor DESC,
+            -- nik_master NULLS LAST pada versi window.
+            menang AS (
+                SELECT
+                    incoming_row_id,
+                    arg_min(
+                        {{'nik': nik_master, 'skor': skor, 'miss': missing_count}},
+                        {{'a': -skor, 'b': nik_master}}
+                    ) AS m
+                FROM skor
+                GROUP BY incoming_row_id
+            ),
             aturan AS ({sql_aturan}),
             vonis AS (
                 SELECT
@@ -92,7 +113,14 @@ class ScoreAndClassify(Component):
                     s.nik_master,
                     s.skor,
                     CASE WHEN s.nik_master IS NULL THEN 3 ELSE {SQL_KLASIFIKASI} END AS match_result
-                FROM skor s CROSS JOIN aturan r
+                FROM (
+                    SELECT incoming_row_id,
+                           m.nik  AS nik_master,
+                           m.skor AS skor,
+                           m.miss AS missing_count
+                    FROM menang
+                ) s
+                CROSS JOIN aturan r
             )
             SELECT
                 '{file_id}'          AS file_id,
@@ -101,10 +129,6 @@ class ScoreAndClassify(Component):
                 ROUND(skor, 2)       AS match_score,
                 match_result
             FROM vonis
-            QUALIFY ROW_NUMBER() OVER (
-                PARTITION BY incoming_row_id
-                ORDER BY skor DESC, nik_master NULLS LAST
-            ) = 1
         """)
 
         # Jaring pengaman: kalau matching_query memakai INNER JOIN, baris incoming

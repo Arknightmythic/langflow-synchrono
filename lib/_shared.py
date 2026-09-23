@@ -186,7 +186,25 @@ def sql_view_incoming(kolom_ada: set[str]) -> str:
         pilih.append("trim(CAST(id AS VARCHAR)) AS id")
     if "nik" in kolom_ada:
         pilih.append("trim(CAST(nik AS VARCHAR)) AS nik")
+    else:
+        # Grade C, D, dan E memang TIDAK BOLEH punya kolom NIK — kriteria
+        # grade-nya menyebutnya `terlarang`. Kolomnya tetap dipancarkan sebagai
+        # NULL supaya query yang merujuknya tidak gagal mengikat.
+        pilih.append("CAST(NULL AS VARCHAR) AS nik")
 
+    # SELURUH kolom baku selalu dipancarkan — NULL kalau berkasnya tidak
+    # memuatnya.
+    #
+    # Sebelumnya kolom yang absen dilewati begitu saja, dan akibatnya query
+    # matching yang merujuknya gagal MENGIKAT, bukan menghasilkan nilai kosong:
+    # BinderException, seluruh grade mati. Terukur pada berkas uji grade E yang
+    # tidak memuat status_hidup maupun kolom wilayah — grade 5 tidak bisa
+    # dijalankan sama sekali.
+    #
+    # Memancarkannya sebagai NULL aman dan justru lebih tepat: `sql_missing`
+    # menghitung NULL sebagai atribut kosong, dan kolom yang memang tidak ada
+    # di berkas memang atribut yang kosong. Bagi berkas yang MEMUAT kolomnya,
+    # tidak ada satu pun yang berubah.
     for kol in ("nama", "tempat_lahir", "provinsi", "kabupaten",
                 "kecamatan", "kelurahan", "nama_ibu"):
         sumber = _sumber_kolom(kol, kolom_ada)
@@ -195,10 +213,16 @@ def sql_view_incoming(kolom_ada: set[str]) -> str:
             # berkasnya memakai nama spesifikasi atau nama baku.
             pilih.append(f"{sumber} AS {kol}")
             pilih.append(f"{_bersih(sumber)} AS {kol}_clean")
+        else:
+            pilih.append(f"CAST(NULL AS VARCHAR) AS {kol}")
+            pilih.append(f"CAST(NULL AS VARCHAR) AS {kol}_clean")
 
     if "tanggal_lahir" in kolom_ada:
         pilih.append("tanggal_lahir")
         pilih.append(f"{_sql_tanggal('tanggal_lahir')} AS tanggal_lahir_clean")
+    else:
+        pilih.append("CAST(NULL AS VARCHAR) AS tanggal_lahir")
+        pilih.append("CAST(NULL AS TIMESTAMP) AS tanggal_lahir_clean")
 
     if "jenis_kelamin" in kolom_ada:
         pilih.append("jenis_kelamin")
@@ -206,12 +230,37 @@ def sql_view_incoming(kolom_ada: set[str]) -> str:
             {_sql_daftar('jenis_kelamin', GENDER_L, 'l')}
             {_sql_daftar('jenis_kelamin', GENDER_P, 'p')}
             ELSE NULL END AS jenis_kelamin_clean""")
+    else:
+        pilih.append("CAST(NULL AS VARCHAR) AS jenis_kelamin")
+        pilih.append("CAST(NULL AS VARCHAR) AS jenis_kelamin_clean")
 
+    # status_hidup_clean SELALU ada, NULL kalau berkasnya tidak punya kolomnya.
+    #
+    # Blocking grade 5 merujuk kolom ini, sedangkan berkas grade E tidak
+    # memuatnya — kriteria grading grade E memang tidak menjanjikannya. Dulu
+    # akibatnya BinderException dan grade 5 tidak bisa dijalankan sama sekali.
+    # Dengan kolomnya selalu ada, query-nya bisa memilih melewati syarat itu
+    # saat nilainya NULL, alih-alih gagal mengikat.
     if "status_hidup" in kolom_ada:
         pilih.append(f"""CASE
             {_sql_daftar('status_hidup', HIDUP, 'h')}
             {_sql_daftar('status_hidup', MATI, 'm')}
             ELSE NULL END AS status_hidup_clean""")
+    else:
+        pilih.append("CAST(NULL AS VARCHAR) AS status_hidup_clean")
+
+    # nik_trusted dipakai blocking grade 1 & 2 untuk menolak NIK yang sudah
+    # dinyatakan tidak tepercaya oleh grading.
+    #
+    # Kalau berkasnya tidak memuat kolom ini, nilainya TRUE — bukan FALSE.
+    # Alasannya: penjaga itu hanya boleh bekerja saat grading BENAR-BENAR
+    # sudah memberi vonis. Menganggap "tidak ada kabar" sebagai "tidak
+    # tepercaya" akan membuat seluruh berkas lama gagal mencocokkan apa pun,
+    # diam-diam dan tanpa satu pun galat.
+    if "nik_trusted" in kolom_ada:
+        pilih.append("CAST(nik_trusted AS BOOLEAN) AS nik_trusted")
+    else:
+        pilih.append("TRUE AS nik_trusted")
 
     return ",\n        ".join(pilih)
 
