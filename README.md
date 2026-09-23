@@ -104,13 +104,41 @@ docker compose up -d seaweedfs
 
 ### Skema PostgreSQL
 
+Masih dari folder `infra/`:
+
 ```bash
-python apply_schema.py            # DDL + seed ref_*, grade_rules, matching_queries
-python apply_schema.py --verify   # cek kondisi saja
+python migrate.py                 # bentuk basis data: 13 tabel
+python seed.py                    # data awal: ref_*, grade_rules, matching_queries
 ```
 
-Membuat 10 tabel dan mengisi konfigurasinya. Hanya butuh `duckdb` — DDL dijalankan
+Membuat 13 tabel dan mengisi konfigurasinya. Hanya butuh `duckdb` — DDL dijalankan
 lewat `postgres_execute()`, tanpa psycopg maupun sqlalchemy.
+
+**Keduanya aman diulang**, dan pemisahannya disengaja:
+
+* `migrate.py` mengubah *bentuk* basis data. Tiap berkas di `db/migrasi/`
+  dicatat di `schema_migrations` beserta checksum-nya dan tidak pernah
+  dijalankan dua kali.
+* `seed.py` mengisi *data awal* dari `db/seeder/` dengan `ON CONFLICT DO
+  NOTHING` — mengisi yang belum ada, tidak pernah menimpa yang sudah ada.
+
+Jadi ambang yang sudah disetel lewat API config **tidak kembali ke nilai
+bawaan** saat keduanya dijalankan ulang.
+
+Untuk melihat kondisinya tanpa mengubah apa pun:
+
+```bash
+python migrate.py --status        # migrasi mana yang sudah & belum diterapkan
+python migrate.py --kering        # yang akan dijalankan, tanpa menjalankan
+python seed.py --daftar           # daftar seeder
+```
+
+Alamat PostgreSQL diambil dari `PG_DSN`; bawaannya
+`host=127.0.0.1 port=5432 dbname=synchrono user=postgres`, jadi untuk setelan
+lokal di atas tidak perlu disetel apa pun.
+
+> Di server, keduanya dijalankan otomatis oleh service `skema` saat
+> `docker compose up`. Lihat `DEPLOY.md` §3.
 
 ### Isi tabel master
 
@@ -143,6 +171,9 @@ python buat_data_uji.py 1000
 
 Buktikan logikanya lebih dulu di sini. Kalau gagal di tahap ini, mencari
 penyebabnya di kanvas visual jauh lebih sulit.
+
+Skrip ini ada di **akar repo**, bukan di `infra/` — kembali dulu ke atas
+(`cd ..`) kalau masih berada di sana dari langkah 2.
 
 ```bash
 python run_local.py \
@@ -480,22 +511,41 @@ langflow-synchrono/
 ├── README.md
 ├── run_local.py                  uji 7 node tanpa Langflow (default dry run)
 ├── components/                   → di-mount ke /components
-│   └── matching/                 nama folder = nama grup di sidebar Langflow
-│       ├── n1_open_session.py    HANYA file node boleh ada di sini —
-│       ├── n2_prepare_incoming.py  Langflow menuntut tiap .py berisi
-│       ├── n3_prepare_master.py    subclass Component (§4 poin 3)
-│       ├── n4_load_config.py
-│       ├── n5_run_join.py
-│       ├── n6_score_classify.py
-│       └── n7_persist.py
+│   ├── matching/                 nama folder = nama grup di sidebar Langflow
+│   │   ├── n1_open_session.py    HANYA file node boleh ada di sini —
+│   │   ├── n2_prepare_incoming.py  Langflow menuntut tiap .py berisi
+│   │   ├── n3_prepare_master.py    subclass Component (§4 poin 3)
+│   │   ├── n4_load_config.py
+│   │   ├── n5_run_join.py
+│   │   ├── n6_score_classify.py
+│   │   └── n7_persist.py
+│   ├── grading/                  G1-G6 + dua node API (dispatch, status)
+│   └── config/                   baca & ubah aturan grade
 ├── lib/                          → di-mount ke /synchrono/lib, masuk PYTHONPATH
-│   └── _shared.py                koneksi, SQL normalisasi, rumus skor
+│   ├── _shared.py                koneksi, SQL normalisasi, rumus skor
+│   ├── _kolam.py                 kolam koneksi DuckDB
+│   ├── _grading.py               pipeline grading G1-G6
+│   ├── _normalisasi.py           lima lapis pengenalan kolom
+│   ├── _wilayah.py               rujukan kecamatan untuk pemeriksaan NIK
+│   ├── _config.py                baca & ubah aturan grade
+│   ├── _jobs.py                  tabel grading_jobs
+│   ├── _worker.py                pekerja latar untuk grading asinkron
+│   ├── _llm.py                   klien LLM, lapis terakhir pengenalan kolom
+│   └── _nama.py                  pembersihan nama
 └── infra/
-    ├── docker-compose.yml        SeaweedFS + Langflow
+    ├── docker-compose.yml        SeaweedFS + Langflow (lokal)
+    ├── docker-compose.server.yml engine di server
+    ├── docker-compose.infra.yml  PostgreSQL + SeaweedFS di server
     ├── Dockerfile.langflow       image Langflow + duckdb
     ├── s3-config.json            kredensial S3
-    ├── schema.sql                DDL PostgreSQL
-    ├── apply_schema.py           terapkan DDL + seed
+    ├── db/migrasi/*.sql          bentuk basis data, dicatat di schema_migrations
+    ├── db/seeder/*               data awal, ON CONFLICT DO NOTHING
+    ├── migrate.py                terapkan migrasi
+    ├── seed.py                   isi data awal
+    ├── flow_util.py              fondasi pembangun flow (node id tetap)
+    ├── buat_flow.py              flow matching
+    ├── buat_flow_grading.py      tiga flow grading
+    ├── buat_flow_config.py       dua flow config
     ├── matching_queries.json     ekspor SQL join dari StarRocks
     ├── migrate_master.py         isi tabel master
     ├── salin_dari_minio.py       MinIO → SeaweedFS
