@@ -32,7 +32,9 @@ Ambang dan pita skor ada di PostgreSQL, bukan di kode — sama seperti
 from __future__ import annotations
 
 import json
+import os
 import re
+import socket
 import time
 
 from _config import baca_kriteria
@@ -94,6 +96,43 @@ def _endpoint_mustahil(endpoint: str) -> bool:
     """Endpoint yang tidak mungkin benar kalau dilihat dari dalam container."""
     host = re.sub(r"^https?://", "", endpoint).split(":")[0].strip().lower()
     return host in ("localhost", "127.0.0.1", "0.0.0.0", "::1", "")
+
+
+# Batas tunggu pemeriksaan di bawah. Pendek dengan sengaja: yang diperiksa hanya
+# apakah portnya menjawab, bukan apakah S3-nya sehat.
+BATAS_PERIKSA_ENDPOINT = float(os.getenv("S3_ENDPOINT_CEK_DETIK", "3"))
+
+
+def _endpoint_terjangkau(endpoint: str) -> bool:
+    """
+    Apakah endpoint ini benar-benar bisa disambung DARI SINI?
+
+    `_endpoint_mustahil` hanya menangkap `localhost`. Yang jauh lebih sering
+    terjadi: portal mengirim alamat yang BENAR menurut dirinya sendiri — IP host
+    server — padahal dari dalam container alamat itu tidak terjangkau karena
+    lalu lintasnya diblokir firewall host.
+
+    Akibatnya dulu parah dan menyesatkan. Tiap job menggantung sampai DuckDB
+    menyerah (terukur >130 detik dengan percobaan ulangnya), sementara slot
+    GRADING_MAX_CONCURRENT tetap dipegang — jadi dua job gagal sudah cukup untuk
+    membuat SELURUH antrean berhenti. Dan yang gagal bukan cuma pembacaan
+    berkasnya: rujukan wilayah memakai secret yang sama, jadi ia ikut mati.
+
+    Pemeriksaan TCP tiga detik mengubahnya jadi kegagalan seketika yang jatuh
+    kembali ke S3_ENDPOINT milik engine — alamat yang memang sudah terbukti
+    bisa dijangkaunya.
+
+    Sengaja hanya menyambung, tidak mengirim permintaan S3: yang mau dijawab
+    adalah "bisa dihubungi atau tidak", dan itu tidak butuh kredensial.
+    """
+    alamat = re.sub(r"^https?://", "", endpoint).rstrip("/")
+    host, _, port = alamat.partition(":")
+    try:
+        with socket.create_connection((host, int(port or 80)),
+                                      timeout=BATAS_PERIKSA_ENDPOINT):
+            return True
+    except (OSError, ValueError):
+        return False
 
 
 def _pilih_sumber(job: dict, tujuan: str) -> str:
@@ -189,6 +228,16 @@ def buka(job: dict) -> dict:
         print(f"[G1] s3Endpoint '{endpoint}' DIABAIKAN — 'localhost' di dalam "
               f"container menunjuk container ini sendiri. Memakai S3_ENDPOINT "
               f"dari environment.")
+        endpoint = ""
+
+    if endpoint and not _endpoint_terjangkau(endpoint):
+        # Alamat yang benar bagi portal belum tentu benar bagi engine: keduanya
+        # melihat penyimpanan yang sama dari jaringan yang berbeda. Daripada
+        # menggantung sampai DuckDB menyerah dan menyumbat antrean, jatuh
+        # kembali ke alamat yang memang sudah terbukti bisa dijangkau.
+        print(f"[G1] s3Endpoint '{endpoint}' TIDAK TERJANGKAU dari container "
+              f"ini dalam {BATAS_PERIKSA_ENDPOINT:.0f} detik. Memakai "
+              f"S3_ENDPOINT dari environment.")
         endpoint = ""
 
     if endpoint:
