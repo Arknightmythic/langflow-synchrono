@@ -133,6 +133,12 @@ def susun_job(muatan: dict, bawaan: dict | None = None) -> dict:
         # sama: berkas unggahan asli. Dibawa juga supaya `_pilih_sumber` punya
         # dua kesempatan menemukan berkas masukan yang benar.
         "raw_source_key": a("rawSourceKey", "raw_source_key"),
+        # Hanya untuk `.mdf`: berkas log SQL Server pendamping. Opsional, dan
+        # ketiadaannya tidak selalu berarti gagal — lihat konverter/_pulih_mssql.py.
+        "log_key": a("logKey", "log_key"),
+        # Keterangan opsional dari portal; selalu menang atas tebakan konverter.
+        "sql_dialect": a("sqlDialect", "sql_dialect"),
+        "source_table": a("sourceTable", "source_table"),
         "parquet_key": str(a("parquetKey", "parquet_key", wajib=True)),
         "enriched_key": a("enrichedParquetKey", "enriched_key"),
         "row_count": baris,

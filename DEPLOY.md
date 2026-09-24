@@ -381,6 +381,108 @@ jadi angka dan normalisasi tanggal tidak terlewat.
 
 ---
 
+## 7c. Jalur B — unggahan `.sql`, `.mdf`, `.dmp`
+
+Tiga format ini tidak dibaca melainkan **dipulihkan** ke mesin basis datanya.
+Itu dikerjakan container terpisah, dan satu-satunya yang perlu diatur berbeda
+antar server adalah **satu baris di `.env`**.
+
+### Kenapa ada penerus S3, dan kenapa ia yang membuat ini fleksibel
+
+Layanan konversi tinggal di jaringan `dalam` yang `internal: true`. Jaringan
+seperti itu tidak punya rute ke mana pun selain container sejaring — diukur
+dari dalam containernya:
+
+```
+container sejaring     TERJANGKAU
+gateway jaringannya    GAGAL (TimeoutError)
+host.docker.internal   GAGAL (gaierror)
+internet               GAGAL (OSError)
+```
+
+Itu persis yang diinginkan: berkas tidak tepercaya yang dipulihkannya tidak
+punya jalan mengirim apa pun keluar. Tapi konverter TETAP harus mengambil
+berkasnya dari S3 — dan S3 di kedua server dijangkau lewat **IP host**, bukan
+nama container:
+
+| | SeaweedFS & PostgreSQL backend |
+|---|---|
+| Server lama `172.16.12.98` | dipasang di host, di luar Docker |
+| Server baru `192.168.2.107` | container, di `docker-compose.infra.yml` (compose lain) |
+
+Dari sisi jaringan Docker keduanya sama saja: **di luar jangkauan**. Karena itu
+ada `s3-relay` — satu-satunya container yang berkaki di kedua jaringan,
+meneruskan **satu port TCP ke satu alamat**. Konverter tetap tanpa jalan keluar;
+yang bisa dicapainya cuma alamat yang ditulis di `.env`.
+
+Penerusan **TCP mentah**, bukan proxy HTTP: tanda tangan SigV4 dihitung atas
+header `Host` yang dikirim klien dan diverifikasi ulang SeaweedFS dari header
+yang diterimanya. Proxy yang menulis ulang `Host` akan membatalkannya; socat
+tidak menyentuh apa pun. Sudah diuji — unduh berkas maupun unggah parquet
+lolos lewat penerus.
+
+### Yang diisi di `.env`
+
+```bash
+# Server lama
+S3_ENDPOINT=172.16.12.98:8333
+S3_RELAY_TARGET=172.16.12.98:8333
+
+# Server baru
+S3_ENDPOINT=192.168.2.107:8355
+S3_RELAY_TARGET=192.168.2.107:8355
+```
+
+Keduanya diisi terpisah karena compose tidak bisa memakai satu variabel sebagai
+nilai bawaan variabel lain. Isinya hampir selalu sama.
+
+### Menyalakan
+
+```bash
+# .sql saja (PostgreSQL) — paling ringan, cukup untuk sebagian besar kebutuhan
+docker compose -f docker-compose.server.yml --env-file .env up -d --build
+
+# tambah .mdf (SQL Server, image 2,34 GB di disk)
+docker compose -f docker-compose.server.yml --env-file .env --profile mssql up -d --build
+
+# tambah .dmp (Oracle, image 2,84 GB unduhan)
+docker compose -f docker-compose.server.yml --env-file .env --profile oracle up -d --build
+```
+
+`.mdf` dan `.dmp` ada di balik **profil** dengan sengaja: mesinnya memegang
+memori sepanjang container hidup, dipakai atau tidak. Selama belum ada instansi
+yang benar-benar mengirim format itu, tidak ada alasan menyalakannya.
+
+Tanpa profilnya, `.mdf`/`.dmp` gagal dengan pesan yang menyebutkan layanannya
+tidak bisa dihubungi — bukan gagal diam-diam.
+
+### Memeriksa
+
+```bash
+# dari dalam container langflow
+docker exec synchrono-langflow python -c   "import urllib.request,json; print(json.load(urllib.request.urlopen('http://konverter:8390/sehat')))"
+# -> {'ok': True, 'mesin': 'postgresql', 'antre': 0, 'maxConcurrent': 1}
+
+# dan pastikan konverter TIDAK punya jalan keluar
+docker exec synchrono-konverter python -c   "import socket; socket.create_connection(('1.1.1.1',53),timeout=4)"
+# -> harus GAGAL. Kalau berhasil, jaringannya salah.
+```
+
+Pemeriksaan kedua sama pentingnya dengan yang pertama.
+
+### Sesudah mengubah `lib/`
+
+**Restart container Langflow.** Modul di `lib/` dimuat sekali saat proses
+Langflow menyala dan disimpan di memori; mengubah berkasnya saja tidak
+berpengaruh. Ini terbukti mahal: pada pengujian lewat API, `.mdf` dan `.dmp`
+sempat dikirim ke konverter PostgreSQL karena proses Langflow masih memegang
+versi lama `lib/_konversi.py`, dan pesan gagalnya menyesatkan.
+
+Perubahan di `components/` lebih keras lagi: Langflow menyimpan **salinan kode
+komponen di dalam flow**, jadi flow-nya harus dibangun ulang (§5).
+
+---
+
 ## 8. Kalau bermasalah
 
 | Gejala | Sebab paling sering |

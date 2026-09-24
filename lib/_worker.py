@@ -40,6 +40,7 @@ import duckdb
 
 from _grading import jalankan_penuh
 from _jobs import detak, kirim_callback, ubah_status
+from _konversi import konversi_dulu
 from _shared import buka_koneksi
 
 MAKS_PARALEL = int(os.getenv("GRADING_MAX_CONCURRENT", "2"))
@@ -98,7 +99,21 @@ def _jalankan(con, job: dict) -> None:
     ubah_status(con, job_id, "RUNNING", stage="G1 open session")
     mulai = time.perf_counter()
 
-    keluaran = jalankan_penuh(job, lapor=lambda tahap: detak(con, job_id, tahap))
+    # JALUR B, kalau berkasnya .sql/.dmp/.mdf.
+    #
+    # Dikerjakan DI SINI, di dalam job yang sama — bukan sebagai job kedua.
+    # Portal memanggil endpoint yang sama untuk semua format dan tidak pernah
+    # tahu ada pembagian jalur, jadi dua jobId untuk satu unggahan hanya akan
+    # memaksa sisi portal menjahitnya kembali di UI.
+    #
+    # Sesudah ini `job["parquet_key"]` sudah menunjuk parquet hasil konversi,
+    # dan grading di bawah tidak bisa membedakannya dari job parquet biasa.
+    lapor = lambda tahap: detak(con, job_id, tahap)  # noqa: E731
+    konversi = konversi_dulu(job, lapor=lapor)
+    if konversi:
+        ubah_status(con, job_id, "RUNNING", stage="G1 open session")
+
+    keluaran = jalankan_penuh(job, lapor=lapor)
     hasil, sesi = keluaran["hasil"], keluaran["sesi"]
     durasi = int((time.perf_counter() - mulai) * 1000)
     hasil["gradingDurationMs"] = durasi

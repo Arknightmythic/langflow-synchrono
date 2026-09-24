@@ -282,10 +282,79 @@ def _kunci_env() -> tuple[str, str]:
 # Berkas yang dibaca sebagai teks berpemisah, bukan parquet.
 POLA_TEKS = re.compile(r"\.(csv|tsv|txt)$", re.I)
 
-# Excel. HANYA `.xlsx` (OOXML). `.xls` adalah format biner lama yang tidak
-# dibaca extension ini — sengaja tidak dimasukkan supaya tidak gagal dengan
-# pesan yang menyesatkan.
+# Excel. HANYA `.xlsx` (OOXML).
 POLA_EXCEL = re.compile(r"\.xlsx$", re.I)
+
+# `.xls` lama, dikenali HANYA untuk ditolak dengan pesan yang bisa ditindaklanjuti.
+POLA_EXCEL_LAMA = re.compile(r"\.xls$", re.I)
+
+# JALUR B — berkas yang isinya PERINTAH, bukan data.
+#
+# Ketiganya tidak dibaca; ia dipulihkan ke mesin basis data asalnya lebih dulu,
+# dan itu harus terjadi di layanan terpisah yang tersekat. Lihat UNGGAHAN.md.
+#
+# Dikenali di sini supaya berkas semacam itu gagal di DEPAN dengan sebab yang
+# jelas. Tanpa entri ini ia jatuh ke `read_parquet('...sql')` dan gagal jauh di
+# dalam G2 sebagai galat parse DuckDB yang tidak menerangkan apa pun.
+POLA_EKSEKUTABEL = re.compile(r"\.(sql|dmp|mdf)$", re.I)
+
+# Yang sudah punya mesinnya di layanan konversi — ketiganya.
+POLA_JALUR_B_SIAP = re.compile(r"\.(sql|mdf|dmp)$", re.I)
+
+PESAN_JALUR_B = (
+    "Berkas {ext} harus dipulihkan ke mesin basis data asalnya lebih dulu. "
+    "Layanan konversi sudah ada, tapi mesin untuk {ext} BELUM dipasang — baru "
+    ".sql (dialek PostgreSQL) yang siap. Kirimkan hasil ekspornya sebagai CSV, "
+    ".xlsx, atau parquet. Berkas: {jalur}"
+)
+
+PESAN_JALUR_B_SALAH_TEMPAT = (
+    "Berkas {ext} sampai ke pembaca grading, padahal seharusnya sudah diubah "
+    "jadi parquet oleh layanan konversi lebih dulu. Ini bukan masalah berkasnya "
+    "melainkan pembelokan jalur yang terlewat — periksa `konversi_dulu()` di "
+    "lib/_konversi.py. Berkas: {jalur}"
+)
+
+
+PESAN_XLS = (
+    "Format .xls (Excel 97-2003) tidak didukung. Ia bukan OOXML melainkan wadah "
+    "biner OLE2, dan tidak ada pembaca .xls di DuckDB — baik extension `excel` "
+    "maupun `spatial`. Selain itu formatnya hanya memuat 65.535 baris data per "
+    "lembar, jauh di bawah ukuran berkas kependudukan yang biasa dikirim. "
+    "Simpan ulang sebagai .xlsx atau ekspor ke CSV. Berkas: {jalur}"
+)
+
+
+def format_ditolak(jalur: str, dibaca_langsung: bool = False) -> str | None:
+    """
+    Alasan berkas ini tidak bisa diproses, atau None kalau ia bisa.
+
+    Dipanggil dari DUA tempat dengan arti yang sedikit berbeda:
+
+      * dari **dispatch** (`dibaca_langsung=False`) — saring di depan. `.sql`
+        LOLOS di sini: ia memang tidak bisa dibaca grading, tapi ia akan
+        dibelokkan ke layanan konversi lebih dulu. Yang ditolak hanya format
+        yang tidak punya jalan sama sekali.
+
+      * dari **`_sql_sumber`** (`dibaca_langsung=True`) — jaring pengaman tepat
+        sebelum DuckDB membaca. Di titik ini `.sql` pun harus ditolak: kalau ia
+        sampai ke sini, konversinya terlewat, dan membiarkannya jatuh ke
+        `read_parquet('...sql')` hanya menghasilkan galat parse yang
+        menyesatkan.
+    """
+    if POLA_EXCEL_LAMA.search(jalur):
+        return PESAN_XLS.format(jalur=jalur)
+
+    cocok = POLA_EKSEKUTABEL.search(jalur)
+    if not cocok:
+        return None
+    ext = cocok.group(0).lower()
+
+    if POLA_JALUR_B_SIAP.search(jalur):
+        return (PESAN_JALUR_B_SALAH_TEMPAT.format(ext=ext, jalur=jalur)
+                if dibaca_langsung else None)
+    return PESAN_JALUR_B.format(ext=ext, jalur=jalur)
+
 
 
 def _sql_sumber(jalur: str, con=None) -> str:
@@ -314,6 +383,9 @@ def _sql_sumber(jalur: str, con=None) -> str:
     dibuang otomatis (kolom pertama tidak jadi bernama '﻿nik'), dan
     pemisah titik koma terdeteksi sendiri.
     """
+    tolak = format_ditolak(jalur, dibaca_langsung=True)
+    if tolak:
+        raise ValueError(tolak)
     if POLA_EXCEL.search(jalur):
         return _sql_sumber_excel(con, jalur)
     if POLA_TEKS.search(jalur):
@@ -385,6 +457,19 @@ def _sql_sumber_excel(con, jalur: str) -> str:
 
     Hasilnya diuji terhadap CSV sumber yang sama: 0 selisih pada NIK MAUPUN
     tanggal.
+
+    `.xls` LAMA TIDAK IKUT, dan itu sudah diuji dengan berkas BIFF8 sungguhan:
+
+      * tanda tangannya `d0cf11e0a1b11ae1` — wadah OLE2, bukan ZIP. `read_xlsx`
+        gagal "Failed to open zip for reading".
+      * extension `spatial` pun tidak menolong: `st_drivers()` di build DuckDB
+        ini hanya memuat driver `XLSX`, tidak ada `XLS`.
+      * formatnya sendiri hanya memuat 65.535 baris data per lembar — berkas
+        kependudukan yang biasa dikirim berisi 200.000 baris, jadi .xls tidak
+        akan pernah memuatnya utuh.
+
+    Karena itu ia ditolak di `_sql_sumber` dengan pesan yang menyebut jalan
+    keluarnya, bukan dibiarkan gagal sebagai galat zip yang membingungkan.
     """
     _muat_excel(con)
     tipe = {r[0]: r[1] for r in con.execute(

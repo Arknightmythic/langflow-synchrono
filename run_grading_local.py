@@ -71,6 +71,11 @@ def lewat_job(args) -> int:
     job = susun_job({}, bawaan={
         "file_id": args.file_id, "s3_bucket": args.bucket,
         "parquet_key": args.key, "s3_endpoint": args.endpoint,
+        # Berkas unggahan asli, lengkap dengan ekstensinya. Inilah yang
+        # menentukan jalur: `.sql` membelok ke layanan konversi lebih dulu.
+        # Hanya ada di jalur ini, bukan di `--langsung`, karena pembelokannya
+        # memang tinggal di pekerja.
+        "raw_source_key": args.raw_key,
         "callback_url": args.callback_url,
         "callback_token": args.callback_token,
     })
@@ -111,6 +116,9 @@ def main() -> int:
     p.add_argument("--enriched-key", default=None)
     p.add_argument("--skip-write", action="store_true",
                    help="jangan tulis enriched.parquet (hanya menilai)")
+    p.add_argument("--raw-key", default=None,
+                   help="berkas unggahan asli, mis. uploads/{fileId}/raw/data.sql "
+                        "(hanya berlaku dengan --job)")
     p.add_argument("--job", action="store_true",
                    help="lewat tabel grading_jobs + pekerja latar belakang")
     p.add_argument("--callback-url", default=None)

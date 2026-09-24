@@ -15,9 +15,24 @@ services:
   seaweedfs:
     image: chrislusf/seaweedfs:latest
     container_name: synchrono-seaweedfs
+    # `-ip.bind=0.0.0.0` WAJIB sejak container ini ikut DUA jaringan
+    # (`dalam` dan `luar`).
+    #
+    # Tanpa itu SeaweedFS mendeteksi SATU alamat container dan hanya
+    # mendengarkan di situ. Dengan dua jaringan ia punya dua alamat, dan
+    # container yang me-resolve ke alamat yang lain mendapat
+    # "Connection refused" — yang terlihat persis seperti SeaweedFS mati,
+    # padahal ia hidup dan melayani container lain dengan baik.
+    #
+    # Terjadi sungguhan saat jaringan `dalam` ditambahkan: konverter
+    # (172.24.0.2) jalan, langflow (172.23.0.2) ditolak.
+    #
+    # (Komentar ditaruh DI SINI, bukan di dalam blok `command:` di bawah —
+    # blok `>` tidak mengenal komentar, isinya ikut jadi argumen.)
     command: >
       server
       -dir=/data
+      -ip.bind=0.0.0.0
       -s3
       -s3.port=8333
       -s3.config=/etc/seaweedfs/s3-config.json
@@ -30,6 +45,9 @@ services:
     volumes:
       - seaweed-data:/data
       - ./s3-config.json:/etc/seaweedfs/s3-config.json:ro
+    # IKUT di `dalam` supaya konverter bisa menjangkaunya tanpa perlu akses
+    # keluar, dan di `luar` supaya langflow serta host tetap seperti sebelumnya.
+    networks: [dalam, luar]
     restart: unless-stopped
     healthcheck:
       # Dua hal yang sempat salah di sini, keduanya sudah diuji:
@@ -273,8 +291,184 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       - seaweedfs
+    networks: [dalam, luar]
     restart: unless-stopped
+
+  # ── Jalur B: layanan konversi berkas yang isinya PERINTAH ────────────────
+  #
+  # Container INI yang memegang penerjemah SQL untuk berkas tidak tepercaya, dan
+  # container grading sengaja tidak. Yang menyeberang di antara keduanya hanya
+  # parquet berisi enam kolom.
+  konverter:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.konverter
+    container_name: synchrono-konverter
+    environment:
+      # Superuser hanya dipakai untuk CREATE/DROP DATABASE. Dump-nya sendiri
+      # dipulihkan sebagai peran `pemulih` yang BUKAN superuser — lihat _pulih.py.
+      POSTGRES_PASSWORD: konversi_lokal
+      POSTGRES_DB: postgres
+      KONV_PG_HOST: 127.0.0.1
+      KONV_PG_PORT: "5432"
+      KONV_PORT: "8390"
+      # Satu demi satu. Konversi memegang basis data, bukan sekadar kueri.
+      KONV_MAX_CONCURRENT: "1"
+      KONV_BATAS_DETIK: "1800"
+      # Bukan lagi batas RAM: unduhannya mengalir ke disk. ~82 bita/baris,
+      # jadi 4096 MB kira-kira 52 juta baris.
+      KONV_BATAS_MB: "4096"
+      LIB_SYNCHRONO: /synchrono/lib
+      # Lewat penerus, BUKAN `seaweedfs:8333` langsung. Di lokal keduanya
+      # sama saja; di server hanya jalur ini yang bekerja. Satu jalur untuk
+      # semua tempat berarti tidak ada bentuk yang cuma diuji di satu sisi.
+      S3_ENDPOINT: "s3-relay:8333"
+      S3_ACCESS_KEY: synchrono
+      S3_SECRET_KEY: synchrono123
+      S3_USE_SSL: "false"
+    volumes:
+      # Tabel alias dan pengenalan elemen dipakai bersama engine grading. Satu
+      # mesin pengenalan, bukan dua yang bisa berbeda pendapat.
+      - ../lib:/synchrono/lib:ro
+      - ../konverter:/konverter:ro
+      - konverter-data:/var/lib/postgresql/data
+    networks:
+      # HANYA jaringan internal. `internal: true` berarti container ini tidak
+      # punya rute ke luar sama sekali — bukan aturan firewall yang bisa keliru
+      # dikonfigurasi, melainkan tidak adanya gateway. SeaweedFS tetap
+      # terjangkau karena ia ikut di jaringan yang sama.
+      - dalam
+    # TIDAK ada `ports:`. Satu-satunya pemanggilnya adalah container Langflow,
+    # dari dalam jaringan compose. Mempublikasikan portnya berarti membuka
+    # layanan yang memulihkan berkas tidak tepercaya ke seluruh jaringan mesin
+    # — dan port yang dipublikasikan Docker MELEWATI ufw, jadi "kan sudah
+    # diblok firewall" tidak berlaku di sini.
+    depends_on:
+      - seaweedfs
+    restart: unless-stopped
+
+  # Jalur B untuk `.mdf` — SQL Server sekali pakai.
+  #
+  # Container TERPISAH dari konverter PostgreSQL, bukan digabung: tiap mesin
+  # basis data datang dengan image, cara inisialisasi, dan lisensinya sendiri.
+  # Digabung berarti satu kegagalan menghentikan ketiga formatnya sekaligus.
+  konverter-mssql:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.konverter-mssql
+    container_name: synchrono-konverter-mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: Konversi_Lokal_12345!
+      KONV_MESIN: sqlserver
+      KONV_PORT: "8391"
+      KONV_MAX_CONCURRENT: "1"
+      KONV_BATAS_MB: "4096"
+      KONV_DUCKDB_HOME: /var/opt/mssql
+      # Satu filesystem dengan folder data SQL Server; lihat catatan di layanan.py.
+      KONV_KERJA_UNDUH: /var/opt/mssql/data/unduh
+      KONV_MSSQL_KERJA: /var/opt/mssql/data/uji
+      LIB_SYNCHRONO: /synchrono/lib
+      S3_ENDPOINT: "s3-relay:8333"
+      S3_ACCESS_KEY: synchrono
+      S3_SECRET_KEY: synchrono123
+      S3_USE_SSL: "false"
+    volumes:
+      - ../lib:/synchrono/lib:ro
+      - ../konverter:/konverter:ro
+      - konverter-mssql-data:/var/opt/mssql/data
+    networks:
+      - dalam
+    depends_on:
+      - seaweedfs
+    restart: unless-stopped
+
+  # Jalur B untuk `.dmp` — Oracle sekali pakai.
+  #
+  # Yang paling berat dari ketiganya: image terbesar, waktu nyala terlama.
+  # Justru karena itu keputusan "satu container berumur panjang" paling terasa
+  # di sini — ongkos nyalanya dibayar sekali, bukan tiap job.
+  #
+  # `profiles` membuatnya TIDAK ikut naik dengan `docker compose up` biasa.
+  # Selama belum ada instansi yang benar-benar mengirim .dmp, tidak ada alasan
+  # memegang beberapa GB memori untuk mesin yang menganggur. Nyalakan dengan:
+  #     docker compose --profile oracle up -d konverter-oracle
+  konverter-oracle:
+    profiles: [oracle]
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.konverter-oracle
+    container_name: synchrono-konverter-oracle
+    environment:
+      ORACLE_PASSWORD: Konversi_Lokal_12345
+      KONV_MESIN: oracle
+      KONV_PORT: "8392"
+      KONV_MAX_CONCURRENT: "1"
+      KONV_BATAS_MB: "4096"
+      KONV_ORA_DSN: "localhost:1521/FREEPDB1"
+      KONV_ORA_KERJA: /opt/oracle/dmp
+      KONV_ORA_DIRNAME: KONVERSI_DIR
+      # Satu filesystem dengan folder DIRECTORY; berkas .dmp dipindahkan ke sana.
+      KONV_KERJA_UNDUH: /opt/oracle/dmp/unduh
+      LIB_SYNCHRONO: /synchrono/lib
+      S3_ENDPOINT: "s3-relay:8333"
+      S3_ACCESS_KEY: synchrono
+      S3_SECRET_KEY: synchrono123
+      S3_USE_SSL: "false"
+    volumes:
+      - ../lib:/synchrono/lib:ro
+      - ../konverter:/konverter:ro
+      - konverter-oracle-data:/opt/oracle/oradata
+    networks:
+      - dalam
+    depends_on:
+      - seaweedfs
+    restart: unless-stopped
+
+  # ── Penerus S3 untuk konverter ────────────────────────────────────────────
+  #
+  # Konverter berada di jaringan `internal`, yang TIDAK punya rute ke mana pun
+  # selain container sejaring — diukur, bukan diduga:
+  #
+  #     seaweedfs (container sejaring)   TERJANGKAU
+  #     gateway jaringan dalam           GAGAL (TimeoutError)
+  #     host.docker.internal             GAGAL (gaierror)
+  #
+  # Itu persis yang diinginkan untuk internet, tapi jadi masalah di SERVER:
+  # di sana SeaweedFS dijangkau lewat IP HOST, bukan nama container — di server
+  # lama karena ia dipasang di luar Docker, di server baru karena ia hidup di
+  # compose yang berbeda. Dua-duanya di luar jangkauan jaringan internal.
+  #
+  # Penerus ini jembatannya: ia satu-satunya yang berkaki di kedua jaringan, dan
+  # ia cuma meneruskan SATU port TCP. Konverter tetap tidak punya rute ke
+  # internet; yang bisa dicapainya hanya alamat yang ditulis di sini.
+  #
+  # Meneruskan TCP mentah, bukan HTTP: tanda tangan SigV4 dihitung atas header
+  # `Host` yang dikirim klien, dan SeaweedFS menghitung ulang dari header yang
+  # diterimanya. Proxy HTTP yang menulis ulang Host akan membatalkan tanda
+  # tangannya; socat tidak menyentuh apa pun.
+  s3-relay:
+    image: alpine/socat:latest
+    container_name: synchrono-s3-relay
+    command: >
+      TCP-LISTEN:8333,fork,reuseaddr
+      TCP:${S3_RELAY_TARGET:-seaweedfs:8333}
+    networks: [dalam, luar]
+    depends_on:
+      - seaweedfs
+    restart: unless-stopped
+
+networks:
+  # Jaringan bawaan compose punya akses internet; jaringan ini tidak.
+  dalam:
+    internal: true
+  luar:
+    driver: bridge
 
 volumes:
   seaweed-data:
   langflow-data:
+  konverter-data:
+  konverter-mssql-data:
+  konverter-oracle-data:

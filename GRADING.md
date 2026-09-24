@@ -53,7 +53,14 @@ menurut akhiran namanya:
 |---|---|---|
 | `.parquet` | `read_parquet` | jalur yang dianjurkan: tercepat, tipe kolom tersimpan |
 | `.csv` `.tsv` `.txt` | `read_csv_auto`, `all_varchar` | dimaterialkan sekali, lihat G2 |
-| `.xlsx` | `read_xlsx` | hanya OOXML; `.xls` lama TIDAK didukung |
+| `.xlsx` | `read_xlsx` | hanya OOXML |
+| `.xls` | — | **ditolak** dengan pesan yang menyebut jalan keluarnya |
+
+`.xls` ditolak bukan karena belum sempat dikerjakan. Ia wadah OLE2, bukan ZIP;
+tidak ada pembacanya di DuckDB (extension `excel` maupun `spatial`, yang
+`st_drivers()`-nya hanya memuat `XLSX`); dan formatnya hanya memuat **65.535
+baris data** per lembar, sementara berkas yang dipakai di sini 200.000 baris —
+jadi ia tidak akan pernah memuat datanya utuh.
 
 **Excel punya satu jebakan yang berakibat fatal dan diam.** Kalau kolom NIK
 diketik sebagai angka — bukan teks — Excel menyimpannya sebagai bilangan

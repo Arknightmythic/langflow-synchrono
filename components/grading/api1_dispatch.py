@@ -24,6 +24,7 @@ DUA CARA MENGISINYA
 
 import json
 
+from _grading import format_ditolak
 from _jobs import catat_job, panen_mangkrak, susun_job
 from _kolam import pinjam
 from _shared import Component, Message, MessageTextInput, Output
@@ -73,6 +74,22 @@ class GradingDispatch(Component):
             "callback_url": self.callback_url,
             "callback_token": self.callback_token,
         })
+
+        # PEMERIKSAAN FORMAT DI SINI, BUKAN DI PEKERJA.
+        #
+        # Inilah satu-satunya tempat engine perlu tahu ada pembagian jalur:
+        # portal memanggil endpoint yang sama untuk semua format, dan ekstensi
+        # `rawSourceKey` yang menentukan sisanya.
+        #
+        # Ditolak di depan supaya pemanggil tahu seketika. Kalau dibiarkan
+        # lewat, job-nya tercatat QUEUED, pekerja dilepas, lalu gagal beberapa
+        # detik kemudian — dan penolakan yang sudah pasti itu harus ditunggu
+        # lewat polling. Sama seperti `susun_job` yang sudah menolak muatan
+        # tanpa fileId di titik ini juga.
+        tolak = format_ditolak(job.get("raw_source_key") or job.get("csv_key")
+                               or job.get("parquet_key") or "")
+        if tolak:
+            raise ValueError(tolak)
 
         with pinjam() as con:
             # Sekalian bereskan job yang pekerjanya hilang karena restart.

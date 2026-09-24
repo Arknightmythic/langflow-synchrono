@@ -9,6 +9,22 @@
 #      unggahan — jadi WILAYAH_S3_ENDPOINT dikosongkan (memakai secret utama),
 #      bukan lagi kredensial terpisah.
 #
+# SATU BERKAS UNTUK DUA BENTUK SERVER
+#
+# SeaweedFS dan PostgreSQL di sini adalah penyimpanan BACKEND pipeline, bukan
+# milik konverter, dan letaknya berbeda di tiap server:
+#
+#     server lama   dipasang langsung di host, di luar Docker
+#     server baru   container, di compose yang BERBEDA (docker-compose.infra.yml)
+#
+# Dua-duanya dijangkau lewat IP HOST, jadi bentuknya sama dari sisi berkas ini.
+# Yang membedakan cuma alamatnya, dan itu ada di .env:
+#
+#     S3_ENDPOINT=172.16.12.98:8333     (server lama)
+#     S3_ENDPOINT=192.168.2.107:8355    (server baru)
+#
+# Karena itu tidak ada percabangan di sini sama sekali.
+#
 # Nilai rahasia (kata sandi PostgreSQL) TIDAK ditaruh di sini. Diisi lewat
 # berkas .env di sebelah compose ini — salin dari .env.server.example.
 #
@@ -54,6 +70,8 @@ services:
       # Berapa kali menunggu PostgreSQL sebelum menyerah (jeda 5 detik).
       # 12 = satu menit; cukup untuk PostgreSQL yang baru ikut menyala.
       SKEMA_PERCOBAAN: "${SKEMA_PERCOBAAN:-12}"
+    # Hanya `luar`: yang dibutuhkannya cuma PostgreSQL di host.
+    networks: [luar]
     volumes:
       - .:/synchrono/infra:ro
     command:
@@ -208,7 +226,150 @@ services:
     # di server, PG & S3 dijangkau lewat IP 172.16.12.98 langsung.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # DUA jaringan, dan keduanya dibutuhkan:
+    #   luar   — PostgreSQL dan SeaweedFS backend, yang dijangkau lewat IP host
+    #   dalam  — memanggil layanan konversi, yang tidak boleh punya jalan keluar
+    networks: [luar, dalam]
     restart: unless-stopped
+
+  # ── JALUR B: konversi berkas yang isinya PERINTAH ────────────────────────
+  #
+  # `.sql`, `.dmp`, dan `.mdf` tidak dibaca melainkan DIPULIHKAN ke mesin basis
+  # datanya. Itu tidak boleh terjadi di dalam container grading, yang memegang
+  # kredensial S3 dan koneksi PostgreSQL produksi. Lihat UNGGAHAN.md.
+  #
+  # Ketiganya container terpisah, satu per mesin: tiap mesin datang dengan
+  # image, cara inisialisasi, dan lisensinya sendiri.
+  #
+  # PENTING — ketiganya HANYA di jaringan `dalam`, yang `internal: true` dan
+  # karena itu tidak punya rute ke mana pun selain container sejaring. Sudah
+  # diukur dari dalam container:
+  #
+  #     container sejaring     TERJANGKAU
+  #     gateway jaringannya    GAGAL (TimeoutError)
+  #     host.docker.internal   GAGAL (gaierror)
+  #     internet               GAGAL
+  #
+  # Satu-satunya jalan keluarnya adalah penerus S3 di bawah.
+
+  # Penerus S3 — SATU port, ke SATU alamat.
+  #
+  # Inilah yang membuat berkas ini bekerja di kedua bentuk server tanpa
+  # percabangan: SeaweedFS-nya boleh di host (server lama) atau di compose lain
+  # (server baru), yang berubah cuma alamat tujuan di .env.
+  #
+  # TCP mentah, bukan proxy HTTP. Tanda tangan SigV4 dihitung atas header
+  # `Host` yang dikirim klien dan diverifikasi ulang oleh SeaweedFS dari header
+  # yang diterimanya; proxy yang menulis ulang Host akan membatalkannya. socat
+  # tidak menyentuh apa pun — sudah diuji, unduh maupun unggah parquet lolos.
+  s3-relay:
+    image: alpine/socat:latest
+    container_name: synchrono-s3-relay
+    command: >
+      TCP-LISTEN:8333,fork,reuseaddr
+      TCP:${S3_RELAY_TARGET:-172.16.12.98:8333}
+    networks: [dalam, luar]
+    restart: unless-stopped
+
+  konverter:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.konverter
+    container_name: synchrono-konverter
+    environment:
+      # Superuser hanya untuk CREATE/DROP DATABASE. Dumpnya dipulihkan sebagai
+      # peran `pemulih` yang BUKAN superuser — lihat konverter/_pulih.py.
+      POSTGRES_PASSWORD: "${KONV_PG_PASSWORD:-konversi_lokal}"
+      POSTGRES_DB: postgres
+      KONV_PG_HOST: 127.0.0.1
+      KONV_PG_PORT: "5432"
+      KONV_PORT: "8390"
+      KONV_MAX_CONCURRENT: "${KONV_MAX_CONCURRENT:-1}"
+      KONV_BATAS_DETIK: "${KONV_BATAS_DETIK:-1800}"
+      KONV_BATAS_MB: "${KONV_BATAS_MB:-4096}"
+      LIB_SYNCHRONO: /synchrono/lib
+      # Lewat penerus, dan nama ini sama di semua tempat.
+      S3_ENDPOINT: "s3-relay:8333"
+      S3_ACCESS_KEY: "${S3_ACCESS_KEY:-ADMIN}"
+      S3_SECRET_KEY: "${S3_SECRET_KEY:-Password1234}"
+      S3_USE_SSL: "false"
+    volumes:
+      - ../lib:/synchrono/lib:ro
+      - ../konverter:/konverter:ro
+      - konverter-data:/var/lib/postgresql/data
+    networks: [dalam]
+    restart: unless-stopped
+
+  konverter-mssql:
+    profiles: [mssql]
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.konverter-mssql
+    container_name: synchrono-konverter-mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: "${KONV_MSSQL_PASSWORD:-Konversi_Lokal_12345!}"
+      KONV_MESIN: sqlserver
+      KONV_PORT: "8391"
+      KONV_MAX_CONCURRENT: "1"
+      KONV_BATAS_MB: "${KONV_BATAS_MB:-4096}"
+      KONV_DUCKDB_HOME: /var/opt/mssql
+      KONV_KERJA_UNDUH: /var/opt/mssql/data/unduh
+      KONV_MSSQL_KERJA: /var/opt/mssql/data/uji
+      LIB_SYNCHRONO: /synchrono/lib
+      S3_ENDPOINT: "s3-relay:8333"
+      S3_ACCESS_KEY: "${S3_ACCESS_KEY:-ADMIN}"
+      S3_SECRET_KEY: "${S3_SECRET_KEY:-Password1234}"
+      S3_USE_SSL: "false"
+    volumes:
+      - ../lib:/synchrono/lib:ro
+      - ../konverter:/konverter:ro
+      - konverter-mssql-data:/var/opt/mssql/data
+    networks: [dalam]
+    restart: unless-stopped
+
+  konverter-oracle:
+    profiles: [oracle]
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.konverter-oracle
+    container_name: synchrono-konverter-oracle
+    environment:
+      ORACLE_PASSWORD: "${KONV_ORACLE_PASSWORD:-Konversi_Lokal_12345}"
+      KONV_MESIN: oracle
+      KONV_PORT: "8392"
+      KONV_MAX_CONCURRENT: "1"
+      KONV_BATAS_MB: "${KONV_BATAS_MB:-4096}"
+      KONV_ORA_DSN: "localhost:1521/FREEPDB1"
+      KONV_ORA_KERJA: /opt/oracle/dmp
+      KONV_ORA_DIRNAME: KONVERSI_DIR
+      KONV_KERJA_UNDUH: /opt/oracle/dmp/unduh
+      LIB_SYNCHRONO: /synchrono/lib
+      S3_ENDPOINT: "s3-relay:8333"
+      S3_ACCESS_KEY: "${S3_ACCESS_KEY:-ADMIN}"
+      S3_SECRET_KEY: "${S3_SECRET_KEY:-Password1234}"
+      S3_USE_SSL: "false"
+    volumes:
+      - ../lib:/synchrono/lib:ro
+      - ../konverter:/konverter:ro
+      - konverter-oracle-data:/opt/oracle/oradata
+    networks: [dalam]
+    restart: unless-stopped
+
+networks:
+  # `luar` — bridge biasa. Yang di sini bisa menjangkau host, jadi inilah yang
+  # dipakai untuk PostgreSQL dan SeaweedFS backend.
+  luar:
+    driver: bridge
+  # `dalam` — TANPA rute ke mana pun. Konverter tinggal di sini sendirian
+  # (bersama penerus S3 dan langflow yang memanggilnya), sehingga berkas tidak
+  # tepercaya yang dipulihkannya tidak punya jalan keluar sama sekali.
+  dalam:
+    internal: true
 
 volumes:
   langflow-data:
+  konverter-data:
+  konverter-mssql-data:
+  konverter-oracle-data:

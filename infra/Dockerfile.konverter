@@ -1,0 +1,58 @@
+# Layanan konversi jalur B — PostgreSQL sekali pakai + DuckDB.
+#
+# Berbasis image PostgreSQL resmi, bukan sebaliknya. Alasannya sepele tapi
+# menentukan: menjalankan PostgreSQL di atas image Python berarti memasang dan
+# menginisialisasi klaster sendiri; menambahkan Python ke image PostgreSQL cuma
+# satu apt. Yang kedua jauh lebih sedikit yang bisa salah.
+#
+# BEDANYA DENGAN CONTAINER GRADING
+#
+# Container ini SENGAJA yang memegang penerjemah SQL untuk berkas tidak
+# tepercaya, dan container grading sengaja TIDAK. Yang keluar dari sini hanya
+# parquet berisi enam kolom — bukan koneksi, bukan kredensial, bukan proses.
+FROM postgres:16-bookworm
+
+# python3 + pip untuk layanannya, duckdb untuk membaca S3 dan menulis parquet.
+# `psql` sudah ada dari image dasarnya.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 python3-pip python3-venv \
+ && rm -rf /var/lib/apt/lists/*
+
+# Venv supaya pip tidak berkelahi dengan paket python milik Debian.
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Versi dipatok sama dengan engine grading. Kalau keduanya berbeda versi
+# DuckDB, parquet yang ditulis di sini bisa memakai fitur format yang belum
+# dikenali pembacanya di sana — dan itu akan terlihat sebagai berkas rusak,
+# bukan sebagai ketidakcocokan versi.
+#
+# `python-dotenv` ikut karena `lib/_shared.py` — yang dipakai bersama engine
+# grading — memanggil `load_dotenv()` saat diimpor. Langflow TIDAK perlu: modul
+# itu sudah punya stub untuk dipakai di luar Langflow.
+RUN pip install --no-cache-dir duckdb==1.5.5 python-dotenv==1.2.3
+
+# Extension diunduh saat build, sama seperti image Langflow: container ini
+# berjalan di jaringan tanpa akses internet.
+#
+#   httpfs    mengambil dump dari S3, menulis parquet ke S3
+#   postgres  ATTACH ke basis data sekali pakai untuk memilih tabel & ekspor
+RUN python -c "import duckdb; c=duckdb.connect(); [c.execute(f'INSTALL {e}') for e in ('httpfs','postgres')]"
+
+COPY konverter/ /konverter/
+ENV PYTHONPATH=/konverter:/synchrono/lib \
+    PYTHONUNBUFFERED=1
+
+# BUKAN /docker-entrypoint-initdb.d/. Skrip di sana hanya dijalankan saat PGDATA
+# masih kosong, jadi layanannya tidak akan menyala lagi setelah container
+# di-restart dengan volume yang sudah terisi. Selain itu entrypoint menunggu
+# skrip init selesai, sehingga proses yang berumur panjang justru menggantung
+# inisialisasinya.
+#
+# Karena itu: entrypoint sendiri yang menyalakan PostgreSQL lebih dulu,
+# menunggunya siap, lalu menyerahkan PID 1 ke layanan konversi.
+COPY infra/konverter-nyalakan.sh /usr/local/bin/konverter-nyalakan.sh
+RUN chmod +x /usr/local/bin/konverter-nyalakan.sh
+
+EXPOSE 8390
+ENTRYPOINT ["/usr/local/bin/konverter-nyalakan.sh"]
