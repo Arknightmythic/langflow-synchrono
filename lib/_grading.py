@@ -282,10 +282,15 @@ def _kunci_env() -> tuple[str, str]:
 # Berkas yang dibaca sebagai teks berpemisah, bukan parquet.
 POLA_TEKS = re.compile(r"\.(csv|tsv|txt)$", re.I)
 
+# Excel. HANYA `.xlsx` (OOXML). `.xls` adalah format biner lama yang tidak
+# dibaca extension ini — sengaja tidak dimasukkan supaya tidak gagal dengan
+# pesan yang menyesatkan.
+POLA_EXCEL = re.compile(r"\.xlsx$", re.I)
 
-def _sql_sumber(jalur: str) -> str:
+
+def _sql_sumber(jalur: str, con=None) -> str:
     """
-    Ekspresi pembacaan sumber — parquet atau CSV, dipilih dari akhiran namanya.
+    Ekspresi pembacaan sumber — parquet, CSV, atau xlsx, dari akhiran namanya.
 
     Portal SEHARUSNYA mengubah unggahan jadi parquet lebih dulu, dan itu tetap
     jalur yang dianjurkan: parquet menyimpan tipe kolom, jauh lebih kecil, dan
@@ -309,9 +314,92 @@ def _sql_sumber(jalur: str) -> str:
     dibuang otomatis (kolom pertama tidak jadi bernama '﻿nik'), dan
     pemisah titik koma terdeteksi sendiri.
     """
+    if POLA_EXCEL.search(jalur):
+        return _sql_sumber_excel(con, jalur)
     if POLA_TEKS.search(jalur):
         return f"read_csv_auto('{jalur}', all_varchar = true, sample_size = -1)"
     return f"read_parquet('{jalur}')"
+
+
+def _muat_excel(con) -> None:
+    """
+    Aktifkan extension `excel`, seperlunya saja.
+
+    TIDAK ditaruh di `buka_koneksi()` bersama httpfs dan postgres. Alasannya
+    bukan kerapian: `INSTALL` mengunduh dari internet, dan container ini
+    dirancang berjalan tanpa akses keluar (extension-nya sudah diunduh saat
+    build image). Kalau `excel` ikut di sana dan unduhannya gagal, yang mati
+    BUKAN hanya job xlsx melainkan SETIAP koneksi — termasuk seluruh matching
+    dan config, yang tidak ada urusannya dengan Excel.
+
+    Di sini kegagalannya terkurung pada job yang memang butuh: `LOAD` dari
+    extension yang sudah terpasang murni lokal dan tidak menyentuh jaringan.
+    """
+    try:
+        con.execute("LOAD excel")
+    except Exception:
+        # Belum terpasang — terjadi kalau dijalankan di luar container yang
+        # sudah memasangnya saat build. Baru di sini internet dibutuhkan.
+        try:
+            con.execute("INSTALL excel")
+            con.execute("LOAD excel")
+        except Exception as e:
+            raise RuntimeError(
+                "Extension DuckDB 'excel' tidak tersedia, sehingga berkas .xlsx "
+                "tidak bisa dibaca. Di dalam container ia dipasang saat build "
+                "image (infra/Dockerfile.langflow); kalau pesan ini muncul di "
+                f"sana, image-nya perlu di-build ulang. Sebab asli: {e}"
+            ) from e
+
+
+def _sql_sumber_excel(con, jalur: str) -> str:
+    """
+    Ekspresi pembacaan `.xlsx` — dan di sinilah semua kerumitannya.
+
+    `all_varchar = true` adalah pilihan yang benar untuk CSV, tapi untuk xlsx ia
+    benar HANYA SETENGAH. Diukur pada 200.000 baris data uji:
+
+        kolom NIK   ditulis sebagai angka bulat
+                    all_varchar  -> '9707000210903957'   0 selisih   BENAR
+                    bawaan       -> 9707000210903956.0   200rb salah  <- DOUBLE
+        kolom TANGGAL ditulis sebagai tanggal Excel
+                    all_varchar  -> '33148.0'            SEMUA salah  <- serial
+                    bawaan       -> 1990-10-02           benar
+
+    Jadi tidak ada satu mode pun yang benar untuk keduanya sekaligus.
+
+    Yang dipakai di sini: BACA sebagai teks (supaya NIK 16 digit tidak pernah
+    melewati DOUBLE), lalu perbaiki kolom yang tipe aslinya tanggal.
+
+    Tipe aslinya diketahui lewat satu DESCRIBE. Di disk lokal ia 0,26 detik
+    melawan 2,8 detik untuk pembacaan penuh — jadi ia memang tidak mengurai
+    seluruh isinya. Dari S3 ongkosnya lebih besar karena berkas ZIP-nya diambil
+    lagi; itu diterima dengan sadar, sebab ketepatan tipe kolom lebih berharga
+    daripada satu unduhan berkas yang ukurannya dibatasi Excel sendiri (maksimum
+    1.048.576 baris). Kolom tanggal keluar sebagai serial Excel berakhiran
+    `.0` ('33148.0'); ekornya dibuang supaya bentuknya jadi '33148', yaitu
+    persis bentuk yang SUDAH ditangani `deteksi_serial_excel` dan
+    `sql_tanggal_normal` di `_normalisasi.py`. Pemotongan itu hanya dikenakan
+    pada kolom yang DESCRIBE bilang DATE/TIMESTAMP, jadi kolom teks biasa yang
+    kebetulan berisi '12.0' tidak ikut tersentuh.
+
+    Hasilnya diuji terhadap CSV sumber yang sama: 0 selisih pada NIK MAUPUN
+    tanggal.
+    """
+    _muat_excel(con)
+    tipe = {r[0]: r[1] for r in con.execute(
+        f"DESCRIBE SELECT * FROM read_xlsx('{jalur}', header = true)").fetchall()}
+
+    pilih = []
+    for kol, t in tipe.items():
+        k = _kutip(kol)
+        if t.startswith(("DATE", "TIMESTAMP")):
+            pilih.append(rf"regexp_replace(trim({k}), '\.0+$', '') AS {k}")
+        else:
+            pilih.append(k)
+
+    return (f"(SELECT {', '.join(pilih)} FROM "
+            f"read_xlsx('{jalur}', header = true, all_varchar = true))")
 
 
 # ── Tahap 2: baca parquet mentah ───────────────────────────────────────────
@@ -349,16 +437,22 @@ def muat_raw(s: dict) -> dict:
     #
     # Karena itu CSV dimaterialkan sekali di sini. Parquet tetap VIEW:
     # memateralkannya hanya menambah pemakaian memori tanpa manfaat.
+    #
+    # xlsx ikut dimaterialkan dengan alasan yang SAMA, dan lebih kuat lagi:
+    # tiap pemindaian berarti membongkar ulang seluruh ZIP OOXML-nya. Terukur
+    # 2,8 detik untuk 200.000 baris — dikalikan delapan pemindaian, itu 22
+    # detik yang hilang percuma.
     csv = bool(POLA_TEKS.search(s["sumber"]))
-    con.execute(f"CREATE OR REPLACE {'TEMP TABLE' if csv else 'VIEW'} raw_df AS "
-                f"SELECT * FROM {_sql_sumber(s['sumber'])}")
+    excel = bool(POLA_EXCEL.search(s["sumber"]))
+    con.execute(f"CREATE OR REPLACE {'TEMP TABLE' if csv or excel else 'VIEW'} "
+                f"raw_df AS SELECT * FROM {_sql_sumber(s['sumber'], con)}")
 
     kolom_asli = [r[0] for r in con.execute("DESCRIBE raw_df").fetchall()]
     jumlah = con.execute("SELECT count(*) FROM raw_df").fetchone()[0]
     if jumlah == 0:
         raise ValueError(f"Berkas sumber kosong: {s['sumber']}")
 
-    bentuk = "CSV" if csv else "parquet"
+    bentuk = "xlsx" if excel else "CSV" if csv else "parquet"
     print(f"[G2] {jumlah:,} baris, {len(kolom_asli)} kolom  (dibaca sebagai {bentuk})")
 
     hasil = petakan_kolom(con, "raw_df", kolom_asli,
@@ -418,6 +512,26 @@ def _sql_nik(kol_nik: str | None, wilayah_siap: bool = True) -> dict[str, str]:
         buang bagian pecahannya. Membuang seluruh karakter non-digit justru
         merusak: titik hilang tapi nol di belakangnya ikut terbaca, dan NIK
         berubah jadi 17 digit.
+
+        TAPI "tidak ada yang hilang" hanya benar SAMPAI 2^53. Di atas itu,
+        bilangan pecahan presisi ganda tidak lagi bisa mewakili setiap bilangan
+        bulat, sehingga nilainya SUDAH dibulatkan sebelum berkasnya ditulis —
+        dan bentuk `.0`-nya terlihat sama persis dengan yang utuh.
+
+        Diukur pada 200.000 baris data uji yang seluruh NIK-nya tersimpan
+        sebagai pecahan:
+
+            benar-benar rusak        15.755   (7,9%)  — semuanya di atas 2^53
+            utuh setelah .0 dibuang 184.245  (92,1%)
+
+        Jadi menolak seluruh berkasnya salah besar, dan mempercayai semuanya
+        juga salah. Yang di atas batas dinyatakan TIDAK TEPERCAYA, sama seperti
+        notasi ilmiah. Batasnya struktural, bukan taksiran: NIK berawalan
+        provinsi 90+ (Papua) jatuh di atasnya, yang di bawahnya utuh.
+
+        Kenapa tidak menolak berkasnya — `nik_trusted` sudah dipakai matching
+        sebagai penjaga kunci join, jadi baris seperti ini otomatis tidak
+        dicocokkan lewat NIK, sementara 92% sisanya tetap terpakai.
     """
     if not kol_nik:
         # NULL harus BERTIPE. Tanpa CAST, DuckDB menebak sendiri dan kolom
@@ -437,11 +551,16 @@ def _sql_nik(kol_nik: str | None, wilayah_siap: bool = True) -> dict[str, str]:
             "prov_ok": "FALSE",
             "kec_ok": "FALSE",
             "excel": "FALSE",
+            "presisi": "FALSE",
             "non_numerik": "FALSE",
         }
 
     mentah = f"trim(CAST({_kutip(kol_nik)} AS VARCHAR))"
     excel = f"regexp_matches(upper({mentah}), '^[0-9](\\.[0-9]+)?E[+-]?[0-9]+$')"
+    # 2^53: bilangan bulat terakhir yang masih bisa diwakili DOUBLE dengan tepat.
+    presisi = (rf"regexp_matches({mentah}, '^[0-9]+\.[0-9]*$') "
+               rf"AND TRY_CAST(regexp_replace({mentah}, '\..*$', '') AS DOUBLE) "
+               rf"> 9007199254740992")
     clean = f"""CASE
         WHEN {excel}
             THEN CAST(CAST(TRY_CAST({mentah} AS DOUBLE) AS DECIMAL(20,0)) AS VARCHAR)
@@ -463,6 +582,7 @@ def _sql_nik(kol_nik: str | None, wilayah_siap: bool = True) -> dict[str, str]:
         "ada": "TRUE",
         "clean": clean,
         "excel": excel,
+        "presisi": presisi,
         "non_numerik": non_numerik,
         "len_ok": "length(__nik_clean) = 16",
         "prov": "substr(__nik_clean, 1, 2)",
@@ -539,6 +659,7 @@ def bersihkan_dan_tandai(s: dict) -> dict:
         SELECT r.*,
                {nik['clean']}       AS __nik_clean,
                {nik['excel']}       AS __nik_excel,
+               {nik['presisi']}     AS __nik_presisi,
                {nik['non_numerik']} AS __nik_non_numerik,
                CAST({tgl} AS DATE)  AS __tgl,
                {jk}                 AS __jk,
@@ -684,6 +805,7 @@ def bersihkan_dan_tandai(s: dict) -> dict:
                     AND __nik_prov_ok
                     AND {kec_wajib}
                     AND NOT __nik_excel
+                    AND NOT __nik_presisi
                     AND NOT COALESCE(__nik_tgl_ngawur, TRUE)
                     AND NOT __beda_tgl
                     AND NOT __beda_jk
@@ -734,6 +856,14 @@ def _daftar_anomali(ada_nik: bool, kol_tgl: str | None, kol_jk: str | None,
              "CASE WHEN __nik_excel THEN 'NIK rusak akibat notasi ilmiah Excel "
              "(digit belakang tidak dapat dipulihkan)' "
              "ELSE 'NIK memuat karakter selain angka' END"),
+
+            # Bentuknya SAH — 16 digit, provinsi benar, lolos semua
+            # pemeriksaan lain. Yang salah justru tidak kelihatan: satu digit
+            # sudah bergeser sebelum berkasnya ditulis. Tanpa entri ini barisnya
+            # terbaca "Bersih" padahal menunjuk orang yang berbeda.
+            ("EXCEL_PRECISION_NIK", "__nik_presisi",
+             "'NIK tersimpan sebagai angka pecahan di atas batas presisi "
+             "(2^53), sehingga digit belakangnya mungkin sudah bergeser'"),
 
             ("INVALID_NIK_LENGTH", f"NOT {nik_kosong} AND NOT __nik_len_ok",
              "'Panjang NIK ' || CAST(length(__nik_clean) AS VARCHAR) || "
@@ -870,6 +1000,7 @@ def skor_dan_grade(s: dict) -> dict:
         "count(*) FILTER (WHERE __nama_gelar)                       AS nama_gelar",
         "count(*) FILTER (WHERE __nama_bin)                         AS nama_bin",
         "count(*) FILTER (WHERE __nik_excel)                       AS excel",
+        "count(*) FILTER (WHERE __nik_presisi)                     AS presisi",
         "count(DISTINCT __nik_clean) FILTER (WHERE __nik_dobel)    AS grup_dobel",
         "count(*) FILTER (WHERE is_anomaly)                        AS anomali",
     ]
@@ -900,6 +1031,9 @@ def skor_dan_grade(s: dict) -> dict:
     print(f"[G4] grade {HURUF[grade]} ({grade}) — skor {skor} "
           f"[pita {pita['score_min']}-{pita['score_max']}, mutu {mutu:.3f}]")
     print(f"[G4] trusted {m['trusted']:,} / {total:,}, anomali {m['anomali']:,}")
+    if m["presisi"]:
+        print(f"[G4] {m['presisi']:,} NIK tersimpan sebagai pecahan di atas "
+              f"batas presisi 2^53 — ditandai tidak tepercaya")
 
     return {
         **s,
@@ -911,6 +1045,10 @@ def skor_dan_grade(s: dict) -> dict:
         "ada": ada,
         "case_flags": {
             "hasExcelScientificNik": bool(m["excel"]),
+            # TAMBAHAN di luar spesifikasi integrasi. Tanpa ini, berkas dengan
+            # NIK pecahan di atas 2^53 hanya terlihat sebagai turunnya angka
+            # trusted, tanpa sebab yang bisa diterangkan ke pengguna.
+            "hasExcelPrecisionNik": bool(m["presisi"]),
             "hasAmbiguousDateFormats": ambigu,
         },
     }

@@ -17,10 +17,19 @@ USER root
 # Versi dipatok agar hasil matching tidak bergeser diam-diam saat image di-rebuild.
 RUN pip install --no-cache-dir duckdb==1.5.5 python-dotenv==1.2.3
 
-# Extension DuckDB (httpfs untuk S3, postgres untuk PostgreSQL) diunduh saat
-# pertama dipakai. Diunduh di sini supaya container tidak perlu akses internet
-# saat runtime dan eksekusi flow pertama tidak tertunda.
-RUN python -c "import duckdb; c=duckdb.connect(); [c.execute(f'INSTALL {e}') for e in ('httpfs','postgres')]"
+# Extension DuckDB diunduh saat pertama dipakai. Diunduh di sini supaya
+# container tidak perlu akses internet saat runtime dan eksekusi flow pertama
+# tidak tertunda.
+#
+#   httpfs    membaca parquet/CSV langsung dari S3
+#   postgres  ATTACH ke PostgreSQL
+#   excel     membaca unggahan .xlsx
+#
+# `excel` ikut DIPASANG di sini tapi TIDAK di-LOAD di `buka_koneksi()`. Yang
+# memuatnya hanya job yang berkasnya memang .xlsx (`_muat_excel` di
+# lib/_grading.py), supaya kalau extension ini bermasalah yang terhenti hanya
+# job xlsx — bukan matching dan config yang tidak ada urusannya dengan Excel.
+RUN python -c "import duckdb; c=duckdb.connect(); [c.execute(f'INSTALL {e}') for e in ('httpfs','postgres','excel')]"
 
 # Folder data Langflow dibuat & dimiliki user (uid 1000, grup root/0) SEBELUM
 # volume di-mount. WAJIB di server Linux: image ini berjalan sebagai user

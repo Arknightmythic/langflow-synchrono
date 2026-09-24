@@ -12,7 +12,7 @@ Keduanya berbagi satu container Langflow, satu PostgreSQL, dan satu SeaweedFS.
 ## 1. Alur
 
 ```
-  User unggah CSV
+  User unggah berkas
         |
         v
   Backend Synchrono  ──simpan──>  SeaweedFS   uploads/{fileId}/data.parquet
@@ -43,6 +43,61 @@ Keduanya berbagi satu container Langflow, satu PostgreSQL, dan satu SeaweedFS.
 **API 1 balas seketika** — diukur 0,9–1,2 detik, jauh di bawah batas 5 detik
 yang dituntut spesifikasi integrasi. Grading sesungguhnya berjalan di thread
 latar belakang, jadi backend dan UI Synchrono tidak pernah menunggu.
+
+### Format sumber yang diterima
+
+Berkas masukan dipilih `_pilih_sumber()` dari muatan portal, lalu dibaca
+menurut akhiran namanya:
+
+| Akhiran | Dibaca sebagai | Catatan |
+|---|---|---|
+| `.parquet` | `read_parquet` | jalur yang dianjurkan: tercepat, tipe kolom tersimpan |
+| `.csv` `.tsv` `.txt` | `read_csv_auto`, `all_varchar` | dimaterialkan sekali, lihat G2 |
+| `.xlsx` | `read_xlsx` | hanya OOXML; `.xls` lama TIDAK didukung |
+
+**Excel punya satu jebakan yang berakibat fatal dan diam.** Kalau kolom NIK
+diketik sebagai angka — bukan teks — Excel menyimpannya sebagai bilangan
+pecahan presisi ganda, yang mewakili bilangan bulat dengan tepat hanya sampai
+**2⁵³ = 9.007.199.254.740.992**. NIK 16 digit melintasi batas itu: yang
+berawalan provinsi 90+ (Papua) jatuh di atasnya.
+
+Di atas batas itu `double` hanya bisa menyimpan bilangan genap, jadi NIK ganjil
+bergeser satu **saat berkas disimpan** — sebelum engine ini pernah melihatnya.
+Terukur pada 200.000 baris: 31.626 NIK di atas batas, 15.755 (49,8%) benar-benar
+rusak. Dan karena keduanya sama-sama terbaca genap, **tidak ada cara mengetahui
+yang mana**.
+
+Yang di atas batas karena itu ditandai `nik_trusted = false` dengan anomali
+`EXCEL_PRECISION_NIK`, sama seperti notasi ilmiah Excel — bukan ditolak.
+Berkasnya tetap digrading, dan 92% baris yang sehat tetap terpakai. Yang
+menutup bahayanya adalah matching, yang sudah memakai `nik_trusted` sebagai
+penjaga kunci join, sehingga baris tidak tepercaya tidak pernah dicocokkan
+lewat NIK.
+
+`caseFlags.hasExcelPrecisionNik` menerangkannya ke portal. **Kunci ini tambahan
+di luar spesifikasi integrasi**; tanpa ia, turunnya angka tepercaya tidak punya
+sebab yang bisa diterangkan ke pengguna.
+
+Diuji ujung ke ujung terhadap CSV sumber yang sama, lewat pipeline penuh:
+
+| Berkas uji | Selisih isi | `nik_trusted` | NIK salah yang lolos dipercaya |
+|---|---|---|---|
+| NIK & tanggal sebagai teks | **0** | 194.754 | **0** |
+| tanggal sebagai tanggal Excel | **0** | 194.754 | **0** |
+| NIK sebagai pecahan | 15.755 | 168.374 | **0** |
+
+Baris kedua membuktikan tanggal Excel menghasilkan grade, skor, dan jumlah
+tepercaya yang sama persis dengan versi teksnya. Keempat format sumber diuji
+berdampingan dan jatuh pada angka yang sama:
+
+```
+parquet        grade B  skor 89  trusted 194.754  anomali 176.810
+CSV            grade B  skor 89  trusted 194.754  anomali 176.810
+xlsx (teks)    grade B  skor 89  trusted 194.754  anomali 176.810
+xlsx (tanggal) grade B  skor 89  trusted 194.754  anomali 176.810
+```
+ Kolom terakhir yang paling
+penting: tidak satu pun NIK rusak lolos sebagai tepercaya.
 
 ### Dua jalur hasil, pilih salah satu atau keduanya
 
