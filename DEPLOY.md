@@ -9,6 +9,140 @@ grading tidak disentuh.
 
 ---
 
+## 0. Perintah — naikkan & redeploy
+
+Dua server, **satu berkas compose**. Yang berbeda cuma isi `.env`.
+
+### 0.1 Sekali saja, per server
+
+```bash
+cd langflow-synchrono/infra
+cp .env.server.example .env
+```
+
+Lalu sunting `.env`:
+
+```bash
+# ── SERVER LAMA (172.16.12.98) — SeaweedFS & PostgreSQL dipasang di host ──
+PG_HOST=172.16.12.98
+PG_PORT=5430
+PG_PASSWORD=<isi>
+S3_ENDPOINT=172.16.12.98:8333
+S3_RELAY_TARGET=172.16.12.98:8333
+LANGFLOW_SUPERUSER_PASSWORD=<ganti>
+
+# ── SERVER BARU (192.168.2.107) — keduanya container di docker-compose.infra.yml ──
+PG_HOST=192.168.2.107
+PG_PORT=5430
+PG_PASSWORD=<isi>
+S3_ENDPOINT=192.168.2.107:8355
+S3_RELAY_TARGET=192.168.2.107:8355
+LANGFLOW_SUPERUSER_PASSWORD=<ganti>
+```
+
+`S3_ENDPOINT` dan `S3_RELAY_TARGET` isinya sama; keduanya ada karena compose
+tidak bisa memakai satu variabel sebagai bawaan variabel lain. Yang pertama
+dipakai engine grading (lewat host), yang kedua oleh penerus untuk konverter
+(yang tidak punya rute ke host). Lihat §7c.
+
+**Server baru saja:** infrastrukturnya dinyalakan lebih dulu, sekali.
+
+```bash
+docker compose -f docker-compose.infra.yml --env-file .env up -d
+```
+
+### 0.2 Menaikkan
+
+```bash
+cd langflow-synchrono/infra
+
+# Jalur A + .sql. Ini yang dipakai sehari-hari.
+docker compose -f docker-compose.server.yml --env-file .env up -d --build
+
+# Tambah .mdf (SQL Server — 2,34 GB di disk, ~2 GB memori selama hidup)
+docker compose -f docker-compose.server.yml --env-file .env --profile mssql up -d --build
+
+# Tambah .dmp (Oracle — 2,84 GB unduhan, paling berat)
+docker compose -f docker-compose.server.yml --env-file .env --profile oracle up -d --build
+```
+
+Profilnya bertumpuk: pakai `--profile mssql --profile oracle` untuk keduanya.
+Tanpa profilnya, format itu gagal dengan pesan yang menyebut layanannya belum
+ada — bukan gagal diam-diam.
+
+### 0.3 REDEPLOY sesudah mengubah kode
+
+Ini bagian yang paling mudah keliru, dan urutannya menentukan.
+
+```bash
+cd langflow-synchrono
+git pull
+cd infra
+
+# 1. Bangun ulang image yang berubah
+docker compose -f docker-compose.server.yml --env-file .env build
+
+# 2. Naikkan ulang
+docker compose -f docker-compose.server.yml --env-file .env up -d
+
+# 3. WAJIB kalau ada perubahan di lib/ — walaupun containernya "sudah jalan"
+docker compose -f docker-compose.server.yml --env-file .env restart langflow
+```
+
+**Kenapa langkah 3 wajib.** Berkas di `lib/` di-bind-mount, jadi `up -d` sering
+menganggap tidak ada yang berubah dan container tidak disentuh. Padahal proses
+Langflow memuat modul `lib/` **sekali saat menyala** lalu menyimpannya di
+memori. Tanpa restart, kode lama tetap yang berjalan.
+
+Ini sudah terbukti mahal: pada pengujian lewat API, `.mdf` dan `.dmp` dikirim ke
+konverter PostgreSQL karena Langflow masih memegang `lib/_konversi.py` versi
+lama — dan pesan gagalnya menyesatkan ke arah yang sama sekali berbeda.
+
+**Kalau yang berubah ada di `components/`**, restart saja TIDAK cukup: Langflow
+menyimpan salinan kode komponen di dalam flow. Flow-nya harus dibangun ulang
+(§5).
+
+### 0.4 Memeriksa sesudah naik
+
+```bash
+# a. Engine hidup
+curl -s http://localhost:7860/health_check
+
+# b. Konverter hidup
+docker exec synchrono-langflow python -c   "import urllib.request,json; print(json.load(urllib.request.urlopen('http://konverter:8390/sehat')))"
+# -> {'ok': True, 'mesin': 'postgresql', 'antre': 0, 'maxConcurrent': 1}
+
+# c. Konverter TIDAK punya jalan keluar — harus GAGAL
+docker exec synchrono-konverter python -c   "import socket; socket.create_connection(('1.1.1.1',53),timeout=4)"
+```
+
+Pemeriksaan (c) sama pentingnya dengan (b). Kalau ia berhasil, jaringannya
+salah dan seluruh alasan konverter dipisah jadi batal.
+
+### 0.5 Uji tujuh bentuk
+
+Data ujinya sudah disiapkan: `test-data-csv/uji-ae/uji_format.*` — tujuh bentuk
+dari baris yang sama persis, lengkap dengan tabel umpan dan berkas yang memang
+harus ditolak. Cara menjalankan dan hasil yang diharapkan ada di
+`test-data-csv/uji-ae/UJI_FORMAT.md`.
+
+Harapannya: **enam COMPLETED grade A skor 100, `.xls` FAILED.**
+
+### 0.6 Menurunkan
+
+```bash
+# Berhenti tanpa menghapus data
+docker compose -f docker-compose.server.yml --env-file .env --profile mssql --profile oracle stop
+
+# Matikan mesin berat saja, sisanya tetap jalan
+docker compose -f docker-compose.server.yml --env-file .env stop konverter-oracle
+```
+
+Jangan `down -v` kecuali memang ingin membuang volume Langflow — di dalamnya
+ada flow dan API key.
+
+---
+
 ## 1. Yang sudah dipastikan di server
 
 Diperiksa langsung sebelum panduan ini ditulis:
@@ -42,9 +176,14 @@ Salin **hanya** ini ke server (mis. ke `/opt/synchrono/langflow-synchrono/`):
 ```
 lib/                    SEMUA *.py          (logika bersama, wajib)
 components/             grading/ config/ matching/   (node API)
+konverter/              SEMUA *.py          (jalur B — .sql/.mdf/.dmp)
 infra/
     Dockerfile.langflow
+    Dockerfile.konverter                konverter-nyalakan.sh
+    Dockerfile.konverter-mssql          konverter-mssql-nyalakan.sh
+    Dockerfile.konverter-oracle         konverter-oracle-nyalakan.sh
     docker-compose.server.yml
+    docker-compose.infra.yml    (HANYA server baru — PG & SeaweedFS di compose)
     .env.server.example        -> disalin jadi .env
     migrate.py seed.py
     db/migrasi/*.sql            (perubahan bentuk basis data)
@@ -54,6 +193,16 @@ infra/
     buat_flow_grading.py buat_flow_config.py
     buat_flow.py                (hanya kalau matching dipakai)
 ```
+
+`konverter/` dan ketiga Dockerfile-nya boleh ikut walaupun jalur B belum
+dipakai: tanpa `--profile`, container `.mdf`/`.dmp` tidak dinyalakan sama
+sekali. Yang TIDAK boleh ketinggalan adalah `konverter-*-nyalakan.sh` — ketiga
+image memakainya sebagai entrypoint, dan build-nya gagal kalau berkasnya tidak
+ada.
+
+`docker-compose.infra.yml` hanya relevan di server baru, tempat PostgreSQL dan
+SeaweedFS ikut dijalankan sebagai container. Di server lama keduanya sudah
+terpasang di host.
 
 **JANGAN dinaikkan** (bukan kode runtime): `infra/cadangan/` (berisi data
 kependudukan asli), pembuat data uji (`buat_data_uji*.py`, `buat_csv_*.py`,
@@ -69,14 +218,21 @@ Contoh menyalin dengan rsync (dari mesin ini, sesuaikan host):
 
 ```bash
 rsync -av --relative \
-  lib/ components/ \
-  infra/Dockerfile.langflow infra/docker-compose.server.yml \
+  lib/ components/ konverter/ \
+  infra/Dockerfile.langflow \
+  infra/Dockerfile.konverter infra/konverter-nyalakan.sh \
+  infra/Dockerfile.konverter-mssql infra/konverter-mssql-nyalakan.sh \
+  infra/Dockerfile.konverter-oracle infra/konverter-oracle-nyalakan.sh \
+  infra/docker-compose.server.yml infra/docker-compose.infra.yml \
   infra/.env.server.example infra/migrate.py infra/seed.py \
   infra/db/ \
   infra/matching_queries.json infra/flow_util.py \
   infra/buat_flow_grading.py infra/buat_flow_config.py infra/buat_flow.py \
   user@172.16.12.98:/opt/synchrono/langflow-synchrono/
 ```
+
+Untuk server baru, ganti host tujuannya jadi `192.168.2.107`. Isi berkasnya
+sama — yang membedakan cuma `.env`.
 
 ---
 
