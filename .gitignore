@@ -1,8 +1,36 @@
-# .env disalin dari data-matching/.env dan berisi kredensial StarRocks + MinIO
+# Kredensial dan environment (jangan pernah masuk repositori)
 .env
+.env.*
+!.env.example
+!.env.*.example
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+
+# Python runtime & testing cache
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Cadangan data dari StarRocks/MinIO untuk kerja luring. Isinya data
-# kependudukan sungguhan — jangan pernah masuk repositori.
+# Editor & OS temporary files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Cadangan data & log
+*.log
 infra/cadangan/
+
+# Direktori data uji & skrip pengujian lokal
+test_data/
+PETUNJUK_SERVICE.txt
+

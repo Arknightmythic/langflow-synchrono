@@ -189,6 +189,14 @@ services:
       NORMALISASI_AI_MODEL: "${NORMALISASI_AI_MODEL:-gemma4:31b}"
       NORMALISASI_AI_BASE_URL: "${NORMALISASI_AI_BASE_URL:-}"
       OLLAMA_API_KEY: "${OLLAMA_API_KEY:-ollama}"
+
+      # ── AI Reasoning ───────────────────────────────────────────────────
+      REASONING_AI_BASE_URL: "${REASONING_AI_BASE_URL:-}"
+      REASONING_AI_MODEL: "${REASONING_AI_MODEL:-llama3.1:8b-instruct-q4_K_M}"
+      REASONING_AI_API_KEY: "${REASONING_AI_API_KEY:-}"
+      REASONING_AI_TIMEOUT: "${REASONING_AI_TIMEOUT:-120}"
+      REASONING_MAX_CONCURRENT: "${REASONING_MAX_CONCURRENT:-1}"
+      REASONING_STALE_MINUTES: "${REASONING_STALE_MINUTES:-15}"
     volumes:
       # Hanya yang berjalan saat runtime. Skrip pengembangan (pembuat data uji,
       # cadangan, dsb.) tidak di-mount — lihat DEPLOY.md untuk daftar berkas
@@ -196,6 +204,7 @@ services:
       - ../components:/components:ro
       - ../lib:/synchrono/lib:ro
       - .:/synchrono/infra:ro
+      - ../run_reasoning_local.py:/synchrono/run_reasoning_local.py:ro
       - langflow-data:/app/langflow-data
     command: ["langflow", "run", "--host", "0.0.0.0", "--port", "7860"]
     # Menunggu skema selesai diterapkan. Kalau `skema` gagal (mis. kata sandi

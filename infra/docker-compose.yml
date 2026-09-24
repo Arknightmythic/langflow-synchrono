@@ -30,7 +30,7 @@ services:
     volumes:
       - seaweed-data:/data
       - ./s3-config.json:/etc/seaweedfs/s3-config.json:ro
-    restart: unless-stopped
+    restart: "no"
     healthcheck:
       # Dua hal yang sempat salah di sini, keduanya sudah diuji:
       #
@@ -124,9 +124,8 @@ services:
       LANGFLOW_WORKERS: "${LANGFLOW_WORKERS:-1}"
       LANGFLOW_DANGEROUSLY_ALLOW_MULTI_WORKER_WITHOUT_SHARED_QUEUE: "true"
 
-      # Tracing menambah pekerjaan per pemanggilan flow dan tidak dipakai di
-      # sini — tidak ada backend tracing yang dikonfigurasi.
-      LANGFLOW_DEACTIVATE_TRACING: "true"
+      # Tracing diaktifkan agar Flow Activity merekam riwayat run di UI Langflow
+      LANGFLOW_DEACTIVATE_TRACING: "false"
 
       # WAJIB, dan TIDAK cukup hanya mengandalkan LANGFLOW_CONFIG_DIR.
       #
@@ -245,6 +244,13 @@ services:
       NORMALISASI_AI_BASE_URL: ""
       # OLLAMA_API_KEY: ""
 
+      # ── Reasoning AI ───────────────────────────────────────────────────
+      REASONING_AI_BASE_URL: "${REASONING_AI_BASE_URL:-}"
+      REASONING_AI_MODEL: "${REASONING_AI_MODEL:-llama3.1:8b-instruct-q4_K_M}"
+      REASONING_AI_API_KEY: "${REASONING_AI_API_KEY:-}"
+      REASONING_AI_TIMEOUT: "${REASONING_AI_TIMEOUT:-120}"
+      REASONING_MAX_CONCURRENT: "${REASONING_MAX_CONCURRENT:-1}"
+
       # PostgreSQL berjalan di HOST (DBngin), bukan di Docker — karena itu
       # host.docker.internal, bukan localhost.
       PG_DSN: "host=host.docker.internal port=5432 dbname=synchrono user=postgres"
@@ -263,6 +269,7 @@ services:
       - .:/synchrono/infra:ro
       - ../run_grading_local.py:/synchrono/run_grading_local.py:ro
       - ../run_local.py:/synchrono/run_local.py:ro
+      - ../run_reasoning_local.py:/synchrono/run_reasoning_local.py:ro
       - langflow-data:/app/langflow-data
     # WAJIB dioverride: entrypoint bawaan image mengikat ke 127.0.0.1, sehingga
     # port mapping Docker tidak bisa menjangkaunya (dari dalam container
@@ -273,7 +280,7 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       - seaweedfs
-    restart: unless-stopped
+    restart: "no"
 
 volumes:
   seaweed-data:
