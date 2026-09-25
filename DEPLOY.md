@@ -1,144 +1,236 @@
-# Deploy Langflow Synchrono ke server (172.16.12.98)
+# Deploy Langflow Synchrono ke server
 
-Panduan menaikkan engine grading ke server, memakai SeaweedFS dan PostgreSQL
-yang sudah ada di server. Branch: **`deploy-development`**.
+Panduan menaikkan engine grading ke server. Branch: **`deploy-development`**.
+
+**DUA SERVER, BENTUKNYA BERBEDA.** Perintahnya dipisah dan masing-masing
+berdiri sendiri — tidak perlu membaca yang satunya:
+
+| | SeaweedFS & PostgreSQL | Perintah |
+|---|---|---|
+| **172.16.12.98** (lama) | terpasang di host, di luar Docker | **§0A** |
+| **192.168.2.107** (baru) | container, lewat `docker-compose.infra.yml` | **§0B** |
+
+Yang sama di keduanya ada di §0C (mesin `.mdf`/`.dmp`), §0D (kenapa restart
+wajib), §0E (uji), dan §0F (menurunkan).
 
 Ringkasnya: yang berubah dari pengembangan lokal hanyalah **ke mana engine
-menyambung** — SeaweedFS dan PostgreSQL server, bukan yang lokal. Logika
-grading tidak disentuh.
+menyambung**. Logika grading tidak disentuh.
+
+Bagian §1 ke bawah adalah rincian dan latar belakangnya; untuk menaikkan atau
+redeploy, §0 saja sudah cukup.
 
 ---
 
-## 0. Perintah — naikkan & redeploy
+## 0A. SERVER LAMA — 172.16.12.98
 
-Dua server, **satu berkas compose**. Yang berbeda cuma isi `.env`.
+PostgreSQL dan SeaweedFS **sudah terpasang di host**, di luar Docker. Compose di
+sini tidak menjalankan keduanya.
 
-### 0.1 Sekali saja, per server
+### Isi `.env` (sekali saja)
 
 ```bash
-cd langflow-synchrono/infra
+cd /opt/synchrono/langflow-synchrono/infra
 cp .env.server.example .env
 ```
 
-Lalu sunting `.env`:
+Yang diisi:
 
 ```bash
-# ── SERVER LAMA (172.16.12.98) — SeaweedFS & PostgreSQL dipasang di host ──
 PG_HOST=172.16.12.98
 PG_PORT=5430
+PG_DB=synchrono
+PG_USER=root
 PG_PASSWORD=<isi>
+
 S3_ENDPOINT=172.16.12.98:8333
 S3_RELAY_TARGET=172.16.12.98:8333
-LANGFLOW_SUPERUSER_PASSWORD=<ganti>
 
-# ── SERVER BARU (192.168.2.107) — keduanya container di docker-compose.infra.yml ──
-PG_HOST=192.168.2.107
-PG_PORT=5430
-PG_PASSWORD=<isi>
-S3_ENDPOINT=192.168.2.107:8355
-S3_RELAY_TARGET=192.168.2.107:8355
+LANGFLOW_SUPERUSER=admin
 LANGFLOW_SUPERUSER_PASSWORD=<ganti>
 ```
 
-`S3_ENDPOINT` dan `S3_RELAY_TARGET` isinya sama; keduanya ada karena compose
-tidak bisa memakai satu variabel sebagai bawaan variabel lain. Yang pertama
-dipakai engine grading (lewat host), yang kedua oleh penerus untuk konverter
-(yang tidak punya rute ke host). Lihat §7c.
-
-**Server baru saja:** infrastrukturnya dinyalakan lebih dulu, sekali.
+### Menaikkan
 
 ```bash
-docker compose -f docker-compose.infra.yml --env-file .env up -d
-```
-
-### 0.2 Menaikkan
-
-```bash
-cd langflow-synchrono/infra
-
-# Jalur A + .sql. Ini yang dipakai sehari-hari.
+cd /opt/synchrono/langflow-synchrono/infra
 docker compose -f docker-compose.server.yml --env-file .env up -d --build
-
-# Tambah .mdf (SQL Server — 2,34 GB di disk, ~2 GB memori selama hidup)
-docker compose -f docker-compose.server.yml --env-file .env --profile mssql up -d --build
-
-# Tambah .dmp (Oracle — 2,84 GB unduhan, paling berat)
-docker compose -f docker-compose.server.yml --env-file .env --profile oracle up -d --build
 ```
 
-Profilnya bertumpuk: pakai `--profile mssql --profile oracle` untuk keduanya.
-Tanpa profilnya, format itu gagal dengan pesan yang menyebut layanannya belum
-ada — bukan gagal diam-diam.
+Itu memberi: parquet, CSV, xlsx, dan `.sql`. Untuk `.mdf` dan `.dmp` lihat 0C.
 
-### 0.3 REDEPLOY sesudah mengubah kode
-
-Ini bagian yang paling mudah keliru, dan urutannya menentukan.
+### REDEPLOY (sesudah `git pull`)
 
 ```bash
-cd langflow-synchrono
-git pull
-cd infra
-
-# 1. Bangun ulang image yang berubah
+cd /opt/synchrono/langflow-synchrono/infra
 docker compose -f docker-compose.server.yml --env-file .env build
-
-# 2. Naikkan ulang
 docker compose -f docker-compose.server.yml --env-file .env up -d
-
-# 3. WAJIB kalau ada perubahan di lib/ — walaupun containernya "sudah jalan"
 docker compose -f docker-compose.server.yml --env-file .env restart langflow
 ```
 
-**Kenapa langkah 3 wajib.** Berkas di `lib/` di-bind-mount, jadi `up -d` sering
-menganggap tidak ada yang berubah dan container tidak disentuh. Padahal proses
-Langflow memuat modul `lib/` **sekali saat menyala** lalu menyimpannya di
-memori. Tanpa restart, kode lama tetap yang berjalan.
+Baris terakhir **wajib**, dan alasannya di 0D.
 
-Ini sudah terbukti mahal: pada pengujian lewat API, `.mdf` dan `.dmp` dikirim ke
-konverter PostgreSQL karena Langflow masih memegang `lib/_konversi.py` versi
-lama — dan pesan gagalnya menyesatkan ke arah yang sama sekali berbeda.
-
-**Kalau yang berubah ada di `components/`**, restart saja TIDAK cukup: Langflow
-menyimpan salinan kode komponen di dalam flow. Flow-nya harus dibangun ulang
-(§5).
-
-### 0.4 Memeriksa sesudah naik
+### Memeriksa
 
 ```bash
-# a. Engine hidup
 curl -s http://localhost:7860/health_check
 
-# b. Konverter hidup
-docker exec synchrono-langflow python -c   "import urllib.request,json; print(json.load(urllib.request.urlopen('http://konverter:8390/sehat')))"
-# -> {'ok': True, 'mesin': 'postgresql', 'antre': 0, 'maxConcurrent': 1}
+docker exec synchrono-langflow python -c \
+  "import urllib.request,json; print(json.load(urllib.request.urlopen('http://konverter:8390/sehat')))"
 
-# c. Konverter TIDAK punya jalan keluar — harus GAGAL
-docker exec synchrono-konverter python -c   "import socket; socket.create_connection(('1.1.1.1',53),timeout=4)"
+docker exec synchrono-konverter python -c \
+  "import socket; socket.create_connection(('1.1.1.1',53),timeout=4)"
 ```
 
-Pemeriksaan (c) sama pentingnya dengan (b). Kalau ia berhasil, jaringannya
-salah dan seluruh alasan konverter dipisah jadi batal.
+Yang ketiga **harus GAGAL**. Kalau berhasil, jaringannya salah.
 
-### 0.5 Uji tujuh bentuk
+---
 
-Data ujinya sudah disiapkan: `test-data-csv/uji-ae/uji_format.*` — tujuh bentuk
-dari baris yang sama persis, lengkap dengan tabel umpan dan berkas yang memang
-harus ditolak. Cara menjalankan dan hasil yang diharapkan ada di
-`test-data-csv/uji-ae/UJI_FORMAT.md`.
+## 0B. SERVER BARU — 192.168.2.107
 
-Harapannya: **enam COMPLETED grade A skor 100, `.xls` FAILED.**
+PostgreSQL dan SeaweedFS **dijalankan sebagai container** lewat
+`docker-compose.infra.yml`. Portnya bukan bawaan: PG di `5430`, S3 di `8355`.
 
-### 0.6 Menurunkan
+### Isi `.env` (sekali saja)
 
 ```bash
-# Berhenti tanpa menghapus data
-docker compose -f docker-compose.server.yml --env-file .env --profile mssql --profile oracle stop
+cd /opt/synchrono/langflow-synchrono/infra
+cp .env.server.example .env
+```
 
-# Matikan mesin berat saja, sisanya tetap jalan
+Yang diisi:
+
+```bash
+PG_HOST=192.168.2.107
+PG_PORT=5430
+PG_DB=synchrono
+PG_USER=root
+PG_PASSWORD=<isi>
+
+S3_ENDPOINT=192.168.2.107:8355
+S3_RELAY_TARGET=192.168.2.107:8355
+
+LANGFLOW_SUPERUSER=admin
+LANGFLOW_SUPERUSER_PASSWORD=<ganti>
+```
+
+### Menaikkan infrastruktur lebih dulu (HANYA di server ini, sekali)
+
+```bash
+cd /opt/synchrono/langflow-synchrono/infra
+docker compose -f docker-compose.infra.yml --env-file .env up -d
+```
+
+Tunggu sampai keduanya sehat sebelum lanjut:
+
+```bash
+docker compose -f docker-compose.infra.yml ps
+```
+
+### Menaikkan engine
+
+```bash
+cd /opt/synchrono/langflow-synchrono/infra
+docker compose -f docker-compose.server.yml --env-file .env up -d --build
+```
+
+### REDEPLOY (sesudah `git pull`)
+
+```bash
+cd /opt/synchrono/langflow-synchrono/infra
+docker compose -f docker-compose.server.yml --env-file .env build
+docker compose -f docker-compose.server.yml --env-file .env up -d
+docker compose -f docker-compose.server.yml --env-file .env restart langflow
+```
+
+`docker-compose.infra.yml` **tidak perlu disentuh** saat redeploy — PostgreSQL
+dan SeaweedFS tidak ikut berubah, dan menaikkannya ulang tanpa alasan cuma
+menambah risiko.
+
+### Memeriksa
+
+```bash
+curl -s http://localhost:7860/health_check
+
+docker exec synchrono-langflow python -c \
+  "import urllib.request,json; print(json.load(urllib.request.urlopen('http://konverter:8390/sehat')))"
+
+docker exec synchrono-konverter python -c \
+  "import socket; socket.create_connection(('1.1.1.1',53),timeout=4)"
+```
+
+Yang ketiga **harus GAGAL**. Kalau berhasil, jaringannya salah.
+
+---
+
+## 0C. Menyalakan `.mdf` dan `.dmp` — sama di kedua server
+
+Keduanya di balik profil, dan **tidak** ikut naik dengan perintah biasa.
+Mesinnya memegang memori sepanjang container hidup, dipakai atau tidak.
+
+```bash
+cd /opt/synchrono/langflow-synchrono/infra
+
+# .mdf  — SQL Server, image 2,34 GB di disk, ~2 GB memori
+docker compose -f docker-compose.server.yml --env-file .env \
+  --profile mssql up -d --build konverter-mssql
+
+# .dmp  — Oracle, image 2,84 GB unduhan, paling berat
+docker compose -f docker-compose.server.yml --env-file .env \
+  --profile oracle up -d --build konverter-oracle
+```
+
+Kalau salah satu tidak dinyalakan, format itu gagal dengan pesan yang menyebut
+layanannya tidak bisa dihubungi — bukan gagal diam-diam.
+
+Mematikannya lagi tanpa mengganggu yang lain:
+
+```bash
 docker compose -f docker-compose.server.yml --env-file .env stop konverter-oracle
 ```
 
-Jangan `down -v` kecuali memang ingin membuang volume Langflow — di dalamnya
+---
+
+## 0D. Kenapa `restart langflow` wajib saat redeploy
+
+Berkas di `lib/` di-bind-mount, jadi `up -d` sering menganggap tidak ada yang
+berubah dan container **tidak disentuh sama sekali**. Padahal proses Langflow
+memuat modul `lib/` sekali saat menyala lalu menyimpannya di memori.
+
+Ini sudah terbukti mahal: pada pengujian lewat API, `.mdf` dan `.dmp` dikirim ke
+konverter PostgreSQL karena Langflow masih memegang `lib/_konversi.py` versi
+lama — dan pesan gagalnya (`Pemulihan dump gagal`) menunjuk ke arah yang sama
+sekali berbeda dari sebab sebenarnya.
+
+**Kalau yang berubah ada di `components/`**, restart saja TIDAK cukup. Langflow
+menyimpan salinan kode komponen **di dalam flow**, jadi flow-nya harus dibangun
+ulang — lihat §5.
+
+---
+
+## 0E. Uji tujuh bentuk — sama di kedua server
+
+Data ujinya sudah disiapkan di `test-data-csv/uji-ae/uji_format.*`: tujuh bentuk
+dari baris yang sama persis, lengkap dengan tabel umpan dan satu berkas yang
+memang harus ditolak.
+
+Harapannya: **enam COMPLETED grade A skor 100, `.xls` FAILED.**
+
+Cara menjalankan dan arti tiap kegagalan ada di
+`test-data-csv/uji-ae/UJI_FORMAT.md`.
+
+---
+
+## 0F. Menurunkan
+
+```bash
+cd /opt/synchrono/langflow-synchrono/infra
+
+# Berhenti, data tetap
+docker compose -f docker-compose.server.yml --env-file .env \
+  --profile mssql --profile oracle stop
+```
+
+**Jangan `down -v`** kecuali memang ingin membuang volume Langflow — di dalamnya
 ada flow dan API key.
 
 ---

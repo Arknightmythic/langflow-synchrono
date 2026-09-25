@@ -41,6 +41,15 @@ ALAMAT = {
     ".dmp": os.getenv("KONVERTER_ORACLE_URL", "http://konverter-oracle:8392"),
 }
 
+# Profil compose yang menyalakan tiap layanan. `.mdf` dan `.dmp` ada di balik
+# profil karena mesinnya memegang memori sepanjang container hidup, dipakai
+# atau tidak — jadi keduanya SENGAJA tidak ikut naik dengan `up -d` biasa.
+#
+# Namanya disebut di pesan galat. Sebab yang paling sering dari "tidak bisa
+# dihubungi" bukan kerusakan melainkan layanannya memang belum dinyalakan, dan
+# pesan yang menyebut cara menyalakannya menghemat satu putaran bertanya.
+PROFIL = {".mdf": "mssql", ".dmp": "oracle"}
+
 # Batas waktu menunggu konverter. Harus LEBIH BESAR dari KONV_BATAS_DETIK di
 # sisi sana, supaya yang memutus adalah konverter yang tahu apa yang sedang
 # dikerjakannya — bukan pemanggil yang hanya tahu ia lama.
@@ -107,9 +116,17 @@ def konversi_dulu(job: dict, lapor=lambda t: None) -> dict | None:
             pesan = str(e)
         raise RuntimeError(f"Konversi gagal: {pesan}") from e
     except urllib.error.URLError as e:
+        profil = PROFIL.get(ext)
+        saran = (
+            f" Layanan ini ada di balik profil compose `{profil}` dan TIDAK "
+            f"ikut naik dengan `up -d` biasa. Nyalakan dengan:\n"
+            f"    docker compose -f docker-compose.server.yml --env-file .env "
+            f"--profile {profil} up -d --build konverter-{profil}"
+        ) if profil else ""
         raise RuntimeError(
-            f"Layanan konversi di {alamat} tidak bisa dihubungi ({e.reason}). "
-            f"Berkas {ext} butuh layanan itu; format lain tidak."
+            f"Layanan konversi untuk berkas {ext} tidak bisa dihubungi di "
+            f"{alamat} ({e.reason}). Format lain (parquet, CSV, xlsx) tidak "
+            f"membutuhkannya dan tetap bisa digrading.{saran}"
         ) from e
 
     if not hasil.get("ok"):
