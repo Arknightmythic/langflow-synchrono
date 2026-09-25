@@ -77,12 +77,14 @@ def build_job_payload(payload: dict, defaults: dict | None = None) -> dict:
         return None
 
     file_id = str(extract("fileId", "file_id", required=True))
-    llm_model = extract("llmModel", "llm_model")
+    llm_model = extract("llmModel", "llm_model") or "gemma3:12b"
+    master_parquet_path = extract("masterParquetPath", "master_parquet_path")
 
     return {
         "job_id": generate_job_id(),
         "file_id": file_id,
         "llm_model": llm_model,
+        "master_parquet_path": master_parquet_path,
         "status": "QUEUED",
         "stage": "QUEUED",
         "error": None,

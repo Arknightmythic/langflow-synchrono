@@ -36,7 +36,14 @@ class ReasoningDispatch(Component):
             name="llm_model",
             display_name="LLM Model",
             required=False,
-            info="Optional local LLM model override.",
+            value="gemma3:12b",
+            info="LLM Model to use (default: gemma3:12b).",
+        ),
+        MessageTextInput(
+            name="master_parquet_path",
+            display_name="Master Parquet Path",
+            required=False,
+            info="Optional Master Parquet path (local path or s3://). Defaults to MASTER_PARQUET_PATH env.",
         ),
     ]
     outputs = [Output(display_name="Accepted", name="accepted", method="dispatch")]
@@ -57,6 +64,7 @@ class ReasoningDispatch(Component):
             defaults={
                 "file_id": self.file_id,
                 "llm_model": self.llm_model,
+                "master_parquet_path": self.master_parquet_path,
             },
         )
 

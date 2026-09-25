@@ -246,10 +246,11 @@ services:
 
       # ── Reasoning AI ───────────────────────────────────────────────────
       REASONING_AI_BASE_URL: "${REASONING_AI_BASE_URL:-}"
-      REASONING_AI_MODEL: "${REASONING_AI_MODEL:-llama3.1:8b-instruct-q4_K_M}"
+      REASONING_AI_MODEL: "${REASONING_AI_MODEL:-gemma3:12b}"
       REASONING_AI_API_KEY: "${REASONING_AI_API_KEY:-}"
       REASONING_AI_TIMEOUT: "${REASONING_AI_TIMEOUT:-120}"
       REASONING_MAX_CONCURRENT: "${REASONING_MAX_CONCURRENT:-1}"
+      MASTER_PARQUET_PATH: "${MASTER_PARQUET_PATH:-}"
 
       # PostgreSQL berjalan di HOST (DBngin), bukan di Docker — karena itu
       # host.docker.internal, bukan localhost.

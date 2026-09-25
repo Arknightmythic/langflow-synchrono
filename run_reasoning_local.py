@@ -35,6 +35,7 @@ def run_direct(args) -> int:
     job = {
         "file_id": args.file_id,
         "llm_model": args.model,
+        "master_parquet_path": args.master_parquet,
     }
 
     summary = execute_reasoning(job, dry_run=dry_run, limit=args.limit)
@@ -51,7 +52,11 @@ def run_via_job(args) -> int:
     """Run via async job table and worker thread with polling."""
     print(f"\n--- Submitting Async Reasoning Job (File ID: {args.file_id}) ---")
     job = build_job_payload(
-        {"fileId": args.file_id, "llmModel": args.model}
+        {
+            "fileId": args.file_id,
+            "llmModel": args.model,
+            "masterParquetPath": args.master_parquet,
+        }
     )
 
     con = buka_koneksi()
@@ -89,10 +94,11 @@ def run_via_job(args) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run AI Reasoning pipeline.")
     parser.add_argument("--file-id", required=True, help="Target file ID in manual_matches")
+    parser.add_argument("--master-parquet", default=None, help="Path to Master Parquet file (local path or s3://)")
     parser.add_argument("--live", action="store_true", help="Persist updates to database (default is dry-run)")
     parser.add_argument("--dry-run", action="store_true", help="Run without persisting updates to database (default)")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of new patterns to resolve")
-    parser.add_argument("--model", default=None, help="Override LLM model name")
+    parser.add_argument("--model", default=None, help="Override LLM model name (default: gemma3:12b)")
     parser.add_argument("--job", action="store_true", help="Execute through background worker and job table")
 
     args = parser.parse_args()

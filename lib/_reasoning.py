@@ -31,7 +31,7 @@ REASONING_AI_BASE_URL = (
 
 REASONING_AI_MODEL = (
     os.getenv("REASONING_AI_MODEL", "").strip()
-    or os.getenv("NORMALISASI_AI_MODEL", "gemma4:31b").strip()
+    or "gemma3:12b"
 )
 
 REASONING_AI_API_KEY = (
@@ -42,6 +42,8 @@ REASONING_AI_API_KEY = (
 REASONING_AI_TIMEOUT = int(os.getenv("REASONING_AI_TIMEOUT", "60"))
 REASONING_AI_RETRIES = int(os.getenv("REASONING_AI_RETRIES", "3"))
 REASONING_AI_RETRY_DELAY = float(os.getenv("REASONING_AI_RETRY_DELAY", "1.5"))
+
+MASTER_PARQUET_PATH = os.getenv("MASTER_PARQUET_PATH", "").strip().strip('"')
 
 SYSTEM_PROMPT = """You are an AI tasked with explaining why a pair of identity records was flagged for manual review.
 Your goal is a very short, concise explanation in English that a manual reviewer can read at a glance.
@@ -92,107 +94,233 @@ TEMPLATE_FIELDS = [
 
 # ── Step 1: SQL Verdict ───────────────────────────────────────────────────────
 
-def build_verdict_table(con, file_id: str) -> int:
+def build_verdict_table(con, file_id: str, master_parquet_path: str | None = None) -> int:
     """
     Compare all 5 identity fields in a single SQL statement.
     Stores the precomputed verdicts and signatures in TEMP TABLE reasoning_verdict.
+    Supports reading master records from either a Parquet file (S3 or local) or PostgreSQL master table.
     Returns the count of rows queued for reasoning.
     """
-    con.execute(f"""
-        CREATE OR REPLACE TEMP TABLE reasoning_verdict AS
-        WITH raw_joined AS (
-            SELECT
-                mm.file_id,
-                mm.id_incoming,
-                TRIM(COALESCE(mm.nama_incoming, '')) AS nama_incoming,
-                TRIM(COALESCE(mm.tempat_lahir_incoming, '')) AS tempat_lahir_incoming,
-                TRIM(COALESCE(mm.tanggal_lahir_incoming, '')) AS tanggal_lahir_incoming,
-                TRIM(COALESCE(mm.jenis_kelamin_incoming, '')) AS jenis_kelamin_incoming,
-                TRIM(COALESCE(mm.nama_ibu_incoming, '')) AS nama_ibu_incoming,
-                TRIM(COALESCE(m.nama_lengkap, '')) AS nama_master,
-                TRIM(COALESCE(m.tempat_lahir, '')) AS tempat_lahir_master,
-                TRIM(COALESCE(CAST(m.tanggal_lahir AS VARCHAR), '')) AS tanggal_lahir_master,
-                TRIM(COALESCE(m.jenis_kelamin, '')) AS jenis_kelamin_master,
-                TRIM(COALESCE(m.nama_ibu, '')) AS nama_ibu_master
-            FROM pg.public.manual_matches mm
-            JOIN pg.public.institution i USING (file_id, id_incoming)
-            LEFT JOIN pg.public.master m ON m.nik = i.nik_master
-            WHERE mm.file_id = {q(file_id)}
-              AND mm.reasoning_status IN ('PENDING', 'FAILED')
-        ),
-        normalized AS (
+    m_path = (master_parquet_path if master_parquet_path is not None else MASTER_PARQUET_PATH).strip()
+
+    if m_path:
+        # Two-phase semi-join against Parquet master for maximum speed and filter pushdown
+        con.execute(f"""
+            CREATE OR REPLACE TEMP TABLE reasoning_verdict AS
+            WITH pending_records AS (
+                SELECT
+                    mm.file_id,
+                    mm.id_incoming,
+                    TRIM(COALESCE(mm.nama_incoming, '')) AS nama_incoming,
+                    TRIM(COALESCE(mm.tempat_lahir_incoming, '')) AS tempat_lahir_incoming,
+                    TRIM(COALESCE(mm.tanggal_lahir_incoming, '')) AS tanggal_lahir_incoming,
+                    TRIM(COALESCE(mm.jenis_kelamin_incoming, '')) AS jenis_kelamin_incoming,
+                    TRIM(COALESCE(mm.nama_ibu_incoming, '')) AS nama_ibu_incoming,
+                    i.nik_master
+                FROM pg.public.manual_matches mm
+                JOIN pg.public.institution i USING (file_id, id_incoming)
+                WHERE mm.file_id = {q(file_id)}
+                  AND mm.reasoning_status IN ('PENDING', 'FAILED')
+            ),
+            target_master AS (
+                SELECT
+                    CAST(nik AS VARCHAR) AS nik_master,
+                    TRIM(COALESCE(nama_lengkap, '')) AS nama_master,
+                    TRIM(COALESCE(tempat_lahir, '')) AS tempat_lahir_master,
+                    TRIM(COALESCE(CAST(tanggal_lahir AS VARCHAR), '')) AS tanggal_lahir_master,
+                    TRIM(COALESCE(jenis_kelamin, '')) AS jenis_kelamin_master,
+                    TRIM(COALESCE(nama_ibu, '')) AS nama_ibu_master
+                FROM read_parquet({q(m_path)})
+                WHERE nik IN (SELECT DISTINCT nik_master FROM pending_records WHERE nik_master IS NOT NULL)
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY nik) = 1
+            ),
+            raw_joined AS (
+                SELECT
+                    p.file_id,
+                    p.id_incoming,
+                    p.nama_incoming,
+                    p.tempat_lahir_incoming,
+                    p.tanggal_lahir_incoming,
+                    p.jenis_kelamin_incoming,
+                    p.nama_ibu_incoming,
+                    COALESCE(m.nama_master, '') AS nama_master,
+                    COALESCE(m.tempat_lahir_master, '') AS tempat_lahir_master,
+                    COALESCE(m.tanggal_lahir_master, '') AS tanggal_lahir_master,
+                    COALESCE(m.jenis_kelamin_master, '') AS jenis_kelamin_master,
+                    COALESCE(m.nama_ibu_master, '') AS nama_ibu_master
+                FROM pending_records p
+                LEFT JOIN target_master m ON p.nik_master = m.nik_master
+            ),
+            normalized AS (
+                SELECT
+                    *,
+                    CASE
+                        WHEN LOWER(jenis_kelamin_incoming) IN ('l', 'laki-laki', 'pria', 'laki laki', '1') THEN 'L'
+                        WHEN LOWER(jenis_kelamin_incoming) IN ('p', 'perempuan', 'wanita', '2') THEN 'P'
+                        ELSE UPPER(jenis_kelamin_incoming)
+                    END AS norm_gender_incoming,
+                    CASE
+                        WHEN LOWER(jenis_kelamin_master) IN ('l', 'laki-laki', 'pria', 'laki laki', '1') THEN 'L'
+                        WHEN LOWER(jenis_kelamin_master) IN ('p', 'perempuan', 'wanita', '2') THEN 'P'
+                        ELSE UPPER(jenis_kelamin_master)
+                    END AS norm_gender_master
+                FROM raw_joined
+            ),
+            verdicts AS (
+                SELECT
+                    *,
+                    -- 1. nama_lengkap
+                    CASE
+                        WHEN LOWER(nama_incoming) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_INSTITUTION'
+                        WHEN LOWER(nama_master) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_MASTER'
+                        WHEN LOWER(nama_incoming) = LOWER(nama_master) THEN 'SAME'
+                        ELSE 'DIFFERENT'
+                    END AS v_nama,
+                    -- 2. tempat_lahir
+                    CASE
+                        WHEN LOWER(tempat_lahir_incoming) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_INSTITUTION'
+                        WHEN LOWER(tempat_lahir_master) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_MASTER'
+                        WHEN LOWER(tempat_lahir_incoming) = LOWER(tempat_lahir_master) THEN 'SAME'
+                        ELSE 'DIFFERENT'
+                    END AS v_tempat_lahir,
+                    -- 3. tanggal_lahir
+                    CASE
+                        WHEN LOWER(tanggal_lahir_incoming) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_INSTITUTION'
+                        WHEN LOWER(tanggal_lahir_master) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_MASTER'
+                        WHEN tanggal_lahir_incoming = tanggal_lahir_master THEN 'SAME'
+                        ELSE 'DIFFERENT'
+                    END AS v_tanggal_lahir,
+                    -- 4. jenis_kelamin
+                    CASE
+                        WHEN LOWER(jenis_kelamin_incoming) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_INSTITUTION'
+                        WHEN LOWER(jenis_kelamin_master) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_MASTER'
+                        WHEN norm_gender_incoming = norm_gender_master THEN 'SAME'
+                        ELSE 'DIFFERENT'
+                    END AS v_jenis_kelamin,
+                    -- 5. nama_ibu
+                    CASE
+                        WHEN LOWER(nama_ibu_incoming) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_INSTITUTION'
+                        WHEN LOWER(nama_ibu_master) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_MASTER'
+                        WHEN LOWER(nama_ibu_incoming) = LOWER(nama_ibu_master) THEN 'SAME'
+                        ELSE 'DIFFERENT'
+                    END AS v_nama_ibu
+                FROM normalized
+            )
             SELECT
                 *,
-                CASE
-                    WHEN LOWER(jenis_kelamin_incoming) IN ('l', 'laki-laki', 'pria', 'laki laki', '1') THEN 'L'
-                    WHEN LOWER(jenis_kelamin_incoming) IN ('p', 'perempuan', 'wanita', '2') THEN 'P'
-                    ELSE UPPER(jenis_kelamin_incoming)
-                END AS norm_gender_incoming,
-                CASE
-                    WHEN LOWER(jenis_kelamin_master) IN ('l', 'laki-laki', 'pria', 'laki laki', '1') THEN 'L'
-                    WHEN LOWER(jenis_kelamin_master) IN ('p', 'perempuan', 'wanita', '2') THEN 'P'
-                    ELSE UPPER(jenis_kelamin_master)
-                END AS norm_gender_master
-            FROM raw_joined
-        ),
-        verdicts AS (
+                CONCAT(
+                    'jenis_kelamin:', v_jenis_kelamin, '|',
+                    'nama_ibu:', v_nama_ibu, '|',
+                    'nama_lengkap:', v_nama, '|',
+                    'tanggal_lahir:', v_tanggal_lahir, '|',
+                    'tempat_lahir:', v_tempat_lahir
+                ) AS pattern_signature,
+                MD5(CONCAT(
+                    'jenis_kelamin:', v_jenis_kelamin, '|',
+                    'nama_ibu:', v_nama_ibu, '|',
+                    'nama_lengkap:', v_nama, '|',
+                    'tanggal_lahir:', v_tanggal_lahir, '|',
+                    'tempat_lahir:', v_tempat_lahir
+                )) AS pattern_hash
+            FROM verdicts;
+        """)
+    else:
+        # Fallback to PostgreSQL master table if no parquet path is configured
+        con.execute(f"""
+            CREATE OR REPLACE TEMP TABLE reasoning_verdict AS
+            WITH raw_joined AS (
+                SELECT
+                    mm.file_id,
+                    mm.id_incoming,
+                    TRIM(COALESCE(mm.nama_incoming, '')) AS nama_incoming,
+                    TRIM(COALESCE(mm.tempat_lahir_incoming, '')) AS tempat_lahir_incoming,
+                    TRIM(COALESCE(mm.tanggal_lahir_incoming, '')) AS tanggal_lahir_incoming,
+                    TRIM(COALESCE(mm.jenis_kelamin_incoming, '')) AS jenis_kelamin_incoming,
+                    TRIM(COALESCE(mm.nama_ibu_incoming, '')) AS nama_ibu_incoming,
+                    TRIM(COALESCE(m.nama_lengkap, '')) AS nama_master,
+                    TRIM(COALESCE(m.tempat_lahir, '')) AS tempat_lahir_master,
+                    TRIM(COALESCE(CAST(m.tanggal_lahir AS VARCHAR), '')) AS tanggal_lahir_master,
+                    TRIM(COALESCE(m.jenis_kelamin, '')) AS jenis_kelamin_master,
+                    TRIM(COALESCE(m.nama_ibu, '')) AS nama_ibu_master
+                FROM pg.public.manual_matches mm
+                JOIN pg.public.institution i USING (file_id, id_incoming)
+                LEFT JOIN pg.public.master m ON m.nik = i.nik_master
+                WHERE mm.file_id = {q(file_id)}
+                  AND mm.reasoning_status IN ('PENDING', 'FAILED')
+            ),
+            normalized AS (
+                SELECT
+                    *,
+                    CASE
+                        WHEN LOWER(jenis_kelamin_incoming) IN ('l', 'laki-laki', 'pria', 'laki laki', '1') THEN 'L'
+                        WHEN LOWER(jenis_kelamin_incoming) IN ('p', 'perempuan', 'wanita', '2') THEN 'P'
+                        ELSE UPPER(jenis_kelamin_incoming)
+                    END AS norm_gender_incoming,
+                    CASE
+                        WHEN LOWER(jenis_kelamin_master) IN ('l', 'laki-laki', 'pria', 'laki laki', '1') THEN 'L'
+                        WHEN LOWER(jenis_kelamin_master) IN ('p', 'perempuan', 'wanita', '2') THEN 'P'
+                        ELSE UPPER(jenis_kelamin_master)
+                    END AS norm_gender_master
+                FROM raw_joined
+            ),
+            verdicts AS (
+                SELECT
+                    *,
+                    -- 1. nama_lengkap
+                    CASE
+                        WHEN LOWER(nama_incoming) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_INSTITUTION'
+                        WHEN LOWER(nama_master) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_MASTER'
+                        WHEN LOWER(nama_incoming) = LOWER(nama_master) THEN 'SAME'
+                        ELSE 'DIFFERENT'
+                    END AS v_nama,
+                    -- 2. tempat_lahir
+                    CASE
+                        WHEN LOWER(tempat_lahir_incoming) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_INSTITUTION'
+                        WHEN LOWER(tempat_lahir_master) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_MASTER'
+                        WHEN LOWER(tempat_lahir_incoming) = LOWER(tempat_lahir_master) THEN 'SAME'
+                        ELSE 'DIFFERENT'
+                    END AS v_tempat_lahir,
+                    -- 3. tanggal_lahir
+                    CASE
+                        WHEN LOWER(tanggal_lahir_incoming) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_INSTITUTION'
+                        WHEN LOWER(tanggal_lahir_master) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_MASTER'
+                        WHEN tanggal_lahir_incoming = tanggal_lahir_master THEN 'SAME'
+                        ELSE 'DIFFERENT'
+                    END AS v_tanggal_lahir,
+                    -- 4. jenis_kelamin
+                    CASE
+                        WHEN LOWER(jenis_kelamin_incoming) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_INSTITUTION'
+                        WHEN LOWER(jenis_kelamin_master) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_MASTER'
+                        WHEN norm_gender_incoming = norm_gender_master THEN 'SAME'
+                        ELSE 'DIFFERENT'
+                    END AS v_jenis_kelamin,
+                    -- 5. nama_ibu
+                    CASE
+                        WHEN LOWER(nama_ibu_incoming) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_INSTITUTION'
+                        WHEN LOWER(nama_ibu_master) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_MASTER'
+                        WHEN LOWER(nama_ibu_incoming) = LOWER(nama_ibu_master) THEN 'SAME'
+                        ELSE 'DIFFERENT'
+                    END AS v_nama_ibu
+                FROM normalized
+            )
             SELECT
                 *,
-                -- 1. nama_lengkap
-                CASE
-                    WHEN LOWER(nama_incoming) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_INSTITUTION'
-                    WHEN LOWER(nama_master) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_MASTER'
-                    WHEN LOWER(nama_incoming) = LOWER(nama_master) THEN 'SAME'
-                    ELSE 'DIFFERENT'
-                END AS v_nama,
-                -- 2. tempat_lahir
-                CASE
-                    WHEN LOWER(tempat_lahir_incoming) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_INSTITUTION'
-                    WHEN LOWER(tempat_lahir_master) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_MASTER'
-                    WHEN LOWER(tempat_lahir_incoming) = LOWER(tempat_lahir_master) THEN 'SAME'
-                    ELSE 'DIFFERENT'
-                END AS v_tempat_lahir,
-                -- 3. tanggal_lahir
-                CASE
-                    WHEN LOWER(tanggal_lahir_incoming) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_INSTITUTION'
-                    WHEN LOWER(tanggal_lahir_master) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_MASTER'
-                    WHEN tanggal_lahir_incoming = tanggal_lahir_master THEN 'SAME'
-                    ELSE 'DIFFERENT'
-                END AS v_tanggal_lahir,
-                -- 4. jenis_kelamin
-                CASE
-                    WHEN LOWER(jenis_kelamin_incoming) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_INSTITUTION'
-                    WHEN LOWER(jenis_kelamin_master) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_MASTER'
-                    WHEN norm_gender_incoming = norm_gender_master THEN 'SAME'
-                    ELSE 'DIFFERENT'
-                END AS v_jenis_kelamin,
-                -- 5. nama_ibu
-                CASE
-                    WHEN LOWER(nama_ibu_incoming) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_INSTITUTION'
-                    WHEN LOWER(nama_ibu_master) IN ('', 'null', 'none', 'nan', '-', 'kosong') THEN 'EMPTY_IN_MASTER'
-                    WHEN LOWER(nama_ibu_incoming) = LOWER(nama_ibu_master) THEN 'SAME'
-                    ELSE 'DIFFERENT'
-                END AS v_nama_ibu
-            FROM normalized
-        )
-        SELECT
-            *,
-            CONCAT(
-                'jenis_kelamin:', v_jenis_kelamin, '|',
-                'nama_ibu:', v_nama_ibu, '|',
-                'nama_lengkap:', v_nama, '|',
-                'tanggal_lahir:', v_tanggal_lahir, '|',
-                'tempat_lahir:', v_tempat_lahir
-            ) AS pattern_signature,
-            MD5(CONCAT(
-                'jenis_kelamin:', v_jenis_kelamin, '|',
-                'nama_ibu:', v_nama_ibu, '|',
-                'nama_lengkap:', v_nama, '|',
-                'tanggal_lahir:', v_tanggal_lahir, '|',
-                'tempat_lahir:', v_tempat_lahir
-            )) AS pattern_hash
-        FROM verdicts;
-    """)
+                CONCAT(
+                    'jenis_kelamin:', v_jenis_kelamin, '|',
+                    'nama_ibu:', v_nama_ibu, '|',
+                    'nama_lengkap:', v_nama, '|',
+                    'tanggal_lahir:', v_tanggal_lahir, '|',
+                    'tempat_lahir:', v_tempat_lahir
+                ) AS pattern_signature,
+                MD5(CONCAT(
+                    'jenis_kelamin:', v_jenis_kelamin, '|',
+                    'nama_ibu:', v_nama_ibu, '|',
+                    'nama_lengkap:', v_nama, '|',
+                    'tanggal_lahir:', v_tanggal_lahir, '|',
+                    'tempat_lahir:', v_tempat_lahir
+                )) AS pattern_hash
+            FROM verdicts;
+        """)
 
     row_count = con.execute("SELECT COUNT(*) FROM reasoning_verdict").fetchone()[0]
     return row_count
@@ -708,6 +836,7 @@ def execute_reasoning(job: dict, dry_run: bool = False, limit: int | None = None
     file_id = job["file_id"]
     job_id = job.get("job_id")
     llm_model = job.get("llm_model")
+    master_parquet_path = job.get("master_parquet_path") or job.get("masterParquetPath") or MASTER_PARQUET_PATH
 
     start_time = time.perf_counter()
     con = buka_koneksi()
@@ -716,7 +845,7 @@ def execute_reasoning(job: dict, dry_run: bool = False, limit: int | None = None
         if job_id:
             heartbeat(con, job_id, stage="BUILDING_VERDICT")
 
-        row_count = build_verdict_table(con, file_id)
+        row_count = build_verdict_table(con, file_id, master_parquet_path=master_parquet_path)
         if row_count == 0:
             result = {
                 "file_id": file_id,
@@ -724,6 +853,7 @@ def execute_reasoning(job: dict, dry_run: bool = False, limit: int | None = None
                 "message": "No pending manual review rows found.",
                 "total_rows": 0,
                 "patterns_resolved": 0,
+                "master_source": master_parquet_path or "pg.public.master",
                 "duration_seconds": round(time.perf_counter() - start_time, 2),
             }
             return result
@@ -753,9 +883,16 @@ def execute_reasoning(job: dict, dry_run: bool = False, limit: int | None = None
             "cache_hits": application["cache_hits"],
             "llm_hits": application["llm_hits"],
             "llm_calls": resolution["llm_calls"],
+            "master_source": master_parquet_path or "pg.public.master",
             "duration_seconds": duration,
             "dry_run": dry_run,
         }
         return summary
     finally:
+        try:
+            con.execute("DROP TABLE IF EXISTS reasoning_verdict")
+            con.execute("DROP TABLE IF EXISTS filled_reasons")
+        except Exception:
+            pass
         con.close()
+

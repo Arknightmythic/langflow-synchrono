@@ -299,3 +299,93 @@ def test_validate_onprem_endpoint_rejects_public_commercial_ai():
     with pytest.raises(PermissionError):
         validate_onprem_endpoint("https://generativelanguage.googleapis.com/v1beta")
 
+
+def test_full_reasoning_flow_on_parquet_master(db_connection, tmp_path):
+    """Test reasoning execution reading directly from Master Parquet file."""
+    real_100m_path = Path("/mnt/c/Users/ISGS/Downloads/Data_Test_Syncrono/uji-master-100juta.parquet")
+    if real_100m_path.exists():
+        parquet_path = str(real_100m_path)
+        nik_1 = "3512080609630065"  # Daliono Darijan Saragih
+        nik_2 = "3512080312730025"  # Darimin Mansur
+        name_1 = "Daliono Saragih"   # Name diff
+        name_2 = "Darimin Mansur"
+    else:
+        parquet_path = str(tmp_path / "mock_master.parquet")
+        nik_1 = "3171019900010001"
+        nik_2 = "3171019900020002"
+        name_1 = "Budianto Sudarsono"
+        name_2 = "Siti Rahmawati"
+        db_connection.execute(f"""
+            COPY (
+                SELECT '{nik_1}' AS nik, 'Budi Sudarsono' AS nama_lengkap, 'Jakarta' AS tempat_lahir,
+                       CAST('1990-05-12' AS DATE) AS tanggal_lahir, 'Laki-Laki' AS jenis_kelamin, 'Siti Aminah' AS nama_ibu
+                UNION ALL
+                SELECT '{nik_2}' AS nik, 'Siti Rahmawati' AS nama_lengkap, 'Bandung' AS tempat_lahir,
+                       CAST('1995-10-20' AS DATE) AS tanggal_lahir, 'Perempuan' AS jenis_kelamin, 'Nurhasanah' AS nama_ibu
+            ) TO '{parquet_path}' (FORMAT PARQUET)
+        """)
+
+    test_file_id = f"file_test_pq_{uuid.uuid4().hex[:6]}"
+    id_inc_1 = f"inc_pq_001_{uuid.uuid4().hex[:4]}"
+    id_inc_2 = f"inc_pq_002_{uuid.uuid4().hex[:4]}"
+
+    try:
+        # 1. Seed institution data
+        execute_pg(
+            db_connection,
+            f"""
+            INSERT INTO institution (file_id, id_incoming, nik_master, match_score, match_result, inserted_date)
+            VALUES
+              ('{test_file_id}', '{id_inc_1}', '{nik_1}', 75.0, 2, now()),
+              ('{test_file_id}', '{id_inc_2}', '{nik_2}', 72.0, 2, now())
+            ON CONFLICT (file_id, id_incoming) DO NOTHING;
+            """,
+        )
+
+        # 2. Seed manual_matches with PENDING status (with deliberate differences)
+        execute_pg(
+            db_connection,
+            f"""
+            INSERT INTO manual_matches (
+                file_id, id_incoming, nama_incoming, tempat_lahir_incoming,
+                tanggal_lahir_incoming, jenis_kelamin_incoming, nama_ibu_incoming,
+                reasoning_status
+            )
+            VALUES
+              ('{test_file_id}', '{id_inc_1}', '{name_1}', 'Meulaboh', '1963-09-06', 'L', 'Jelita Haryanti', 'PENDING'),
+              ('{test_file_id}', '{id_inc_2}', '{name_2}', 'Pasuruan', '1973-12-03', 'L', '', 'PENDING')
+            ON CONFLICT (file_id, id_incoming) DO UPDATE SET reasoning_status = 'PENDING';
+            """,
+        )
+
+        # 3. Execute reasoning with master_parquet_path
+        job = {
+            "file_id": test_file_id,
+            "master_parquet_path": parquet_path,
+        }
+        summary = execute_reasoning(job, dry_run=False)
+
+        assert summary["status"] == "COMPLETED"
+        assert summary["total_rows"] == 2
+        assert summary["master_source"] == parquet_path
+
+        # 4. Verify results written back to manual_matches
+        cursor = db_connection.execute(f"""
+            SELECT id_incoming, reason, pattern_name, reasoning_source, reasoning_status
+            FROM pg.public.manual_matches
+            WHERE file_id = '{test_file_id}'
+            ORDER BY id_incoming
+        """)
+        rows = cursor.fetchall()
+        assert len(rows) == 2
+
+        for row in rows:
+            inc_id, reason, pattern_name, source, status = row
+            assert status == "COMPLETED"
+            assert reason is not None and len(reason) > 5
+            assert pattern_name.startswith("pattern_")
+    finally:
+        execute_pg(db_connection, f"DELETE FROM manual_matches WHERE file_id = '{test_file_id}';")
+        execute_pg(db_connection, f"DELETE FROM institution WHERE file_id = '{test_file_id}';")
+
+
