@@ -268,9 +268,10 @@ services:
       # Di mesin ini extension httpfs DuckDB diblokir Application Control, jadi
       # apa pun yang menyentuh SeaweedFS harus jalan di dalam container.
       - .:/synchrono/infra:ro
-      - ../run_grading_local.py:/synchrono/run_grading_local.py:ro
-      - ../run_local.py:/synchrono/run_local.py:ro
-      - ../run_reasoning_local.py:/synchrono/run_reasoning_local.py:ro
+      - ../scripts/run_grading_local.py:/synchrono/run_grading_local.py:ro
+      - ../scripts/run_local.py:/synchrono/run_local.py:ro
+      - ../scripts/run_reasoning_local.py:/synchrono/run_reasoning_local.py:ro
+      - ../scripts/run_matching_csv_to_db.py:/synchrono/run_matching_csv_to_db.py:ro
       - langflow-data:/app/langflow-data
     # WAJIB dioverride: entrypoint bawaan image mengikat ke 127.0.0.1, sehingga
     # port mapping Docker tidak bisa menjangkaunya (dari dalam container

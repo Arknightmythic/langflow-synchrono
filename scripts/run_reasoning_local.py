@@ -18,7 +18,11 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / "lib"))
+_DISINI = Path(__file__).resolve().parent
+for _kandidat in (_DISINI.parent / "lib", _DISINI / "lib", Path("/synchrono/lib")):
+    if _kandidat.is_dir():
+        sys.path.insert(0, str(_kandidat))
+        break
 
 from _reasoning import execute_reasoning
 from _reasoning_jobs import build_job_payload, get_job, record_job

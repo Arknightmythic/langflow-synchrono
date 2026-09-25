@@ -17,7 +17,11 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / "lib"))
+_DISINI = Path(__file__).resolve().parent
+for _kandidat in (_DISINI.parent / "lib", _DISINI / "lib", Path("/synchrono/lib")):
+    if _kandidat.is_dir():
+        sys.path.insert(0, str(_kandidat))
+        break
 
 from _grading import (  # noqa: E402
     bersihkan_dan_tandai, buka, muat_raw, skor_dan_grade, susun_hasil,

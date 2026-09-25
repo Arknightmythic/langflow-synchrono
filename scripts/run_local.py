@@ -23,11 +23,11 @@ from pathlib import Path
 # di mesin Windows ini extension httpfs DuckDB diblokir Application Control
 # policy, sehingga skrip ini pada praktiknya HANYA bisa jalan di container.
 _DISINI = Path(__file__).resolve().parent
-for _kandidat in (_DISINI / "lib", Path("/synchrono/lib")):
+for _kandidat in (_DISINI.parent / "lib", _DISINI / "lib", Path("/synchrono/lib")):
     if _kandidat.is_dir():
         sys.path.insert(0, str(_kandidat))
         break
-for _kandidat in (_DISINI / "components" / "matching", Path("/components/matching")):
+for _kandidat in (_DISINI.parent / "components" / "matching", _DISINI / "components" / "matching", Path("/components/matching")):
     if _kandidat.is_dir():
         sys.path.insert(0, str(_kandidat))
         break

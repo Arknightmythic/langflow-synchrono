@@ -1,0 +1,82 @@
+================================================================================
+                    PANDUAN CEPAT COMMAND SERVICE SYNCHRONO
+================================================================================
+
+File ini adalah contekan (cheat sheet) untuk menjalankan, mematikan, dan 
+mengecek semua service Docker Synchrono (PostgreSQL, SeaweedFS, Langflow).
+
+Semua service menggunakan mode ON-DEMAND (TIDAK menyala otomatis saat boot/
+laptop baru hidup, sehingga RAM & baterai tetap hemat saat meeting/projek lain).
+
+--------------------------------------------------------------------------------
+1. KONTROL UTAMA SERVICE (Jalankan dari ~/kerjaan/langflow-synchrono)
+--------------------------------------------------------------------------------
+
+A. Menyalakan Semua Service Sekaligus (Saat mau kerja Synchrono):
+   cd ~/kerjaan/langflow-synchrono
+   ./services.sh start
+
+B. Mematikan Semua Service Sekaligus (Saat selesai kerja / mau meeting):
+   cd ~/kerjaan/langflow-synchrono
+   ./services.sh stop
+
+C. Mengecek Kondisi Kesehatan Semua Service:
+   cd ~/kerjaan/langflow-synchrono
+   ./services.sh status
+
+D. Restart Bersih Semua Service:
+   cd ~/kerjaan/langflow-synchrono
+   ./services.sh restart
+
+
+--------------------------------------------------------------------------------
+2. SHORTCUT AGAR BISA DIPANGGIL DARI FOLDER MANA SAJA (OPSIONAL)
+--------------------------------------------------------------------------------
+
+Jalankan perintah ini SEKALI SAJA di terminal WSL Anda:
+   echo "alias synchrono='~/kerjaan/langflow-synchrono/services.sh'" >> ~/.bashrc
+   source ~/.bashrc
+
+Setelah itu, dari folder mana pun di terminal cukup ketik:
+   synchrono start   -> untuk menyalakan
+   synchrono stop    -> untuk mematikan
+   synchrono status  -> untuk cek status
+
+
+--------------------------------------------------------------------------------
+3. RUNNING TESTING & BENCHMARK AI REASONING
+--------------------------------------------------------------------------------
+
+Pastikan service sudah dalam kondisi 'start', lalu jalankan:
+
+A. Benchmark Engine Lokal (DuckDB In-Database Engine):
+   python test_data/benchmark_local.py
+
+B. Benchmark Asynchronous Flow (Langflow REST API via Port 7860):
+   python test_data/benchmark_langflow.py
+
+C. Testing Otomatis Unit & Integrasi (Pytest):
+   pytest tests/test_reasoning.py
+
+
+--------------------------------------------------------------------------------
+4. RESET DATA UJI & CACHE KE KONDISI AWAL (BERSIH)
+--------------------------------------------------------------------------------
+
+Jika ingin membersihkan database agar bisa mencoba run benchmark dari awal:
+
+docker exec pg-synchrono psql -U postgres -d synchrono -c "
+UPDATE manual_matches 
+SET reasoning_status = 'PENDING', reason = NULL, pattern_name = NULL, reasoning_source = NULL 
+WHERE file_id = 'demo_manual_review_50';
+TRUNCATE TABLE reasoning_patterns, reasoning_jobs;
+"
+
+
+--------------------------------------------------------------------------------
+5. DAFTAR PORT & ALAMAT URL LOKAL
+--------------------------------------------------------------------------------
+- Langflow Web UI & API : http://localhost:7860
+- SeaweedFS S3 Storage  : http://localhost:8333
+- PostgreSQL Database   : localhost:5432 (DB: synchrono, User: postgres)
+================================================================================

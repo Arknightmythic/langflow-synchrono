@@ -21,27 +21,51 @@ Backend Synchrono  ──HTTP──►  Langflow (flow matching)
 maupun client S3 — DuckDB menangani parquet di S3, koneksi PostgreSQL, dan
 `jaro_winkler_similarity` sekaligus.
 
-> **Daftar lengkap API + koleksi Postman: [`API.md`](API.md).**
+> **Daftar lengkap API + koleksi Postman: [`docs/API.md`](docs/API.md).**
 > Enam endpoint aktif, cara memperoleh API key, dan tiga jebakan yang
 > sudah terbukti. Koleksi siap impor: `infra/postman_synchrono.json`.
 
-> **Bekerja tanpa VPN (lembur): [`LURING.md`](LURING.md).**
+> **Bekerja tanpa VPN (lembur): [`docs/LURING.md`](docs/LURING.md).**
 > Server StarRocks/MinIO mati di luar jam kantor. Matching dan grading
 > sudah sepenuhnya mandiri di mesin lokal — dokumen itu mencatat apa yang
 > sudah disalin dan cara menyegarkannya.
 
-> **Normalisasi kolom & tanggal: [`NORMALISASI.md`](NORMALISASI.md).**
+> **Normalisasi kolom & tanggal: [`docs/NORMALISASI.md`](docs/NORMALISASI.md).**
 > Berkas dengan nama kolom tidak baku dan tanggal bercampur tetap
 > dikenali. Matching membaca berkas hasilnya, bukan parquet mentah.
 
-> **Aturan grade bisa disetel lewat API: [`KONFIGURASI.md`](KONFIGURASI.md).**
+> **Aturan grade bisa disetel lewat API: [`docs/KONFIGURASI.md`](docs/KONFIGURASI.md).**
 > Dua API untuk menu Rule di UI Synchrono — lihat dan ubah ambang tiap
 > grade. Perubahan berlaku seketika, tanpa restart.
 
-> **Grading ada di dokumen terpisah: [`GRADING.md`](GRADING.md).**
+> **Grading ada di dokumen terpisah: [`docs/GRADING.md`](docs/GRADING.md).**
 > Service grading berbagi container Langflow, PostgreSQL, dan SeaweedFS yang
 > sama, tapi punya node, flow, dan dua API-nya sendiri (dispatch + polling
 > status). Matching berjalan sinkron; grading asinkron.
+
+> **AI Reasoning & Parquet 100 Juta Baris: [`docs/PARQUET_MATCHING_REASONING.md`](docs/PARQUET_MATCHING_REASONING.md).**
+> Penjelasan lengkap alur matching CSV, integrasi master Parquet 100M, dan
+> narasi cerdas AI `gemma3:12b` untuk verifikator manual review.
+
+---
+
+## Indeks Dokumentasi Sistem (Folder `docs/`)
+
+Seluruh dokumentasi teknis, kontrak API, dan spesifikasi arsitektur telah dirapikan ke dalam direktori [`docs/`](docs/):
+
+| Dokumen | Topik & Cakupan Utama |
+| :--- | :--- |
+| [`docs/PARQUET_MATCHING_REASONING.md`](docs/PARQUET_MATCHING_REASONING.md) | **Dokumentasi Utama AI Reasoning + Parquet 100M**, spesifikasi skema PostgreSQL lengkap, dan panduan API Langflow. |
+| [`docs/PLUGGABLE_REASONING_ARCHITECTURE.md`](docs/PLUGGABLE_REASONING_ARCHITECTURE.md) | **Cetak Biru Modularitas:** Panduan mengganti sumber data (Parquet / PostgreSQL Master / S3) dan API layer (Langflow vs FastAPI). |
+| [`docs/LARGE_SCALE_EVENT_DRIVEN_REASONING.md`](docs/LARGE_SCALE_EVENT_DRIVEN_REASONING.md) | Panduan stress-testing data jutaan baris & arsitektur event-driven paralel anti double-hit LLM (*Pattern Locking*). |
+| [`docs/API.md`](docs/API.md) | Daftar endpoint REST API Langflow, format payload, otentikasi API key, dan koleksi Postman. |
+| [`docs/REASONING.md`](docs/REASONING.md) | Dokumentasi teknis dasar AI Reasoning dan skema migrasi awal. |
+| [`docs/GRADING.md`](docs/GRADING.md) | Layanan grading kualitas data asinkron (5 lapis penilaian aturan). |
+| [`docs/NORMALISASI.md`](docs/NORMALISASI.md) | Normalisasi kolom dan format tanggal bercampur menggunakan DuckDB/AI. |
+| [`docs/KONFIGURASI.md`](docs/KONFIGURASI.md) | Panduan konfigurasi ambang batas grade melalui API dinamis. |
+| [`docs/DEPLOY.md`](docs/DEPLOY.md) | Panduan instalasi dan deployment kontainer Docker on-premise / server. |
+| [`docs/LURING.md`](docs/LURING.md) | Panduan bekerja mandiri secara luring/offline tanpa koneksi VPN kantor. |
+
 
 ---
 
@@ -138,7 +162,7 @@ Alamat PostgreSQL diambil dari `PG_DSN`; bawaannya
 lokal di atas tidak perlu disetel apa pun.
 
 > Di server, keduanya dijalankan otomatis oleh service `skema` saat
-> `docker compose up`. Lihat `DEPLOY.md` §3.
+> `docker compose up`. Lihat `docs/DEPLOY.md` §3.
 
 ### Isi tabel master
 

@@ -205,7 +205,7 @@ services:
       - ../components:/components:ro
       - ../lib:/synchrono/lib:ro
       - .:/synchrono/infra:ro
-      - ../run_reasoning_local.py:/synchrono/run_reasoning_local.py:ro
+      - ../scripts/run_reasoning_local.py:/synchrono/run_reasoning_local.py:ro
       - langflow-data:/app/langflow-data
     command: ["langflow", "run", "--host", "0.0.0.0", "--port", "7860"]
     # Menunggu skema selesai diterapkan. Kalau `skema` gagal (mis. kata sandi

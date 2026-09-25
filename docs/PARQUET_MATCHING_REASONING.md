@@ -444,3 +444,16 @@ Jika tim aplikasi eksternal ingin memicu proses reasoning via HTTP REST API (mis
 ```
 Ketika field `"done": true`, backend eksternal dapat langsung mengabari frontend untuk me-refresh data review operator.
 
+---
+
+## 9. Panduan Tingkat Lanjut & Event-Driven Architecture
+
+Untuk pembahasan teknis mengenai:
+1. **Pengujian Skala Masif (>100.000 s/d 1.000.000 data Manual Review).**
+2. **Arsitektur Event-Driven Paralel Anti Double-Hit LLM (*Pattern Locking / Row-Claiming*).**
+
+Silakan merujuk pada dokumen arsitektur lanjutan:  
+👉 **[`LARGE_SCALE_EVENT_DRIVEN_REASONING.md`](./LARGE_SCALE_EVENT_DRIVEN_REASONING.md)** (Panduan Stress-Testing & Event-Driven Anti Double-Hit)  
+👉 **[`PLUGGABLE_REASONING_ARCHITECTURE.md`](./PLUGGABLE_REASONING_ARCHITECTURE.md)** (Panduan Penggantian Sumber Data Master & API Layer FastAPI/Langflow)
+
+
