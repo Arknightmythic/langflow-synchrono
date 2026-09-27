@@ -7,6 +7,7 @@ Pipeline matching sesuai spesifikasi integrasi portal (versi 27 Sep 2026).
       -> Pass 2: nama + tanggal lahir + nama ibu PERSIS
       -> Pass 3: blocking & skor milik grade berkas, untuk sisanya
       -> klasifikasi AUTO / REVIEW / UNMATCH / CONFLICT, pola review, snapshot
+      -> reasoning per baris (_reasoning.py)
       -> matching-results/{jobId}/result.parquet (S3)
       -> suntik ke DB PORTAL: syncrono_matching_result + syncrono_matching_job
       -> callback ke portal
@@ -40,12 +41,19 @@ berbahaya pada data sungguhan:
      BERTENTANGAN -> tidak dianggap deterministik, turun ke Pass 3. Kosong tidak
      dihitung bertentangan: yang dicegah hanya bukti yang saling membantah.
 
+UNMATCH TIDAK MEMBAWA KANDIDAT
+
+`master_nik` dan `master_snapshot` NULL untuk UNMATCH (spesifikasi §4.1), meski
+Pass 3 sempat menemukan kandidat terdekat. Skornya tetap disimpan, dan
+reasoning menyebutnya — tanpa menunjuk orang yang justru ditolak.
+
+REASONING TIDAK BISA MENGGAGALKAN MATCHING
+
+Kolom `reasoning` opsional di spesifikasi. Galat di tahap itu hanya membuat
+kolomnya kosong (`_isi_reasoning`); hasil matching tetap tersuntik.
+
 YANG SENGAJA BELUM DI SINI
 
-  * `reasoning` masih NULL. Kolomnya opsional di spesifikasi, dan diisi tahap
-    berikutnya dengan algoritma reasoning yang sudah ada — sengaja dicolokkan
-    ke pipa yang sudah terbukti jalan, karena reasoning tidak boleh bisa
-    menggagalkan matching.
   * `rulePreset` diterima dan dicatat, tapi belum berpengaruh: spesifikasi
     menyebut nilainya (FAST/BALANCED/THOROUGH/STRICT) tanpa mendefinisikan
     artinya. Menebak artinya lebih berbahaya daripada mengabaikannya.
@@ -60,6 +68,7 @@ import time
 import urllib.error
 import urllib.request
 
+import _reasoning
 from _grading import pasang_endpoint_s3
 from _jobs import CALLBACK_PERCOBAAN, CALLBACK_TIMEOUT, q
 from _nama import sql_bersih
@@ -240,7 +249,7 @@ def _sql_aturan(a: dict) -> str:
 
 # ── Masukan ─────────────────────────────────────────────────────────────────
 
-def muat_masukan(con, job: dict) -> int:
+def muat_masukan(con, sumber: str, master: str) -> int:
     """
     Incoming dimaterialkan, master TIDAK.
 
@@ -248,8 +257,10 @@ def muat_masukan(con, job: dict) -> int:
     bisa ratusan juta baris; sebagai VIEW, setiap pass MENGALIRKANNYA sebagai
     sisi probe hash join, dengan incoming sebagai sisi build — memorinya
     sebanding incoming, bukan master.
+
+    Keduanya berupa lokasi parquet (`s3://...` saat job berjalan), bukan job:
+    seluruh rangkaian pass bisa diuji pada berkas lokal tanpa S3.
     """
-    sumber = f"s3://{job['s3_bucket']}/{job['incoming_key']}"
     kolom = {r[0].strip().lower() for r in con.execute(
         f"DESCRIBE SELECT * FROM read_parquet('{sumber}')").fetchall()}
 
@@ -274,7 +285,6 @@ def muat_masukan(con, job: dict) -> int:
             f"Kolom id pada berkas incoming tidak unik ({dobel:,} duplikat). "
             f"id_incoming harus menunjuk tepat satu baris.")
 
-    master = f"s3://{job['s3_bucket']}/{job['master_key']}"
     con.execute(f"""CREATE OR REPLACE VIEW master_df AS
                     SELECT {SQL_VIEW_MASTER} FROM read_parquet('{master}')""")
     return con.execute("SELECT count(*) FROM incoming_semua").fetchone()[0]
@@ -352,6 +362,7 @@ def pass2(con) -> None:
               AND nullif(i.nama_ibu_clean, '') IS NOT NULL
         )
         SELECT id, count(DISTINCT nik) AS n_kandidat, min(nik) AS nik,
+               max(nik) AS nik_2,   -- kandidat kedua, bila CONFLICT
                bool_or(nik_milik_lain) AS nik_milik_lain
         FROM cocok
         WHERE NOT bertentangan
@@ -398,44 +409,62 @@ def pass3(con, grade: int, aturan: dict, kueri: str) -> None:
         s AS (
             SELECT id, n_kandidat,
                    top[1].nik AS nik, top[1].skor AS skor, top[1].miss AS missing_count,
+                   top[2].nik AS nik_2, top[2].skor AS skor_2,
                    (len(top) = 2 AND top[2].nik IS NOT NULL
                     AND top[1].nik <> top[2].nik
                     AND top[1].skor - top[2].skor <= {EPS_KONFLIK}) AS seri
             FROM agg
         )
-        SELECT s.id, s.n_kandidat, s.nik, s.skor, s.seri,
+        SELECT s.id, s.n_kandidat, s.nik, s.skor, s.seri, s.nik_2, s.skor_2,
                CASE WHEN s.nik IS NULL THEN 3 ELSE {SQL_KLASIFIKASI} END AS kelas
         FROM s CROSS JOIN ({_sql_aturan(aturan)}) r
     """)
 
 
 def gabung(con) -> None:
-    """Satu baris keputusan untuk SETIAP baris incoming — tidak lebih, tidak kurang."""
+    """
+    Satu baris keputusan untuk SETIAP baris incoming — tidak lebih, tidak kurang.
+
+    UNMATCH tidak membawa `master_nik` (spesifikasi §4.1: "NULL jika
+    UNMATCH"), meski Pass 3 sempat menemukan kandidat terdekat — kandidat itu
+    justru yang DITOLAK, dan portal yang menampilkannya akan menunjuk orang
+    yang salah. Skornya tetap disimpan. `rank_conflict` pun FALSE untuk
+    UNMATCH: dua kandidat yang seri di bawah ambang tetap sama-sama ditolak.
+
+    `nik_2`/`skor_2`: kandidat kedua untuk CONFLICT, bahan reasoning.
+    """
     con.execute("""
         CREATE OR REPLACE TABLE keputusan AS
         SELECT id, nik AS master_nik, 100.0 AS skor,
                CASE WHEN n_kandidat > 1 THEN 'CONFLICT' ELSE 'AUTO' END AS status,
                'PASS1_NIK_NAMA' AS method, n_kandidat > 1 AS rank_conflict,
-               n_kandidat, FALSE AS nik_milik_lain
+               n_kandidat, FALSE AS nik_milik_lain,
+               CAST(NULL AS VARCHAR) AS nik_2, CAST(NULL AS DOUBLE) AS skor_2
         FROM p1
         UNION ALL
         SELECT id, nik, 100.0,
                CASE WHEN n_kandidat > 1 THEN 'CONFLICT'
                     WHEN nik_milik_lain THEN 'REVIEW' ELSE 'AUTO' END,
-               'PASS2_NAMA_TGL_IBU', n_kandidat > 1, n_kandidat, nik_milik_lain
+               'PASS2_NAMA_TGL_IBU', n_kandidat > 1, n_kandidat, nik_milik_lain,
+               CASE WHEN n_kandidat > 1 THEN nik_2 END,
+               CASE WHEN n_kandidat > 1 THEN 100.0 END
         FROM p2
         UNION ALL
-        SELECT id, nik, round(skor, 2),
-               CASE WHEN nik IS NULL OR kelas = 3 THEN 'UNMATCH'
+        SELECT id,
+               CASE WHEN tolak THEN NULL ELSE nik END,
+               round(skor, 2),
+               CASE WHEN tolak THEN 'UNMATCH'
                     WHEN seri THEN 'CONFLICT'
                     WHEN kelas = 1 THEN 'AUTO' ELSE 'REVIEW' END,
-               'SCORING', seri, n_kandidat, FALSE
-        FROM p3
+               'SCORING', seri AND NOT tolak, n_kandidat, FALSE,
+               CASE WHEN seri AND NOT tolak THEN nik_2 END,
+               CASE WHEN seri AND NOT tolak THEN round(skor_2, 2) END
+        FROM (SELECT *, nik IS NULL OR kelas = 3 AS tolak FROM p3)
         UNION ALL
         -- Jaring pengaman: query grade yang memakai INNER JOIN tidak memancarkan
         -- baris tanpa kandidat sama sekali. Tanpa ini baris itu hilang dari
         -- hasil, dan portal tidak pernah tahu ia pernah ada.
-        SELECT i.id, NULL, 0.0, 'UNMATCH', 'SCORING', FALSE, 0, FALSE
+        SELECT i.id, NULL, 0.0, 'UNMATCH', 'SCORING', FALSE, 0, FALSE, NULL, NULL
         FROM incoming_df i WHERE i.id NOT IN (SELECT id FROM p3)
     """)
 
@@ -477,29 +506,82 @@ def sql_pola() -> str:
         END"""
 
 
-def susun_hasil(con, job: dict) -> None:
+def susun_pasangan(con, master: str) -> None:
     """
-    Tabel 18 kolom persis spesifikasi §4.1.
+    Setiap keputusan berdampingan dengan data incoming dan master-nya.
 
-    Atribut master pemenang diambil lewat semi-join pada NIK pemenang saja —
-    satu pemindaian master dengan daftar NIK kecil sebagai filter, bukan join
-    penuh.
+    Satu tabel yang dibaca DUA tahap — reasoning dan snapshot — supaya
+    keduanya melihat pasangan yang sama persis. Master diambil lewat semi-join
+    pada NIK pemenang dan kandidat kedua saja: satu pemindaian master dengan
+    daftar NIK kecil sebagai filter, bukan join penuh.
     """
-    pola = sql_pola()
+    con.execute(f"""
+        CREATE OR REPLACE TABLE master_terpilih AS
+        -- DISTINCT ON: master bisa memuat NIK yang sama dua kali. Tanpa ini
+        -- baris incoming itu berlipat di hasil, dan id_incoming tidak lagi
+        -- menunjuk tepat satu baris.
+        --
+        -- Dibaca dari parquet mentahnya, bukan dari view `master_df`: view itu
+        -- hanya membawa `provinsi` dalam bentuk bersih (huruf kecil), sedangkan
+        -- snapshot adalah "data asli" (spesifikasi §4.1).
+        SELECT DISTINCT ON (nik) {SQL_VIEW_MASTER}, provinsi AS provinsi_asli
+        FROM read_parquet('{master}')
+        WHERE nik IN (SELECT master_nik FROM keputusan WHERE master_nik IS NOT NULL
+                      UNION ALL
+                      SELECT nik_2 FROM keputusan WHERE nik_2 IS NOT NULL)
+    """)
+    con.execute(f"""
+        CREATE OR REPLACE TABLE pasangan AS
+        SELECT k.id, k.master_nik, k.skor, k.status, k.method, k.rank_conflict,
+               k.n_kandidat, k.nik_2, k.skor_2,
+               CASE WHEN k.status IN ('REVIEW', 'CONFLICT') THEN {sql_pola()} END
+                   AS pattern_group,
+               -- NIK berkas ini milik SESEORANG di master (hanya NIK tepercaya
+               -- yang dicari Pass 1, jadi hanya untuk itu jawabannya bermakna).
+               i.id IN (SELECT id FROM nik_cocok) AS nik_di_master,
+               i.nik AS i_nik, i.nik_trusted AS i_nik_trusted,
+               i.nama AS i_nama, i.nama_clean AS i_nama_clean,
+               i.tanggal_lahir AS i_tgl_mentah,
+               CAST(i.tanggal_lahir_clean AS DATE) AS i_tgl,
+               i.jenis_kelamin AS i_jk,
+               i.nama_ibu AS i_ibu, i.nama_ibu_clean AS i_ibu_clean,
+               i.tempat_lahir AS i_tmp, i.tempat_lahir_clean AS i_tmp_clean,
+               i.provinsi AS i_provinsi,
+               m.nik AS m_nik,
+               m.nama_lengkap AS m_nama, m.nama_master_clean AS m_nama_clean,
+               m.tanggal_lahir AS m_tgl_mentah, m.tanggal_lahir_master_clean AS m_tgl,
+               m.jenis_kelamin AS m_jk,
+               m.nama_ibu AS m_ibu, m.nama_ibu_master_clean AS m_ibu_clean,
+               m.tempat_lahir AS m_tmp, m.tempat_lahir_master_clean AS m_tmp_clean,
+               m.provinsi_asli AS m_provinsi,
+               m2.nama_lengkap AS k2_nama, m2.tanggal_lahir_master_clean AS k2_tgl
+        FROM keputusan k
+        JOIN incoming_semua i ON i.id = k.id
+        LEFT JOIN master_terpilih m ON m.nik = k.master_nik
+        LEFT JOIN master_terpilih m2 ON m2.nik = k.nik_2
+    """)
+
+
+def _isi_reasoning(con, job: dict) -> None:
+    """
+    Tabel `alasan` — selalu ada sesudahnya, kosong kalau reasoning gagal.
+
+    Reasoning opsional di spesifikasi dan boleh bergantung pada LLM; matching
+    tidak. Apa pun yang gagal di sini hanya dicatat.
+    """
+    try:
+        info = _reasoning.isi(con, job)
+        print(f"[M] {job['job_id']} reasoning: {info}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[M] {job['job_id']} reasoning GAGAL — kolom reasoning dikosongkan, "
+              f"matching tetap berlanjut: {type(e).__name__}: {e}")
+        con.execute("CREATE OR REPLACE TABLE alasan (id VARCHAR, reasoning VARCHAR)")
+
+
+def susun_hasil(con, job: dict) -> None:
+    """Tabel 18 kolom persis spesifikasi §4.1, dari `pasangan` + `alasan`."""
     con.execute(f"""
         CREATE OR REPLACE TABLE hasil AS
-        WITH m AS (
-            -- DISTINCT ON: master bisa memuat NIK yang sama dua kali. Tanpa ini
-            -- baris incoming itu berlipat di hasil, dan id_incoming tidak lagi
-            -- menunjuk tepat satu baris.
-            --
-            -- Dibaca dari parquet mentahnya, bukan dari view `master_df`: view
-            -- itu hanya membawa `provinsi` dalam bentuk bersih (huruf kecil),
-            -- sedangkan snapshot adalah "data asli" (spesifikasi §4.1).
-            SELECT DISTINCT ON (nik) {SQL_VIEW_MASTER}, provinsi AS provinsi_asli
-            FROM read_parquet('s3://{job['s3_bucket']}/{job['master_key']}')
-            WHERE nik IN (SELECT master_nik FROM keputusan WHERE master_nik IS NOT NULL)
-        )
         SELECT
             -- UUIDv7, bukan v4. Keduanya UUID yang sah (spesifikasi hanya
             -- menuntut "UUID unik per baris"), tapi v4 acak membuat setiap
@@ -512,33 +594,32 @@ def susun_hasil(con, job: dict) -> None:
             {q(job['file_id'])}               AS csv_file_id,
             {q(job['master_file_id'])}        AS master_file_id,
             {q(job['job_id'])}                AS job_id,
-            k.id                              AS id_incoming,
-            k.master_nik,
-            CAST(k.skor AS DOUBLE)            AS score,
-            k.status,
-            k.method,
-            k.rank_conflict,
-            CASE WHEN k.status IN ('REVIEW', 'CONFLICT') THEN {pola} END AS pattern_group,
-            CAST(NULL AS VARCHAR)             AS reasoning,
+            p.id                              AS id_incoming,
+            p.master_nik,
+            CAST(p.skor AS DOUBLE)            AS score,
+            p.status,
+            p.method,
+            p.rank_conflict,
+            p.pattern_group,
+            a.reasoning,
             CAST(json_object(
-                'nama', i.nama, 'nik', i.nik,
-                'tanggal_lahir', {_sql_tgl('i.tanggal_lahir_clean', 'i.tanggal_lahir')},
-                'jenis_kelamin', i.jenis_kelamin, 'nama_ibu', i.nama_ibu,
-                'tempat_lahir', i.tempat_lahir, 'provinsi', i.provinsi
+                'nama', p.i_nama, 'nik', p.i_nik,
+                'tanggal_lahir', {_sql_tgl('p.i_tgl', 'p.i_tgl_mentah')},
+                'jenis_kelamin', p.i_jk, 'nama_ibu', p.i_ibu,
+                'tempat_lahir', p.i_tmp, 'provinsi', p.i_provinsi
             ) AS VARCHAR)                     AS incoming_snapshot,
-            CASE WHEN k.master_nik IS NULL THEN NULL ELSE CAST(json_object(
-                'nama_lengkap', m.nama_lengkap, 'nik', m.nik,
-                'tanggal_lahir', {_sql_tgl('m.tanggal_lahir_master_clean', 'm.tanggal_lahir')},
-                'jenis_kelamin', m.jenis_kelamin, 'nama_ibu', m.nama_ibu,
-                'tempat_lahir', m.tempat_lahir, 'provinsi', m.provinsi_asli
+            CASE WHEN p.master_nik IS NULL THEN NULL ELSE CAST(json_object(
+                'nama_lengkap', p.m_nama, 'nik', p.m_nik,
+                'tanggal_lahir', {_sql_tgl('p.m_tgl', 'p.m_tgl_mentah')},
+                'jenis_kelamin', p.m_jk, 'nama_ibu', p.m_ibu,
+                'tempat_lahir', p.m_tmp, 'provinsi', p.m_provinsi
             ) AS VARCHAR) END                 AS master_snapshot,
             {q(job['actor'])}                 AS created_by,
             {q(job['actor'])}                 AS updated_by,
             CAST(now() AS TIMESTAMP)          AS created_at,
             CAST(now() AS TIMESTAMP)          AS updated_at
-        FROM keputusan k
-        JOIN incoming_semua i ON i.id = k.id
-        LEFT JOIN m ON m.nik = k.master_nik
+        FROM pasangan p
+        LEFT JOIN alasan a ON a.id = p.id
     """)
 
 
@@ -716,7 +797,8 @@ def jalankan(job: dict, lapor=lambda t: None) -> dict:
                 started_at="now()")
         grade = cari_grade(con, job)
         aturan, kueri = _konfigurasi(con, grade)
-        n = muat_masukan(con, job)
+        master = f"s3://{job['s3_bucket']}/{job['master_key']}"
+        n = muat_masukan(con, f"s3://{job['s3_bucket']}/{job['incoming_key']}", master)
         print(f"[M] {job['job_id']} {n:,} baris incoming, grade {grade}, "
               f"preset {job['rule_preset'] or '-'}")
         jam("prepMs", t)
@@ -749,6 +831,17 @@ def jalankan(job: dict, lapor=lambda t: None) -> dict:
         lapor("M4 klasifikasi")
         t = time.perf_counter()
         gabung(con)
+        susun_pasangan(con, master)
+        kelas_ms = time.perf_counter() - t
+
+        # Masih tahap CLASSIFYING bagi portal: menambah nilai current_stage
+        # baru berisiko ditolak constraint atau tidak dikenali UI portal.
+        lapor("M4 reasoning")
+        t = time.perf_counter()
+        _isi_reasoning(con, job)
+        jam("reasoningMs", t)
+
+        t = time.perf_counter()
         susun_hasil(con, job)
         n_hasil = con.execute("SELECT count(*) FROM hasil").fetchone()[0]
         if n_hasil != n:
@@ -756,7 +849,7 @@ def jalankan(job: dict, lapor=lambda t: None) -> dict:
                 f"Hasil memuat {n_hasil:,} baris untuk {n:,} baris incoming. "
                 f"Setiap baris incoming harus punya tepat satu baris hasil.")
         m = metrik(con)
-        jam("classificationMs", t)
+        ms["classificationMs"] = int((time.perf_counter() - t + kelas_ms) * 1000)
 
         _cek_batal(con, job)
         lapor("M5 unggah parquet")

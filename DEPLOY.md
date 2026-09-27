@@ -262,6 +262,17 @@ Keluarannya harus menyebut `node : MatchingDispatch-b4819` — id itu ditetapkan
 spesifikasi, dan portal mengirim datanya ke id tersebut. Kalau berbeda, skripnya
 keluar dengan kode 1.
 
+**3. Reasoning — tidak perlu apa-apa.** Kolom `reasoning` terisi tanpa
+konfigurasi: kalimatnya disusun deterministik, tanpa LLM dan tanpa tabel
+tambahan. LLM hanya opsional untuk memperhalus bahasa. Kalau ingin
+menyalakannya, isi `REASONING_AI_BASE_URL` (Ollama on-prem, mis.
+`http://172.16.12.98:11434`) dan `REASONING_AI_MODEL` di `.env`, lalu naikkan
+ulang dengan `up -d langflow` seperti langkah 1. Tabel cache-nya dibuat
+migrasi 005, yang diterapkan otomatis oleh service `skema` pada `up` berikutnya
+(§3) — ia membuat `reasoning_patterns`, dan juga `reasoning_jobs` yang tidak
+dipakai (disalin apa adanya dari cabang reasoning supaya tidak bentrok saat
+digabung).
+
 Rincian rancangan dan hasil pengujiannya: `MATCHING.md`.
 
 ---

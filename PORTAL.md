@@ -294,8 +294,24 @@ di dalam komponen dan tidak bisa diubah dari sisi kami. Sebabnya ada di
 `localhost` berarti container itu sendiri. Contoh di spesifikasi memakai nilai
 ini; engine memakai alamat S3 dari konfigurasinya.
 
-**`reasoning` masih kosong (NULL)** — kolomnya opsional di spesifikasi, dan
-sedang dikerjakan.
+**`reasoning` terisi di SETIAP baris, semua status**, berbahasa Indonesia
+mengikuti contoh §6 spesifikasi — rata-rata ±220 karakter, terpanjang ±440.
+Contoh REVIEW: *"Skor kemiripan 90.0% terhadap master NIK 1906316707661883
+belum memenuhi syarat pencocokan otomatis. Nama lengkap, tanggal lahir, dan
+jenis kelamin identik. Nama ibu kandung dan tempat lahir kosong pada data
+incoming."* Kalau tahap reasoning gagal, kolomnya NULL dan hasil matching
+tetap tersuntik — portal sebaiknya menampilkan NULL sebagai "tidak tersedia",
+bukan galat.
+
+**UNMATCH tidak membawa `master_nik` maupun `master_snapshot`** (keduanya
+NULL, persis §4.1), dan `rank_conflict`-nya selalu `false`. Sebelumnya UNMATCH
+bisa membawa kandidat terdekat — yang justru ditolak engine. `score` tetap
+berisi skor kandidat terdekat itu, dan `reasoning` menyebutnya.
+
+**`stageDurations` di callback punya satu kunci tambahan, `reasoningMs`.**
+Selama reasoning berjalan, `current_stage` tetap `CLASSIFYING` — kami tidak
+menambah nilai tahap baru karena tidak tahu apakah kolom itu dibatasi
+constraint atau dipetakan UI portal.
 
 **Angka "Perlu Review" akan TURUN**, dan itu bukan kerusakan. Matching sekarang
 bertahap per baris (Pass 1 NIK + nama persis, Pass 2 nama + tanggal lahir +
@@ -333,3 +349,10 @@ Dua hal yang membantu:
   seluruh tabel hasil, yang tumbuh dengan setiap berkas.
 - **`id` yang dikirim engine berurutan waktu (UUIDv7)**, bukan acak — terukur
   26% lebih cepat masuk ke indeks primary key. Tetap UUID yang sah.
+
+Teks `reasoning` menambah ±17% pada waktu penyuntikan (terukur +2,3 sampai
++5,7 detik per 200 ribu baris di laptop kami). Penyuntikan berulang untuk berkas
+yang sama meninggalkan tuple mati di tabel hasil. Di tiruan kami, setelah
+belasan penyuntikan ulang tabelnya 1,59 GB dengan 596 ribu tuple mati, dan
+penyuntikan naik dari ±17 ke 44–57 detik (hanya ±4 detik di antaranya dari
+reasoning) — pengaturan autovacuum tabel itu ikut menentukan.

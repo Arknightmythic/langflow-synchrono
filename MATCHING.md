@@ -4,7 +4,7 @@ Pipeline matching yang mengikuti `matching-engine-integration-spec.md` versi
 27 Sep 2026: dari payload `matching-dispatch` sampai hasil tersuntik ke DB
 portal dan callback terkirim.
 
-Kode: `lib/_matching.py`, `lib/_matching_worker.py`,
+Kode: `lib/_matching.py`, `lib/_reasoning.py`, `lib/_matching_worker.py`,
 `components/matching/api_dispatch.py`, `infra/buat_flow_matching_dispatch.py`.
 
 ---
@@ -36,7 +36,10 @@ POST /api/v1/run/matching-dispatch        node MatchingDispatch-b4819
        Pass 1  NIK tepercaya + nama PERSIS
        Pass 2  nama + tanggal lahir + nama ibu PERSIS
        Pass 3  blocking & skor milik grade, untuk sisanya
-       klasifikasi AUTO/REVIEW/UNMATCH/CONFLICT, pattern_group, snapshot
+       klasifikasi AUTO/REVIEW/UNMATCH/CONFLICT, pattern_group
+       pasangan: tiap keputusan + data incoming + master-nya
+       reasoning per baris (§5) — gagal di sini tidak menggagalkan job
+       snapshot
        -> s3://{bucket}/matching-results/{jobId}/result.parquet
        -> DB portal, SATU transaksi: DELETE lama, INSERT dari parquet, UPDATE job
        -> callback ke callbackUrl
@@ -99,8 +102,27 @@ pass-nya.
 Pass 3 memilih pemenang dengan `arg_min(..., 2)` — dua teratas dalam satu
 agregasi, memorinya tetap dua kandidat per baris. Seri = dua **NIK berbeda**
 dengan selisih skor ≤ `MATCHING_CONFLICT_EPSILON` (bawaan 0). Baris master ganda
-dengan NIK yang sama bukan konflik. Contoh nyata: dua orang bernama *Luwes
-Januar* lahir di hari yang sama, skor seri 90.
+dengan NIK yang sama bukan konflik. Contoh nyata: dua orang bernama *Jasmin
+Waskita* lahir di hari yang sama, skor seri 90.
+
+### UNMATCH tidak membawa kandidat
+
+Spesifikasi §4.1: `master_nik` dan `master_snapshot` **"NULL jika UNMATCH"**.
+Versi sebelumnya melanggarnya — UNMATCH dari Pass 3 membawa kandidat terdekat
+yang justru DITOLAK, dan portal yang menampilkannya akan menunjuk orang yang
+salah. Sekarang keduanya NULL; skornya tetap disimpan dan disebut reasoning.
+`rank_conflict` juga FALSE untuk UNMATCH: dua kandidat yang seri di bawah ambang
+tetap sama-sama ditolak.
+
+Dibuktikan per baris terhadap hasil sebelum perubahan, **1.000.040 baris**
+(kelima berkas):
+
+| Kolom | Baris berbeda |
+|---|---|
+| status, method, score, pattern_group, incoming_snapshot | **0** |
+| master_nik, master_snapshot, rank_conflict — selain UNMATCH | **0** |
+| UNMATCH yang dulu membawa `master_nik` | 74.845 → 0 (disengaja) |
+| UNMATCH yang dulu `rank_conflict = TRUE` | 3.697 → 0 (disengaja) |
 
 ---
 
@@ -122,11 +144,146 @@ boleh dituduh `SWAPPED_DOB`.
 
 Pada data uji, 24.020 REVIEW grade D semuanya `GENERAL_REVIEW`: nama dan tanggal
 lahir **identik**, tempat lahir dan nama ibu kosong. Sebab sebenarnya ("data
-tidak lengkap") bukan salah satu pola di spesifikasi — itu tugas `reasoning`.
+tidak lengkap") bukan salah satu pola di spesifikasi — reasoning yang
+menyebutnya (§5).
 
 ---
 
-## 5. Hal yang sengaja berbeda dari contoh di spesifikasi
+## 5. Reasoning
+
+Kolom `reasoning` diisi untuk **setiap** baris, semua status — §6 spesifikasi
+memberi contoh untuk AUTO, REVIEW, CONFLICT, dan UNMATCH. Contoh keluaran
+sungguhan dari data uji:
+
+| Status | `reasoning` |
+|---|---|
+| AUTO, Pass 1 | Cocok otomatis melalui pencocokan deterministik Pass 1: NIK (8107142612951078) dan nama lengkap identik dengan master. Tanggal lahir, jenis kelamin, nama ibu kandung, dan tempat lahir juga identik. |
+| AUTO, Pass 2 | Cocok otomatis melalui pencocokan deterministik Pass 2: nama lengkap, tanggal lahir (1970-02-24), dan nama ibu kandung identik dengan master NIK 6301616402708127. NIK berkas (6301616402708123) tidak terdaftar di master. Tempat lahir juga identik. Jenis kelamin kosong pada data incoming. |
+| AUTO, Pass 3 | Cocok otomatis melalui pencocokan skor (Pass 3): skor kemiripan 97.67% terhadap master NIK 6404210109939206. Nama lengkap hanya berbeda pada gelar akademis/keagamaan atau bin/binti ('Tirtayasa Jatmiko Usada, S.Ked' vs 'Tirtayasa Jatmiko Usada'). Tanggal lahir, nama ibu kandung, dan tempat lahir identik. |
+| REVIEW | Skor kemiripan 90.0% terhadap master NIK 1906316707661883 belum memenuhi syarat pencocokan otomatis. Nama lengkap, tanggal lahir, dan jenis kelamin identik. Nama ibu kandung dan tempat lahir kosong pada data incoming. |
+| CONFLICT | Dua kandidat teratas memiliki skor seimbang: Kandidat 1 NIK 1812104102808198 (Jasmin Waskita, 90.0%) dan Kandidat 2 NIK 5207304102801120 (Jasmin Waskita, 90.0%), dengan tanggal lahir sama (1980-02-01). Sistem tidak memilih salah satunya secara otomatis. |
+| UNMATCH | Tidak ditemukan catatan kependudukan yang relevan pada Master Data Dukcapil: tidak ada kandidat yang lolos penyaringan awal (blocking). NIK berkas (6402600506763387) tidak terdaftar di master. |
+
+Pola yang tidak muncul di data uji (SPELLING_NAME, TITLE_DEGREE, SWAPPED_DOB,
+NIK_CONFLICT) diuji dengan contoh dari §6 spesifikasi di `tests/test_reasoning.py`.
+
+### Algoritma — dari cabang `ai_reasoning_parquet_version`
+
+Kerangkanya dipertahankan, termasuk tabel cache-nya (migrasi 005 disalin apa
+adanya):
+
+```
+vonis per elemen (SAME / DIFFERENT / EMPTY_IN_INSTITUTION / EMPTY_IN_MASTER)
+  -> signature -> kalimat berplaceholder per signature
+  -> (opsional) LLM memperhalus; cache `reasoning_patterns`
+  -> dirangkai per baris di SQL
+```
+
+Kalimat disusun per **signature**, bukan per baris: 200 ribu baris hanya
+2–32 signature (grade A 2, B 32, C 6, D 22, E 9).
+
+| Versi asal | Di sini | Kenapa |
+|---|---|---|
+| job terpisah (`reasoning-dispatch`, `reasoning_jobs`), baca/tulis `manual_matches` | inline di job matching | portal menerima hasil lewat penyuntikan — tidak ada tahap kedua yang bisa mengisi kolomnya belakangan |
+| bahasa Inggris | bahasa Indonesia | contoh §6 spesifikasi |
+| hanya REVIEW | semua status; signature memuat status, pass, pattern_group | kalimat yang benar bergantung pada ketiganya |
+| tanggal dibandingkan sebagai **teks** | sebagai **tanggal** | `'02-02-1992'` dan `'1992-02-02'` divonis DIFFERENT — padahal berkas incoming (dd-mm-yyyy) dan master (DATE) selalu beda format, jadi SETIAP baris akan "beda tanggal lahir" |
+| jenis kelamin dinormalisasi | sama, di kedua sisi | `'LAKI-LAKI'` = `'L'` |
+| LLM menerima **nilai** (nama, tanggal, nama ibu), lalu nilai di jawabannya dicari untuk ditukar jadi placeholder | LLM hanya menerima **kalimat berplaceholder** | kalau LLM menulis nilainya sedikit berbeda, penukarannya meleset dan nama orang itu tersimpan di templat — lalu tercetak di penjelasan setiap baris lain yang polanya sama |
+| jawaban LLM dipakai apa adanya | diperiksa: placeholder utuh, tidak ada angka bertambah/hilang, kata kunci makna (identik, berbeda, kosong, …) tidak berubah | gagal periksa → kalimat deterministik |
+| fallback deterministik disimpan ke cache dengan kunci yang sama | kunci = versi + model + kalimat dasar | pola yang sekali gagal tidak terkunci selamanya; perbaikan kalimat tidak tertahan cache lama |
+| ikut `NORMALISASI_AI_BASE_URL` / `OLLAMA_LOCAL_BASE_URL` | hanya `REASONING_AI_BASE_URL` | menyalakan AI untuk pengenalan kolom tidak boleh diam-diam menyalakannya untuk reasoning |
+| hidrasi REPLACE bersarang | dirangkai `concat` per signature | 3,1 → 0,11 detik untuk 200 ribu baris; nilai kotor berisi teks `{skor}` tidak bisa menyuntik isi |
+
+Tambahan yang tidak ada di versi asal: NIK ikut divonis (tidak tepercaya /
+tidak terdaftar / milik orang lain), nama yang hanya beda gelar atau bin/binti,
+tanggal yang **tidak terbaca** (disebut beserta nilai mentahnya, bukan
+"kosong"), dan elemen yang tidak ada di seluruh berkas tidak disebut (berkas
+grade C–E memang tidak boleh memuat NIK).
+
+### LLM — opsional, mati secara bawaan
+
+Tanpa `REASONING_AI_BASE_URL`, seluruh kalimat deterministik dan **tidak ada
+yang menyentuh database**. Kalimatnya sudah lengkap tanpa LLM; LLM hanya
+memperhalus bahasa.
+
+Kalau diisi:
+
+- hanya endpoint on-prem yang diterima (IP privat, loopback, atau nama layanan
+  Docker); `https://ollama.com` ditolak kecuali `REASONING_AI_ALLOW_EXTERNAL=1`
+  disetel secara sadar (beserta `REASONING_AI_API_KEY`). Yang dikirim tetap
+  hanya kalimat berplaceholder;
+- satu panggilan per signature **baru**, mulai dari yang barisnya terbanyak,
+  paling banyak `REASONING_AI_MAX_PATTERNS_PER_JOB` (25) dan
+  `REASONING_AI_BUDGET_SECONDS` (90) per job — sisanya deterministik di job
+  ini dan mendapat giliran di job berikutnya;
+- endpoint yang gagal setelah percobaan ulang tidak dicoba lagi di job itu;
+- hasil yang lolos periksa **dan** penolakan disimpan ke `reasoning_patterns`
+  (DB engine) — penolakan disimpan sebagai kalimat dasarnya, supaya LLM yang
+  sama tidak ditanya ulang untuk jawaban yang sama. Kegagalan jaringan tidak
+  disimpan.
+
+Menyalakannya di server: isi `REASONING_AI_BASE_URL` (mis.
+`http://172.16.12.98:11434`) dan `REASONING_AI_MODEL` di `.env`, lalu buat ulang
+container langflow (`up -d langflow` — `restart` tidak membaca `.env` baru).
+Tabel `reasoning_patterns` dibuat migrasi 005, yang diterapkan otomatis oleh
+service `skema` setiap `up`.
+
+### Biaya, terukur
+
+| | 200 ribu baris |
+|---|---|
+| tabel `pasangan` | 0,9–1,4 detik |
+| reasoning deterministik (vonis, signature, rangkai) | 1,1–1,9 detik |
+| penyuntikan ke DB portal, karena teks reasoning (±218 karakter/baris) | +2,3 / +4,0 / +5,7 detik dalam 3 putaran berpasangan (≈ +17%) |
+
+Penyuntikan diukur ke tabel coba berstruktur sama (indeks + FK), dikosongkan
+tiap putaran, dengan dan tanpa kolom reasoning bergantian. Lonjakan
+`duckdbInjectMs` ke 44–57 detik pada run berulang di laptop ini sebagian besar
+**bukan** dari reasoning (yang menambah ≈ 4 detik): tabel `portal_sim` sudah
+1,59 GB dengan 596 ribu tuple mati akibat DELETE+INSERT berulang, dan
+autovacuum berjalan bersamaan.
+
+### Dengan LLM sungguhan: `gemma4:31b` (ollama.com), dari cache kosong
+
+Lewat Langflow sungguhan, alur portal persis spesifikasi, grade A→E diulang per
+putaran sampai satu putaran penuh tanpa panggilan LLM. Batas bawaan 25 pola
+per job. "Engine" = total job dikurangi penyuntikan ke DB portal. Angka dari
+pengukuran kedua (pemeriksa versi `id-2`). Diukur dua kali: total waktu LLM
+putaran pertama hampir sama (68,7 vs 70,0 s), tapi per grade bisa selisih
+sampai ±30% karena latensi cloud yang naik-turun.
+
+| Grade | Pola | Putaran 1 (dingin): LLM | reasoning | engine | Putaran 3 (hangat): reasoning | engine |
+|---|---|---|---|---|---|---|
+| A | 2 | 2 panggilan, 1,5 s | 2,5 s | 8,6 s | 1,0 s | 4,4 s |
+| B | 32 | 25 panggilan (batas), 32,8 s | 34,1 s | 39,3 s | 1,9 s | 5,2 s |
+| C | 6 | 6 panggilan, 6,6 s | 7,5 s | 12,3 s | 0,9 s | 4,5 s |
+| D | 22 | 19 panggilan, 20,7 s | 21,9 s | 27,3 s | 1,7 s | 6,3 s |
+| E | 9 | 7 panggilan, 8,4 s | 10,0 s | 14,9 s | 1,6 s | 5,6 s |
+
+- **Cache penuh untuk kelima grade setelah 6 job**: putaran 1, plus B sekali
+  lagi di putaran 2 untuk 5 pola yang terpotong batas 25 (7,3 s). Putaran 3:
+  nol panggilan.
+- **Total 64 panggilan, 75 detik waktu LLM** (±1,2 s per panggilan). Cache
+  dipakai lintas grade: B memakai 2 pola milik A, D 3 milik C, E 2.
+- Setelah hangat, reasoning 0,9–1,9 s — **setara mode tanpa LLM** (1,1–1,9 s).
+- Penyuntikan ke `portal_sim` 28–40 s per job di semua putaran; tidak
+  dipengaruhi LLM.
+- **62 dari 64 jawaban diterima (97%).** Pengukuran pertama 57/64: 4
+  penolakan keliru karena kalimat dasar menulis "tidak sama dengan" (LLM:
+  "berbeda dengan") dan pemeriksa menganggap "perbedaan" ≠ "berbeda".
+  Diperbaiki di `id-2` — frasa "berbeda dengan", dan kata kunci berupa akar
+  "beda". 2 penolakan yang tersisa (angka berubah) lolos saat ditanya ulang:
+  di cloud, temperature 0 tidak menjamin jawaban yang sama.
+
+Contoh yang tersuntik ke portal: *"Skor kemiripan 90.0% terhadap master NIK
+1225502503613230 belum memenuhi syarat pencocokan otomatis. Nama lengkap,
+tanggal lahir, dan jenis kelamin sudah identik. Namun, nama ibu kandung dan
+tempat lahir pada data incoming masih kosong."*
+
+---
+
+## 6. Hal yang sengaja berbeda dari contoh di spesifikasi
 
 | Contoh spesifikasi | Di sini | Kenapa |
 |---|---|---|
@@ -136,13 +293,15 @@ tidak lengkap") bukan salah satu pola di spesifikasi — itu tugas `reasoning`.
 | UPDATE lewat DuckDB | SQL PostgreSQL asli (`postgres_execute`) | DuckDB menerjemahkan UPDATE lewat tabel sementara bertipe TEXT, lalu gagal: *column "stage_durations" is of type jsonb but expression is of type character varying*. `postgres_execute` terbukti ikut transaksi |
 | `s3Endpoint: http://localhost:8333` | diabaikan | `localhost` dari dalam container menunjuk container itu sendiri |
 | node id turunan | dipaksa `MatchingDispatch-b4819` | skema kita menghasilkan `…-c793c`; tweak ke node yang tidak ada **diabaikan Langflow tanpa galat** |
+| `stageDurations` | + `reasoningMs` | kunci tambahan; `current_stage` selama reasoning tetap `CLASSIFYING` — nilai baru berisiko ditolak constraint atau tidak dikenali UI portal |
 
 ---
 
-## 6. Kecepatan penyuntikan — biayanya di PostgreSQL, bukan di engine
+## 7. Kecepatan penyuntikan — biayanya di PostgreSQL, bukan di engine
 
-Grade B, 200.020 baris: total ~20 detik, **~16 detik di antaranya penyuntikan**.
-Spesifikasi menyebut "> 100.000 baris per detik"; di sini ~13 ribu.
+Grade B, 200.020 baris: total ~20 detik, **~16 detik di antaranya penyuntikan**
+(sebelum reasoning; reasoning menambah ≈ 17%, lihat §5). Spesifikasi menyebut
+"> 100.000 baris per detik"; di sini ~13 ribu.
 
 Diukur untuk memisahkan sebabnya:
 
@@ -158,7 +317,7 @@ satunya bagian dari sisi engine yang terbukti menolong.
 
 ---
 
-## 7. Menjalankan simulasi
+## 8. Menjalankan simulasi dan uji
 
 ```bash
 # 1. DB portal tiruan (sekali) — HARUS UTF-8
@@ -175,10 +334,15 @@ python penerima_callback.py            # :3999, mencatat ke callback_diterima.js
 # 4. Simulasi (terminal lain)
 set LANGFLOW_API_KEY=sk-...
 uv run --with "psycopg[binary]" python simulasi.py sim-grade-b sim-grade-d
+
+# Uji — tests/ TIDAK di-mount ke container, jadi lewat stdin, dari akar repo
+docker exec -i synchrono-langflow python - < tests/test_pola_matching.py
+docker exec -i synchrono-langflow python - < tests/test_reasoning.py
 ```
 
 Berkasnya harus sudah digrading lewat `grading-dispatch` — engine mencari grade-
-nya di `grading_jobs`.
+nya di `grading_jobs`. Perubahan di `lib/` baru termuat setelah container
+langflow di-restart.
 
 **Database `synchrono` lokal di laptop ini ber-encoding WIN1252** (bawaan
 PostgreSQL Windows). `portal_sim` sengaja dibuat UTF-8; DB portal sungguhan
@@ -186,7 +350,7 @@ hampir pasti UTF-8, dan nama berkarakter non-Latin gagal masuk ke WIN1252.
 
 ---
 
-## 8. Yang sudah diuji
+## 9. Yang sudah diuji
 
 | Jalur | Hasil |
 |---|---|
@@ -198,15 +362,58 @@ hampir pasti UTF-8, dan nama berkarakter non-Latin gagal masuk ke WIN1252.
 | job tidak dibuat portal | callback FAILED dengan sebabnya |
 | dibatalkan sebelum mulai | berhenti, 0 baris tersuntik, status tetap CANCELLED |
 | INSERT gagal setelah DELETE | 200.000 baris lama utuh |
+| regresi setelah reasoning, 1.000.040 baris | nol perbedaan selain perubahan UNMATCH yang disengaja (§3) |
+| reasoning, pipeline asli pada parquet lokal (Pass 1, 2, 3, CONFLICT, dua jenis UNMATCH) | `tests/test_reasoning.py` bagian 1 |
+| reasoning dengan galat buatan | tabel hasil tetap utuh, kolom reasoning kosong (`tests/test_reasoning.py` bagian 5 — diuji di tingkat fungsi, bukan lewat Langflow) |
+| LLM tiruan lewat Langflow (grade D & B) | D: 22 pola dikirim, 13 diterima, 9 ditolak periksa; B: 25 dikirim (batas), 7 deterministik; run ulang D: 22/22 dari cache, nol panggilan |
+| privasi LLM | **434.764 nilai unik** (nama, NIK, ibu, tempat, tanggal) dari kedua berkas diperiksa terhadap 48 permintaan ke LLM: **nol** yang terkirim |
+| LLM sungguhan `gemma4:31b` cloud, kelima grade dari cache kosong, diukur dua kali | 64 panggilan; diterima 57 lalu 62 setelah pemeriksa diperbaiki; cache penuh setelah 6 job; angka di §5 |
+
+LLM tiruan dipakai lebih dulu karena Ollama on-prem (172.16.12.98) tidak
+terjangkau dari laptop ini; baris cache buatannya sudah dihapus. Cache hasil
+`gemma4:31b` (64 pola) dibiarkan di DB engine lokal.
 
 ---
 
-## 9. Yang belum
+## 10. Temuan — dicatat, TIDAK diubah
 
-- **`reasoning` masih NULL.** Tahap berikutnya: porting algoritma dari cabang
-  `ai_reasoning_parquet_version` (verdict → signature → cache
-  `reasoning_patterns` → LLM hanya saat cache miss). Yang TIDAK dipakai dari
-  sana: `reasoning-dispatch`, `reasoning_jobs`, dan baca/tulis `manual_matches`.
+1. **Query grade 1 & 2 di DB tidak ikut `matching_queries.json`.** Penjaga
+   `nik_trusted` (`ON CASE WHEN i.nik_trusted THEN i.nik END = m.nik`) masuk ke
+   JSON pada 23 Sep; DB lokal di-seed 15 Sep dan masih `ON i.nik = m.nik`.
+   Seeder sengaja `ON CONFLICT DO NOTHING`, jadi DB yang sudah terisi tidak
+   pernah berubah — server lama kemungkinan sama. Akibatnya perilaku Pass 3
+   grade 1/2 bisa berbeda antar-server. Terlihat di data uji: 9 baris grade B
+   ber-NIK tidak tepercaya tetap mendapat kandidat. Memeriksanya:
+   `SELECT grade_code, matching_query LIKE '%nik_trusted%' FROM matching_queries;`
+2. **Query grade 4 & 5 memuat `!= '` yang kehilangan satu kutip** (8 dan 2
+   tempat, di DB maupun JSON). Literal teksnya menelan dua syarat berikutnya.
+   Hasilnya kebetulan tetap sama karena syarat `LEFT(…, 3) = LEFT(…, 3)`
+   sesudahnya sudah mencakup keduanya — rapuh, tapi tidak salah hari ini.
+3. **Aturan grade 4 punya celah tepat di skor 90.** AUTO butuh kosong ≤ 1,
+   REVIEW butuh skor < 90. Baris bernama + tanggal lahir identik dengan dua
+   elemen kosong berskor 0,6 + 0,3 = **0,8999999999999999** (DuckDB maupun
+   Python) — jadi REVIEW. Seandainya aritmetikanya persis 90, ke-24.022 baris
+   itu (24.020 REVIEW + 2 CONFLICT) jatuh ke UNMATCH. Hasil hari ini benar
+   karena kebetulan; mengganti ke DECIMAL atau mengubah bobot akan memindahkan
+   24 ribu baris.
+4. **Reasoning memperlihatkan AUTO yang mencurigakan** dari rumus skor grade
+   (warisan engine lama): grade C 12 baris dan grade E 100 baris AUTO yang
+   tanggal lahir **dan** nama ibunya berbeda dengan master — mis. 'Laras' vs
+   'Laras Hilda Nainggolan', lahir 1967 vs 1989, ibu dan tempat lahir berbeda,
+   skor 81,33%.
+5. **Jenis kelamin master hanya dikecilkan hurufnya** (`SQL_VIEW_MASTER`),
+   sedangkan incoming dipetakan ke `l`/`p`. Master uji memakai `L`/`P`, jadi
+   aman. Kalau master sungguhan memakai `LAKI-LAKI`/`PEREMPUAN`: aturan
+   pengaman 2 menganggap SETIAP baris bertentangan (Pass 1/2 mati diam-diam),
+   dan blocking grade 3/4 yang membandingkan jenis kelamin tidak menemukan
+   kandidat sama sekali. Reasoning tidak terpengaruh — ia menormalisasi kedua
+   sisi. Periksa nilai `jenis_kelamin` master Dukcapil sebelum produksi.
+
+---
+
+## 11. Yang belum
+
+- **LLM on-prem belum diuji** — baru `gemma4:31b` lewat ollama.com.
 - **`rulePreset` diterima tapi belum berpengaruh** — nilainya disebut di
   spesifikasi tanpa definisi. Perlu ditanyakan ke tim portal.
 - **Master 100 juta baris** untuk grade 3–5: Pass 3 mewarisi persoalan

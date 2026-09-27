@@ -5,8 +5,8 @@ Pada data uji 200 ribu baris, hanya GENERAL_REVIEW dan NIK_CONFLICT yang
 muncul — SPELLING_NAME, TITLE_DEGREE, dan SWAPPED_DOB tidak pernah. Tanpa uji
 ini, tiga cabang itu belum pernah terbukti benar sama sekali.
 
-Menjalankan:
-    docker exec synchrono-langflow python /synchrono/tests/test_pola_matching.py
+Menjalankan (tests/ tidak di-mount ke container, jadi lewat stdin):
+    docker exec -i synchrono-langflow python - < tests/test_pola_matching.py
 """
 import sys
 

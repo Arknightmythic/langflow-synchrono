@@ -131,6 +131,15 @@ services:
       PORTAL_PG_DSN: "${PORTAL_PG_DSN:-}"
       MATCHING_MAX_CONCURRENT: "${MATCHING_MAX_CONCURRENT:-1}"
 
+      # Reasoning matching. Kosong = tanpa LLM (kalimat deterministik). Lihat
+      # .env.server.example.
+      REASONING_AI_BASE_URL: "${REASONING_AI_BASE_URL:-}"
+      REASONING_AI_MODEL: "${REASONING_AI_MODEL:-gemma3:12b}"
+      REASONING_AI_API_KEY: "${REASONING_AI_API_KEY:-}"
+      REASONING_AI_ALLOW_EXTERNAL: "${REASONING_AI_ALLOW_EXTERNAL:-0}"
+      REASONING_AI_MAX_PATTERNS_PER_JOB: "${REASONING_AI_MAX_PATTERNS_PER_JOB:-25}"
+      REASONING_AI_BUDGET_SECONDS: "${REASONING_AI_BUDGET_SECONDS:-90}"
+
       # ── SeaweedFS server ───────────────────────────────────────────────
       # Berkas unggahan portal ada di bucket syncrono-uploads di server ini.
       S3_ENDPOINT: "${S3_ENDPOINT:-172.16.12.98:8333}"
