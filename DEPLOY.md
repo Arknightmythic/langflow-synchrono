@@ -164,25 +164,72 @@ Yang ketiga **harus GAGAL**. Kalau berhasil, jaringannya salah.
 
 ## 0C. Menyalakan `.mdf` dan `.dmp` — sama di kedua server
 
-Keduanya di balik profil, dan **tidak** ikut naik dengan perintah biasa.
-Mesinnya memegang memori sepanjang container hidup, dipakai atau tidak.
+`.sql` ikut naik dengan perintah biasa. `.mdf` dan `.dmp` **tidak** — keduanya di
+balik profil, karena mesinnya memegang memori sepanjang container hidup, dipakai
+atau tidak.
+
+### Ketiganya sekaligus
 
 ```bash
 cd /opt/synchrono/langflow-synchrono/infra
 
-# .mdf  — SQL Server, image 2,34 GB di disk, ~2 GB memori
+docker compose -f docker-compose.server.yml --env-file .env \
+  --profile mssql --profile oracle up -d --build
+
+docker compose -f docker-compose.server.yml --env-file .env restart langflow
+```
+
+Profilnya menumpuk, jadi satu perintah menaikkan keenam service: `skema`,
+`langflow`, `s3-relay`, `konverter`, `konverter-mssql`, `konverter-oracle`.
+
+**Siapkan ~7 GB disk dan kesabaran.** Build pertamanya menarik image SQL Server
+(0,58 GB unduhan / 2,34 GB di disk) dan Oracle (2,84 GB), lalu memasang Python
+dan DuckDB di masing-masing.
+
+**Oracle butuh beberapa menit pada nyala PERTAMA**, karena database-nya dibuat
+dari nol. Selama itu `.dmp` akan gagal dengan "tidak bisa dihubungi" — dan itu
+wajar, bukan kerusakan. Tunggu barisnya:
+
+```bash
+docker logs -f synchrono-konverter-oracle | grep -m1 'layanan konversi siap'
+```
+
+### Satu-satu, kalau mau lebih terkendali
+
+```bash
+# .mdf — SQL Server
 docker compose -f docker-compose.server.yml --env-file .env \
   --profile mssql up -d --build konverter-mssql
 
-# .dmp  — Oracle, image 2,84 GB unduhan, paling berat
+# .dmp — Oracle, paling berat
 docker compose -f docker-compose.server.yml --env-file .env \
   --profile oracle up -d --build konverter-oracle
 ```
 
-Kalau salah satu tidak dinyalakan, format itu gagal dengan pesan yang menyebut
-layanannya tidak bisa dihubungi — bukan gagal diam-diam.
+### Memastikan ketiganya hidup
 
-Mematikannya lagi tanpa mengganggu yang lain:
+Tiap mesin punya nama host DAN port sendiri, jadi ketiganya diperiksa bersama:
+
+```bash
+docker exec synchrono-langflow python - <<'PY'
+import json, urllib.request
+for nama, alamat in (("sql  ", "http://konverter:8390"),
+                     ("mdf  ", "http://konverter-mssql:8391"),
+                     ("dmp  ", "http://konverter-oracle:8392")):
+    try:
+        print(nama, json.load(urllib.request.urlopen(alamat + "/sehat", timeout=3)))
+    except Exception as e:
+        print(nama, "BELUM SIAP:", e)
+PY
+```
+
+Harapannya ketiganya membalas `{'ok': True, 'mesin': ...}` dengan mesin
+`postgresql`, `sqlserver`, dan `oracle` berurutan.
+
+Kalau salah satu tidak dinyalakan, format itu gagal dengan pesan yang menyebut
+**cara menyalakannya** — bukan gagal diam-diam.
+
+### Mematikan yang berat lagi, tanpa mengganggu sisanya
 
 ```bash
 docker compose -f docker-compose.server.yml --env-file .env stop konverter-oracle
