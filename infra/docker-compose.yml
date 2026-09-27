@@ -267,6 +267,14 @@ services:
       # host.docker.internal, bukan localhost.
       PG_DSN: "host=host.docker.internal port=5432 dbname=synchrono user=postgres"
 
+      # DB PORTAL untuk hasil matching (opsi B: engine menyuntik ke tabel
+      # syncrono_matching_* milik portal). Di lokal: database TIRUAN
+      # `portal_sim`, dibuat dari infra/simulasi_portal/skema.sql — kredensial
+      # DB portal sungguhan belum diberikan, dan menguji penyuntikan terhadap
+      # tiruan jauh lebih aman.
+      PORTAL_PG_DSN: "host=host.docker.internal port=5432 dbname=portal_sim user=postgres"
+      MATCHING_MAX_CONCURRENT: "1"
+
       # SeaweedFS satu jaringan compose, jadi cukup nama service-nya.
       S3_ENDPOINT: "seaweedfs:8333"
       S3_ACCESS_KEY: synchrono

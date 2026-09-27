@@ -250,3 +250,86 @@ waktu semua orang.
 
 Nomor 4 yang paling mendesak, karena tanpa itu pengguna bisa menunggu berjam-jam
 untuk berkas yang sebetulnya salah kirim.
+
+---
+
+# Bagian B — Matching (`matching-dispatch`)
+
+Engine sudah mengikuti `matching-engine-integration-spec.md` versi 27 Sep 2026,
+dari dispatch sampai callback, dan sudah diuji ujung ke ujung terhadap **tiruan**
+tabel portal di PostgreSQL lokal. Belum pernah menyentuh DB portal sungguhan.
+
+## B1. Yang dibutuhkan engine dari tim portal
+
+| | Keterangan |
+|---|---|
+| **Alamat DB portal** | connection string ke database yang memuat `syncrono_matching_job` & `syncrono_matching_result` |
+| **User PostgreSQL** | `SELECT`, `UPDATE` pada `syncrono_matching_job`; `DELETE`, `INSERT` pada `syncrono_matching_result` — tidak lebih |
+| **Skema tabelnya** | spesifikasi 27 Sep **menghapus definisi tabelnya**. Tiruan kami (`infra/simulasi_portal/skema.sql`) diambil dari versi 21 Sep + dua kolom baru (`result_parquet_key`, `reasoning`). Mohon konfirmasi atau kirim DDL yang sebenarnya |
+| **Encoding UTF-8** | nama berkarakter non-Latin gagal masuk ke database WIN1252 |
+
+## B2. Yang sudah sesuai spesifikasi — tidak perlu diubah di portal
+
+- Endpoint `POST /api/v1/run/matching-dispatch?stream=false`, node
+  **`MatchingDispatch-b4819`** persis seperti di spesifikasi.
+- Header `x-api-key` dan `Authorization: Bearer` dikirim bersamaan — diterima.
+- Balasan `IN_PROGRESS` dalam < 1 detik.
+- `result.parquet` 18 kolom di `matching-results/{jobId}/result.parquet`.
+- Callback §7.1 kunci per kunci, dengan header `x-callback-source: matching-engine`.
+- **`grade` tidak perlu dikirim.** Engine mencarinya sendiri dari hasil grading
+  berkas itu.
+
+## B3. Yang perlu diketahui portal
+
+**Baris job harus dibuat SEBELUM dispatch.** Engine memeriksanya, dan hasil
+tidak bisa disuntik untuk job yang tidak ada. Tanpa baris itu engine membalas
+callback `FAILED` dengan sebabnya.
+
+**Galat muatan dibalas HTTP 500, bukan 400.** Itu perilaku Langflow untuk galat
+di dalam komponen dan tidak bisa diubah dari sisi kami. Sebabnya ada di
+`detail`, dan semua field yang kurang disebut sekaligus:
+`Field wajib tidak ada: callbackUrl, masterDataFile.s3Key`.
+
+**`s3Endpoint: http://localhost:8333` diabaikan.** Dari dalam container
+`localhost` berarti container itu sendiri. Contoh di spesifikasi memakai nilai
+ini; engine memakai alamat S3 dari konfigurasinya.
+
+**`reasoning` masih kosong (NULL)** — kolomnya opsional di spesifikasi, dan
+sedang dikerjakan.
+
+**Angka "Perlu Review" akan TURUN**, dan itu bukan kerusakan. Matching sekarang
+bertahap per baris (Pass 1 NIK + nama persis, Pass 2 nama + tanggal lahir +
+ibu persis, Pass 3 skor). Pada berkas uji grade B: 17.218 baris yang dulu
+REVIEW kini AUTO (NIK dan nama persis, atribut lain hanya kosong), dan 23.922
+yang dulu UNMATCH kini ketemu (NIK di berkas salah, orangnya ditemukan lewat
+identitas). Tidak ada satu baris pun yang berpindah ke orang yang berbeda.
+
+## B4. Tiga hal di spesifikasi yang sebaiknya diluruskan
+
+**1. Callback tanpa rahasia.** Grading mengirim `secretToken`; matching tidak.
+Siapa pun di jaringan bisa mengirim callback `COMPLETED` palsu ke portal.
+Usulan: tambahkan `callbackToken` ke payload dispatch, dan engine
+mengembalikannya di header — pola yang sama dengan grading.
+
+**2. Contoh kode injeksi (§5.1) rentan injeksi SQL.** Nilai seperti `actor`
+(email operator) ditempel langsung ke string SQL. Engine tidak memakai pola itu,
+tapi kalau contoh yang sama dipakai di tempat lain di portal, risikonya sama.
+
+**3. `rulePreset` belum didefinisikan.** Nilainya disebut (FAST / BALANCED /
+THOROUGH / STRICT) tanpa arti. Engine menerimanya tapi belum bertindak apa pun
+atasnya — menebak artinya lebih berbahaya daripada mengabaikannya.
+
+## B5. Kecepatan penyuntikan bergantung pada tabel portal
+
+Pada 200 ribu baris, penyuntikan memakan ~16 dari ~20 detik total. Kami ukur
+sebabnya: memindahkan datanya ke tabel **tanpa** indeks hanya 8,7 detik;
+biaya selebihnya ada di **PostgreSQL** — satu FK dan tiga indeks per baris.
+
+Jadi angka di server ditentukan indeks dan FK yang dipasang di tabel portal.
+Dua hal yang membantu:
+
+- **Indeks `(csv_file_id, master_file_id)`** — wajib ada, karena setiap
+  penyuntikan diawali `DELETE` pada pasangan itu. Tanpanya DELETE memindai
+  seluruh tabel hasil, yang tumbuh dengan setiap berkas.
+- **`id` yang dikirim engine berurutan waktu (UUIDv7)**, bukan acak — terukur
+  26% lebih cepat masuk ke indeks primary key. Tetap UUID yang sah.

@@ -124,6 +124,13 @@ services:
       # PERHATIKAN portnya 5430, bukan 5432 yang lazim.
       PG_DSN: *pg_dsn
 
+      # DB PORTAL untuk hasil matching (tabel syncrono_matching_*). SENGAJA
+      # tanpa nilai bawaan: kosong berarti setiap job matching gagal dengan
+      # pesan yang menyebut variabel ini, alih-alih menyuntik ke database yang
+      # salah. Isi di .env begitu kredensial DB portal diberikan.
+      PORTAL_PG_DSN: "${PORTAL_PG_DSN:-}"
+      MATCHING_MAX_CONCURRENT: "${MATCHING_MAX_CONCURRENT:-1}"
+
       # ── SeaweedFS server ───────────────────────────────────────────────
       # Berkas unggahan portal ada di bucket syncrono-uploads di server ini.
       S3_ENDPOINT: "${S3_ENDPOINT:-172.16.12.98:8333}"

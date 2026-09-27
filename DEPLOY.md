@@ -237,6 +237,35 @@ docker compose -f docker-compose.server.yml --env-file .env stop konverter-oracl
 
 ---
 
+## 0C-2. Matching — sama di kedua server
+
+Matching memakai flow tersendiri, `matching-dispatch`, dan menyuntik hasilnya
+ke **DB portal**. Dua hal yang perlu disiapkan sekali:
+
+**1. Isi `PORTAL_PG_DSN` di `.env`**, lalu naikkan ulang:
+
+```bash
+cd /opt/synchrono/langflow-synchrono/infra
+docker compose -f docker-compose.server.yml --env-file .env up -d langflow
+```
+
+Selama kosong, setiap job matching gagal dengan pesan yang menyebut variabel
+ini. Itu disengaja — menyuntik ke database yang salah jauh lebih buruk.
+
+**2. Bangun flow-nya** (sekali, dan setiap kali `components/matching/` berubah):
+
+```bash
+docker exec synchrono-langflow python /synchrono/infra/buat_flow_matching_dispatch.py
+```
+
+Keluarannya harus menyebut `node : MatchingDispatch-b4819` — id itu ditetapkan
+spesifikasi, dan portal mengirim datanya ke id tersebut. Kalau berbeda, skripnya
+keluar dengan kode 1.
+
+Rincian rancangan dan hasil pengujiannya: `MATCHING.md`.
+
+---
+
 ## 0D. Kenapa `restart langflow` wajib saat redeploy
 
 Berkas di `lib/` di-bind-mount, jadi `up -d` sering menganggap tidak ada yang

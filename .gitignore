@@ -6,3 +6,6 @@ __pycache__/
 # Cadangan data dari StarRocks/MinIO untuk kerja luring. Isinya data
 # kependudukan sungguhan — jangan pernah masuk repositori.
 infra/cadangan/
+
+# Catatan callback dari penerima tiruan portal (infra/simulasi_portal/)
+callback_diterima.jsonl

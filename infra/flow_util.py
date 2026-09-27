@@ -81,7 +81,8 @@ def katalog(token: str, kategori: str) -> dict:
 
 
 def bangun(token: str, nama_flow: str, deskripsi: str, endpoint: str,
-           per_nama: dict, rantai: list[tuple[str, str | None, str]]) -> tuple[str, str]:
+           per_nama: dict, rantai: list[tuple[str, str | None, str]],
+           id_paksa: dict[str, str] | None = None) -> tuple[str, str]:
     """
     Simpan satu flow linear. Mengembalikan (flow_id, id node pertama).
 
@@ -89,6 +90,13 @@ def bangun(token: str, nama_flow: str, deskripsi: str, endpoint: str,
     Output SENGAJA dinamai berbeda dari input: Langflow menolak komponen yang
     nama input dan output-nya bertabrakan — node-nya hilang diam-diam dari
     sidebar dan hanya muncul sebagai warning di log.
+
+    `id_paksa` = {nama_komponen: id_node_lengkap}, untuk node yang id-nya
+    SUDAH DITETAPKAN pihak lain. Contohnya `MatchingDispatch-b4819` di
+    spesifikasi integrasi matching: skema turunan di bawah menghasilkan
+    `MatchingDispatch-c793c`, dan portal mengirim `tweaks` dengan kunci dari
+    spesifikasi. Tweak ke id yang tidak ada TIDAK menimbulkan galat — Langflow
+    mengabaikannya diam-diam, dan job berjalan dengan payload kosong.
     """
     kurang = [n for n, _, _ in rantai if n not in per_nama]
     if kurang:
@@ -108,7 +116,7 @@ def bangun(token: str, nama_flow: str, deskripsi: str, endpoint: str,
         # (endpoint, komponen), id-nya tetap sama selamanya dan tetap unik
         # antar flow.
         sidik = hashlib.md5(f"{endpoint}:{komp}".encode()).hexdigest()[:5]
-        nid = f"{komp}-{sidik}"
+        nid = (id_paksa or {}).get(komp) or f"{komp}-{sidik}"
         id_node[komp] = nid
         tpl = json.loads(json.dumps(per_nama[komp]))  # salinan dalam
         nodes.append({

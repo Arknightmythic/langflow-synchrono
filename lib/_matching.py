@@ -1,0 +1,823 @@
+"""
+Pipeline matching sesuai spesifikasi integrasi portal (versi 27 Sep 2026).
+
+    payload dispatch
+      -> incoming (S3) + master (S3)
+      -> Pass 1: NIK tepercaya + nama PERSIS
+      -> Pass 2: nama + tanggal lahir + nama ibu PERSIS
+      -> Pass 3: blocking & skor milik grade berkas, untuk sisanya
+      -> klasifikasi AUTO / REVIEW / UNMATCH / CONFLICT, pola review, snapshot
+      -> matching-results/{jobId}/result.parquet (S3)
+      -> suntik ke DB PORTAL: syncrono_matching_result + syncrono_matching_job
+      -> callback ke portal
+
+PER BARIS, BUKAN PER BERKAS
+
+Engine lama memilih SATU jalur untuk seluruh berkas menurut grade-nya. Di sini
+setiap baris melewati pass berurutan, dan yang sudah ketemu tidak lanjut. Grade
+tidak hilang — ia pindah jadi "blocking dan rumus skor mana untuk Pass 3".
+
+Diukur pada 1 juta baris (lima berkas uji x 200 ribu) terhadap cara lama:
+tidak SATU baris pun berpindah ke orang yang berbeda. Grade A, C, D, E hasilnya
+sama, hanya berlabel; grade B berubah di dua tempat, dan dua-duanya benar:
+
+    17.218 REVIEW -> AUTO   NIK + nama persis; tempat/ibu KOSONG, tidak ada
+                            satu pun yang bertentangan dengan master
+    23.922 UNMATCH -> AUTO  23.921 NIK-nya tidak ada di master sama sekali —
+                            Pass 2 memulihkan orang yang benar dari NIK sampah
+
+DUA ATURAN PENGAMAN
+
+Keduanya tidak mengubah apa pun pada data uji, dan keduanya menutup kasus yang
+berbahaya pada data sungguhan:
+
+  1. Pass 2 menemukan orang X lewat identitas, padahal NIK berkas itu milik
+     ORANG LAIN di master -> REVIEW + NIK_CONFLICT, bukan AUTO. Barisnya bisa X
+     (menurut identitas) atau pemilik NIK itu (menurut NIK) — manusia yang harus
+     memutuskan. Pada data uji: 1 baris dari 200 ribu.
+
+  2. Pass 1/2 menemukan kecocokan, tapi atribut lain yang TERISI di kedua sisi
+     BERTENTANGAN -> tidak dianggap deterministik, turun ke Pass 3. Kosong tidak
+     dihitung bertentangan: yang dicegah hanya bukti yang saling membantah.
+
+YANG SENGAJA BELUM DI SINI
+
+  * `reasoning` masih NULL. Kolomnya opsional di spesifikasi, dan diisi tahap
+    berikutnya dengan algoritma reasoning yang sudah ada — sengaja dicolokkan
+    ke pipa yang sudah terbukti jalan, karena reasoning tidak boleh bisa
+    menggagalkan matching.
+  * `rulePreset` diterima dan dicatat, tapi belum berpengaruh: spesifikasi
+    menyebut nilainya (FAST/BALANCED/THOROUGH/STRICT) tanpa mendefinisikan
+    artinya. Menebak artinya lebih berbahaya daripada mengabaikannya.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import time
+import urllib.error
+import urllib.request
+
+from _grading import pasang_endpoint_s3
+from _jobs import CALLBACK_PERCOBAAN, CALLBACK_TIMEOUT, q
+from _nama import sql_bersih
+from _shared import (SQL_KLASIFIKASI, SQL_VIEW_MASTER, buka_koneksi,
+                     sql_missing, sql_skor, sql_view_incoming)
+
+# DB PORTAL tempat hasil disuntikkan (opsi B). Terpisah dari PG_DSN milik
+# engine, dan sengaja TIDAK punya nilai bawaan: menyuntik ke database yang
+# salah jauh lebih buruk daripada gagal dengan pesan yang jelas.
+PORTAL_PG_DSN = os.getenv("PORTAL_PG_DSN", "").strip()
+
+# Selisih skor dua kandidat teratas yang masih dianggap SERI. Bawaan 0: hanya
+# seri persis. Spesifikasi menyebut "seri/sangat dekat" tanpa angka, jadi yang
+# tidak ambigu dipakai lebih dulu.
+EPS_KONFLIK = float(os.getenv("MATCHING_CONFLICT_EPSILON", "0"))
+
+# Ambang Jaro-Winkler untuk nama ibu yang dianggap BERTENTANGAN (aturan 2).
+# Hanya di bawah ini yang dihitung membantah; di atasnya perbedaan ejaan biasa.
+AMBANG_BERTENTANGAN = float(os.getenv("MATCHING_KONTRA_JW", "0.80"))
+
+# Ambang pola review.
+AMBANG_NAMA_BEDA_TOTAL = 0.70     # NIK cocok, nama di bawah ini -> NIK_CONFLICT
+AMBANG_SALAH_EJA = 0.85           # nama di atas ini -> SPELLING_NAME
+
+AKTOR_ENGINE = "DataScienceMatchingEngine"
+
+
+# ── Muatan ──────────────────────────────────────────────────────────────────
+
+def susun_job(muatan: dict) -> dict:
+    """
+    Payload dispatch (spesifikasi §3.2) -> job internal.
+
+    Semua field bertanda **Ya** di §3.2 benar-benar diwajibkan, dan semua yang
+    kurang dilaporkan SEKALIGUS — bukan satu per satu, yang memaksa portal
+    mencoba ulang berkali-kali untuk menemukan semuanya.
+    """
+    masuk = muatan.get("incomingFile") or {}
+    master = muatan.get("masterDataFile") or {}
+    job = {
+        "job_id": str(muatan.get("jobId") or "").strip(),
+        "file_id": str(muatan.get("fileId") or "").strip(),
+        "master_file_id": str(muatan.get("masterFileId") or "").strip(),
+        "actor": str(muatan.get("actor") or "").strip(),
+        "callback_url": str(muatan.get("callbackUrl") or "").strip(),
+        "s3_bucket": str(muatan.get("s3Bucket") or "").strip(),
+        "s3_endpoint": str(muatan.get("s3Endpoint") or "").strip(),
+        "incoming_key": str(masuk.get("s3Key") or "").strip(),
+        "master_key": str(master.get("s3Key") or "").strip(),
+        "rule_preset": str(muatan.get("rulePreset") or "").strip() or None,
+        # Di luar spesifikasi, opsional: menimpa grade hasil pencarian. Hanya
+        # untuk pengujian — lihat `cari_grade`.
+        "grade": muatan.get("grade"),
+    }
+    wajib = {"jobId": "job_id", "fileId": "file_id", "masterFileId": "master_file_id",
+             "actor": "actor", "callbackUrl": "callback_url", "s3Bucket": "s3_bucket",
+             "incomingFile.s3Key": "incoming_key", "masterDataFile.s3Key": "master_key"}
+    kurang = [nama for nama, kunci in wajib.items() if not job[kunci]]
+    if kurang:
+        raise ValueError(f"Field wajib tidak ada: {', '.join(kurang)}")
+    return job
+
+
+# ── DB portal ───────────────────────────────────────────────────────────────
+
+def _pasang_portal(con) -> None:
+    if not PORTAL_PG_DSN:
+        raise RuntimeError(
+            "PORTAL_PG_DSN belum diisi. Hasil matching disuntikkan ke database "
+            "PORTAL (tabel syncrono_matching_result & syncrono_matching_job), "
+            "dan alamatnya sengaja tidak punya nilai bawaan — menyuntik ke "
+            "database yang salah jauh lebih buruk daripada gagal di sini.")
+    con.execute(f"ATTACH {q(PORTAL_PG_DSN)} AS portal (TYPE postgres)")
+
+
+def _status_portal(con, job_id: str) -> str | None:
+    r = con.execute(
+        f"SELECT status FROM portal.syncrono_matching_job WHERE id = {q(job_id)}"
+    ).fetchone()
+    return r[0] if r else None
+
+
+def _pg(con, sql: str) -> None:
+    """
+    Jalankan SQL PostgreSQL ASLI di DB portal.
+
+    Bukan lewat UPDATE/DELETE DuckDB, dan ini ditemukan dengan menjalankannya:
+    DuckDB menerjemahkan UPDATE ke tabel sementara di PostgreSQL yang kolomnya
+    TEXT, lalu menyalinnya ke kolom sasaran. Untuk kolom JSONB hasilnya
+
+        column "stage_durations" is of type jsonb but expression is of type
+        character varying
+
+    dan CAST di sisi DuckDB tidak menolong — ia hilang di tabel sementara itu.
+    Lewat `postgres_execute`, PostgreSQL sendiri yang mengurai `::jsonb`.
+
+    Sudah diuji: `postgres_execute` IKUT transaksi DuckDB yang sedang berjalan
+    — ROLLBACK membatalkannya — jadi atomisitas penyuntikan tetap utuh.
+    """
+    con.execute(f"CALL postgres_execute('portal', {q(sql)})")
+
+
+def _tandai(con, job: dict, **kolom) -> None:
+    """UPDATE kecil pada baris job portal — di luar transaksi penyuntikan."""
+    isi = ", ".join(f"{k} = {'now()' if v == 'now()' else q(v)}"
+                    for k, v in kolom.items())
+    _pg(con, f"UPDATE syncrono_matching_job SET {isi}, updated_at = now(), "
+             f"updated_by = {q(AKTOR_ENGINE)} WHERE id = {q(job['job_id'])}")
+
+
+class Dibatalkan(Exception):
+    """Operator menekan Batalkan di portal (spesifikasi §8.2)."""
+
+
+def _cek_batal(con, job: dict) -> None:
+    if _status_portal(con, job["job_id"]) == "CANCELLED":
+        raise Dibatalkan(job["job_id"])
+
+
+# ── Grade ───────────────────────────────────────────────────────────────────
+
+def cari_grade(con, job: dict) -> int:
+    """
+    Grade berkas incoming — dari hasil grading ENGINE INI SENDIRI.
+
+    Portal tidak mengirim grade (spesifikasi versi 27 Sep tidak menambahkannya),
+    dan memang tidak perlu: engine inilah yang menghitungnya saat grading, dan
+    menyimpannya di `grading_jobs.result.summary.grade`. Grade dari sumber lain
+    — misalnya diketik ulang portal — hanya membuka peluang keduanya berbeda.
+    """
+    if job.get("grade") not in (None, ""):
+        print(f"[M] grade DITIMPA muatan: {job['grade']} (hanya untuk pengujian)")
+        return int(job["grade"])
+    r = con.execute(f"""
+        SELECT CAST(json_extract(CAST(result AS VARCHAR), '$.summary.grade') AS INTEGER)
+        FROM pg.grading_jobs
+        WHERE file_id = {q(job['file_id'])} AND status = 'COMPLETED'
+        ORDER BY created_at DESC LIMIT 1
+    """).fetchone()
+    if not r or r[0] is None:
+        raise ValueError(
+            f"Berkas '{job['file_id']}' belum pernah digrading oleh engine ini, "
+            f"jadi grade-nya tidak diketahui. Matching memilih blocking dan rumus "
+            f"skor menurut grade — jalankan grading lebih dulu.")
+    if r[0] not in (1, 2, 3, 4, 5):
+        raise ValueError(
+            f"Berkas '{job['file_id']}' ber-grade {r[0]}; matching hanya tersedia "
+            f"untuk grade 1-5. Grade 6 (F) tidak punya elemen yang cukup untuk "
+            f"dicocokkan dengan aman.")
+    return int(r[0])
+
+
+def _konfigurasi(con, grade: int) -> tuple[dict, str]:
+    kol = ["auto_missing_max", "auto_score_min", "review_missing_count",
+           "review_score_min", "review_score_max"]
+    r = con.execute(
+        f"SELECT {', '.join(kol)} FROM pg.grade_rules WHERE grade_code = {grade}"
+    ).fetchone()
+    if not r:
+        raise ValueError(f"grade_rules untuk grade {grade} tidak ada")
+    kueri = con.execute(
+        f"SELECT matching_query FROM pg.matching_queries WHERE grade_code = {grade}"
+    ).fetchone()
+    if not kueri:
+        raise ValueError(f"matching_queries untuk grade {grade} tidak ada")
+    return dict(zip(kol, r)), kueri[0]
+
+
+def _sql_aturan(a: dict) -> str:
+    def nilai(v, tipe):
+        return f"CAST(NULL AS {tipe})" if v is None else f"{v}::{tipe}"
+    return (f"SELECT {nilai(a['auto_missing_max'], 'INTEGER')} AS auto_missing_max, "
+            f"{nilai(a['auto_score_min'], 'DOUBLE')} AS auto_score_min, "
+            f"{nilai(a['review_missing_count'], 'INTEGER')} AS review_missing_count, "
+            f"{nilai(a['review_score_min'], 'DOUBLE')} AS review_score_min, "
+            f"{nilai(a['review_score_max'], 'DOUBLE')} AS review_score_max")
+
+
+# ── Masukan ─────────────────────────────────────────────────────────────────
+
+def muat_masukan(con, job: dict) -> int:
+    """
+    Incoming dimaterialkan, master TIDAK.
+
+    Incoming kecil dan dibaca berkali-kali (tiga pass, lalu snapshot). Master
+    bisa ratusan juta baris; sebagai VIEW, setiap pass MENGALIRKANNYA sebagai
+    sisi probe hash join, dengan incoming sebagai sisi build — memorinya
+    sebanding incoming, bukan master.
+    """
+    sumber = f"s3://{job['s3_bucket']}/{job['incoming_key']}"
+    kolom = {r[0].strip().lower() for r in con.execute(
+        f"DESCRIBE SELECT * FROM read_parquet('{sumber}')").fetchall()}
+
+    # `id_incoming` = "ID atau nomor baris" (spesifikasi §4.1). Enriched hasil
+    # grading TIDAK memuat kolom `id` — terverifikasi pada berkas uji — jadi
+    # tanpa jalan ini seluruh unggahan CSV tanpa kolom id tidak bisa dicocokkan
+    # sama sekali. `file_row_number` adalah posisi baris di dalam berkasnya:
+    # stabil, tidak bergantung urutan eksekusi seperti row_number() OVER ().
+    id_sql = ("trim(CAST(id AS VARCHAR))" if "id" in kolom
+              else "CAST(file_row_number + 1 AS VARCHAR)")
+    con.execute(f"""
+        CREATE OR REPLACE TABLE incoming_semua AS
+        SELECT {id_sql} AS id,
+               {sql_view_incoming(kolom - {'id'})}
+        FROM read_parquet('{sumber}', file_row_number = true)
+    """)
+
+    dobel = con.execute("""SELECT count(*) - count(DISTINCT id)
+                           FROM incoming_semua""").fetchone()[0]
+    if dobel:
+        raise ValueError(
+            f"Kolom id pada berkas incoming tidak unik ({dobel:,} duplikat). "
+            f"id_incoming harus menunjuk tepat satu baris.")
+
+    master = f"s3://{job['s3_bucket']}/{job['master_key']}"
+    con.execute(f"""CREATE OR REPLACE VIEW master_df AS
+                    SELECT {SQL_VIEW_MASTER} FROM read_parquet('{master}')""")
+    return con.execute("SELECT count(*) FROM incoming_semua").fetchone()[0]
+
+
+# ── Pass ────────────────────────────────────────────────────────────────────
+
+def _sql_bertentangan(tanpa_ibu: bool = False) -> str:
+    """
+    Aturan pengaman 2: atribut yang TERISI di kedua sisi dan saling membantah.
+
+    Tempat lahir sengaja TIDAK ikut. Variasinya terlalu besar untuk jadi bukti
+    bantahan: "Bogor" dan "Kab. Bogor" adalah tempat yang sama, dan menghitung
+    keduanya bertentangan akan menurunkan kecocokan yang sah ke Pass 3.
+    """
+    syarat = [
+        "(i.tanggal_lahir_clean IS NOT NULL AND m.tanggal_lahir_master_clean IS NOT NULL "
+        " AND CAST(i.tanggal_lahir_clean AS DATE) <> m.tanggal_lahir_master_clean)",
+        "(i.jenis_kelamin_clean IS NOT NULL AND m.jenis_kelamin_master_clean IS NOT NULL "
+        " AND i.jenis_kelamin_clean <> m.jenis_kelamin_master_clean)",
+    ]
+    if not tanpa_ibu:
+        syarat.append(
+            "(nullif(i.nama_ibu_clean, '') IS NOT NULL "
+            " AND nullif(m.nama_ibu_master_clean, '') IS NOT NULL "
+            f" AND j(i.nama_ibu_clean, m.nama_ibu_master_clean) < {AMBANG_BERTENTANGAN})")
+    return "(" + " OR ".join(syarat) + ")"
+
+
+def pass1(con) -> None:
+    """
+    NIK tepercaya + nama persis.
+
+    `nik_cocok` menyimpan SEMUA pasangan yang NIK-nya cocok, bukan hanya yang
+    namanya juga persis — dari satu pemindaian master yang sama, ia sekaligus
+    menjawab "apakah NIK berkas ini milik seseorang di master", yang dibutuhkan
+    aturan pengaman 1 di Pass 2 tanpa memindai master sekali lagi.
+    """
+    con.execute(f"""
+        CREATE OR REPLACE TABLE nik_cocok AS
+        SELECT i.id, m.nik,
+               i.nama_clean = m.nama_master_clean AS nama_persis,
+               {_sql_bertentangan()} AS bertentangan
+        FROM incoming_semua i
+        JOIN master_df m ON i.nik_trusted AND i.nik = m.nik
+    """)
+    con.execute("""
+        CREATE OR REPLACE TABLE p1 AS
+        SELECT id, count(DISTINCT nik) AS n_kandidat, min(nik) AS nik
+        FROM nik_cocok WHERE nama_persis AND NOT bertentangan
+        GROUP BY id
+    """)
+
+
+def pass2(con) -> None:
+    """Nama + tanggal lahir + nama ibu persis, untuk yang belum ketemu."""
+    con.execute(f"""
+        CREATE OR REPLACE TABLE p2 AS
+        WITH cocok AS (
+            SELECT i.id, m.nik,
+                   {_sql_bertentangan(tanpa_ibu=True)} AS bertentangan,
+                   -- Aturan pengaman 1: NIK berkas ini ADA di master (tercatat
+                   -- di nik_cocok, yang hanya memuat NIK tepercaya) tapi orang
+                   -- yang ditemukan lewat identitas BUKAN pemiliknya.
+                   (i.id IN (SELECT id FROM nik_cocok) AND m.nik <> i.nik)
+                       AS nik_milik_lain
+            FROM incoming_semua i
+            JOIN master_df m
+              ON  i.nama_clean = m.nama_master_clean
+              AND CAST(i.tanggal_lahir_clean AS DATE) = m.tanggal_lahir_master_clean
+              AND i.nama_ibu_clean = m.nama_ibu_master_clean
+            WHERE i.id NOT IN (SELECT id FROM p1)
+              AND nullif(i.nama_clean, '') IS NOT NULL
+              AND i.tanggal_lahir_clean IS NOT NULL
+              AND nullif(i.nama_ibu_clean, '') IS NOT NULL
+        )
+        SELECT id, count(DISTINCT nik) AS n_kandidat, min(nik) AS nik,
+               bool_or(nik_milik_lain) AS nik_milik_lain
+        FROM cocok
+        WHERE NOT bertentangan
+        GROUP BY id
+    """)
+
+
+def pass3(con, grade: int, aturan: dict, kueri: str) -> None:
+    """
+    Blocking & skor milik grade berkas, HANYA untuk yang belum ketemu.
+
+    Query di `matching_queries` merujuk view `incoming_df`. View itu di sini
+    dibatasi ke baris yang tersisa, jadi query-nya berjalan tanpa diubah satu
+    huruf pun — ia tidak tahu dirinya sedang jadi pass ketiga.
+
+    Pemenang dipilih dengan AGREGASI (`arg_min(..., 2)`), bukan window
+    function: memorinya dua kandidat per baris incoming, berapa pun jumlah
+    pasangannya. Dua teratas sekaligus memberi deteksi seri tanpa pemindaian
+    kedua — dan membedakan seri sungguhan (dua NIK berbeda) dari baris master
+    ganda (NIK yang sama muncul dua kali), yang bukan konflik.
+    """
+    con.execute("""
+        CREATE OR REPLACE VIEW incoming_df AS
+        SELECT * FROM incoming_semua
+        WHERE id NOT IN (SELECT id FROM p1) AND id NOT IN (SELECT id FROM p2)
+    """)
+    con.execute(f"CREATE OR REPLACE VIEW joined_df AS {kueri}")
+    con.execute(f"""
+        CREATE OR REPLACE TABLE p3 AS
+        WITH skor AS (
+            SELECT incoming_row_id AS id, nik_master,
+                   CASE WHEN nik_master IS NULL THEN 0.0 ELSE {sql_skor(grade)} END AS skor,
+                   CASE WHEN nik_master IS NULL THEN 0 ELSE {sql_missing(grade)} END
+                       AS missing_count
+            FROM joined_df
+        ),
+        agg AS (
+            SELECT id,
+                   arg_min({{'nik': nik_master, 'skor': skor, 'miss': missing_count}},
+                           {{'a': -skor, 'b': nik_master}}, 2) AS top,
+                   count(nik_master) AS n_kandidat
+            FROM skor GROUP BY id
+        ),
+        s AS (
+            SELECT id, n_kandidat,
+                   top[1].nik AS nik, top[1].skor AS skor, top[1].miss AS missing_count,
+                   (len(top) = 2 AND top[2].nik IS NOT NULL
+                    AND top[1].nik <> top[2].nik
+                    AND top[1].skor - top[2].skor <= {EPS_KONFLIK}) AS seri
+            FROM agg
+        )
+        SELECT s.id, s.n_kandidat, s.nik, s.skor, s.seri,
+               CASE WHEN s.nik IS NULL THEN 3 ELSE {SQL_KLASIFIKASI} END AS kelas
+        FROM s CROSS JOIN ({_sql_aturan(aturan)}) r
+    """)
+
+
+def gabung(con) -> None:
+    """Satu baris keputusan untuk SETIAP baris incoming — tidak lebih, tidak kurang."""
+    con.execute("""
+        CREATE OR REPLACE TABLE keputusan AS
+        SELECT id, nik AS master_nik, 100.0 AS skor,
+               CASE WHEN n_kandidat > 1 THEN 'CONFLICT' ELSE 'AUTO' END AS status,
+               'PASS1_NIK_NAMA' AS method, n_kandidat > 1 AS rank_conflict,
+               n_kandidat, FALSE AS nik_milik_lain
+        FROM p1
+        UNION ALL
+        SELECT id, nik, 100.0,
+               CASE WHEN n_kandidat > 1 THEN 'CONFLICT'
+                    WHEN nik_milik_lain THEN 'REVIEW' ELSE 'AUTO' END,
+               'PASS2_NAMA_TGL_IBU', n_kandidat > 1, n_kandidat, nik_milik_lain
+        FROM p2
+        UNION ALL
+        SELECT id, nik, round(skor, 2),
+               CASE WHEN nik IS NULL OR kelas = 3 THEN 'UNMATCH'
+                    WHEN seri THEN 'CONFLICT'
+                    WHEN kelas = 1 THEN 'AUTO' ELSE 'REVIEW' END,
+               'SCORING', seri, n_kandidat, FALSE
+        FROM p3
+        UNION ALL
+        -- Jaring pengaman: query grade yang memakai INNER JOIN tidak memancarkan
+        -- baris tanpa kandidat sama sekali. Tanpa ini baris itu hilang dari
+        -- hasil, dan portal tidak pernah tahu ia pernah ada.
+        SELECT i.id, NULL, 0.0, 'UNMATCH', 'SCORING', FALSE, 0, FALSE
+        FROM incoming_df i WHERE i.id NOT IN (SELECT id FROM p3)
+    """)
+
+
+# ── Keluaran ────────────────────────────────────────────────────────────────
+
+def _sql_tgl(kol_date: str, kol_mentah: str) -> str:
+    return (f"COALESCE(strftime(CAST({kol_date} AS DATE), '%Y-%m-%d'), "
+            f"CAST({kol_mentah} AS VARCHAR))")
+
+
+def sql_pola() -> str:
+    """
+    Pola review (spesifikasi §4.1 `pattern_group`), dari pemenang vs incoming.
+
+    Alias yang dirujuk: `k` (keputusan), `i` (incoming), `m` (master pemenang).
+    Urutannya prioritas — pola yang lebih spesifik dan lebih berbahaya lebih
+    dulu: NIK yang menunjuk orang lain mengalahkan sekadar salah eja.
+    """
+    return f"""
+        CASE
+            WHEN k.nik_milik_lain THEN 'NIK_CONFLICT'
+            WHEN i.nik = m.nik
+                 AND j(i.nama_clean, m.nama_master_clean) < {AMBANG_NAMA_BEDA_TOTAL}
+                THEN 'NIK_CONFLICT'
+            WHEN i.nama_clean <> m.nama_master_clean
+                 AND {sql_bersih('i.nama')} = {sql_bersih('m.nama_lengkap')}
+                THEN 'TITLE_DEGREE'
+            WHEN i.tanggal_lahir_clean IS NOT NULL
+                 AND m.tanggal_lahir_master_clean IS NOT NULL
+                 AND CAST(i.tanggal_lahir_clean AS DATE) <> m.tanggal_lahir_master_clean
+                 AND day(i.tanggal_lahir_clean) = month(m.tanggal_lahir_master_clean)
+                 AND month(i.tanggal_lahir_clean) = day(m.tanggal_lahir_master_clean)
+                THEN 'SWAPPED_DOB'
+            WHEN i.nama_clean <> m.nama_master_clean
+                 AND j(i.nama_clean, m.nama_master_clean) >= {AMBANG_SALAH_EJA}
+                THEN 'SPELLING_NAME'
+            ELSE 'GENERAL_REVIEW'
+        END"""
+
+
+def susun_hasil(con, job: dict) -> None:
+    """
+    Tabel 18 kolom persis spesifikasi §4.1.
+
+    Atribut master pemenang diambil lewat semi-join pada NIK pemenang saja —
+    satu pemindaian master dengan daftar NIK kecil sebagai filter, bukan join
+    penuh.
+    """
+    pola = sql_pola()
+    con.execute(f"""
+        CREATE OR REPLACE TABLE hasil AS
+        WITH m AS (
+            -- DISTINCT ON: master bisa memuat NIK yang sama dua kali. Tanpa ini
+            -- baris incoming itu berlipat di hasil, dan id_incoming tidak lagi
+            -- menunjuk tepat satu baris.
+            --
+            -- Dibaca dari parquet mentahnya, bukan dari view `master_df`: view
+            -- itu hanya membawa `provinsi` dalam bentuk bersih (huruf kecil),
+            -- sedangkan snapshot adalah "data asli" (spesifikasi §4.1).
+            SELECT DISTINCT ON (nik) {SQL_VIEW_MASTER}, provinsi AS provinsi_asli
+            FROM read_parquet('s3://{job['s3_bucket']}/{job['master_key']}')
+            WHERE nik IN (SELECT master_nik FROM keputusan WHERE master_nik IS NOT NULL)
+        )
+        SELECT
+            -- UUIDv7, bukan v4. Keduanya UUID yang sah (spesifikasi hanya
+            -- menuntut "UUID unik per baris"), tapi v4 acak membuat setiap
+            -- sisipan mendarat di tempat acak dalam indeks primary key portal.
+            -- v7 berurutan waktu, jadi sisipan menumpuk di ujung indeks.
+            -- Terukur ke tabel portal tiruan (PK + 2 indeks + FK), 200.020
+            -- baris: v4 21,2 detik, v7 15,7 detik. Selisihnya MEMBESAR seiring
+            -- tabel tumbuh, karena indeks v4 makin sulit muat di memori.
+            CAST(uuidv7() AS VARCHAR)         AS id,
+            {q(job['file_id'])}               AS csv_file_id,
+            {q(job['master_file_id'])}        AS master_file_id,
+            {q(job['job_id'])}                AS job_id,
+            k.id                              AS id_incoming,
+            k.master_nik,
+            CAST(k.skor AS DOUBLE)            AS score,
+            k.status,
+            k.method,
+            k.rank_conflict,
+            CASE WHEN k.status IN ('REVIEW', 'CONFLICT') THEN {pola} END AS pattern_group,
+            CAST(NULL AS VARCHAR)             AS reasoning,
+            CAST(json_object(
+                'nama', i.nama, 'nik', i.nik,
+                'tanggal_lahir', {_sql_tgl('i.tanggal_lahir_clean', 'i.tanggal_lahir')},
+                'jenis_kelamin', i.jenis_kelamin, 'nama_ibu', i.nama_ibu,
+                'tempat_lahir', i.tempat_lahir, 'provinsi', i.provinsi
+            ) AS VARCHAR)                     AS incoming_snapshot,
+            CASE WHEN k.master_nik IS NULL THEN NULL ELSE CAST(json_object(
+                'nama_lengkap', m.nama_lengkap, 'nik', m.nik,
+                'tanggal_lahir', {_sql_tgl('m.tanggal_lahir_master_clean', 'm.tanggal_lahir')},
+                'jenis_kelamin', m.jenis_kelamin, 'nama_ibu', m.nama_ibu,
+                'tempat_lahir', m.tempat_lahir, 'provinsi', m.provinsi_asli
+            ) AS VARCHAR) END                 AS master_snapshot,
+            {q(job['actor'])}                 AS created_by,
+            {q(job['actor'])}                 AS updated_by,
+            CAST(now() AS TIMESTAMP)          AS created_at,
+            CAST(now() AS TIMESTAMP)          AS updated_at
+        FROM keputusan k
+        JOIN incoming_semua i ON i.id = k.id
+        LEFT JOIN m ON m.nik = k.master_nik
+    """)
+
+
+def metrik(con) -> dict:
+    r = con.execute("""
+        SELECT count(*),
+               sum(n_kandidat),
+               count(*) FILTER (WHERE method = 'PASS1_NIK_NAMA'),
+               count(*) FILTER (WHERE method = 'PASS2_NAMA_TGL_IBU'),
+               count(*) FILTER (WHERE method = 'SCORING'),
+               count(*) FILTER (WHERE status = 'AUTO'),
+               count(*) FILTER (WHERE status = 'REVIEW'),
+               count(*) FILTER (WHERE status = 'UNMATCH'),
+               count(*) FILTER (WHERE status = 'CONFLICT')
+        FROM keputusan""").fetchone()
+    total = int(r[0])
+    kandidat = int(r[1] or 0)
+    return {
+        "totalIncoming": total,
+        "totalCandidates": kandidat,
+        "avgCandidatesPerRow": round(kandidat / total, 2) if total else 0.0,
+        "pass1Count": int(r[2]), "pass2Count": int(r[3]), "scoringCount": int(r[4]),
+        "autoCount": int(r[5]), "reviewCount": int(r[6]),
+        "unmatchCount": int(r[7]), "conflictCount": int(r[8]),
+    }
+
+
+def unggah_parquet(con, job: dict) -> str:
+    kunci = f"matching-results/{job['job_id']}/result.parquet"
+    con.execute(f"""COPY hasil TO 's3://{job['s3_bucket']}/{kunci}'
+                    (FORMAT parquet, COMPRESSION zstd)""")
+    return kunci
+
+
+def suntik(con, job: dict, kunci: str, m: dict, durasi: dict, rss_mb: int) -> int:
+    """
+    DELETE hasil lama, INSERT dari parquet, UPDATE job — dalam SATU transaksi.
+
+    Contoh di spesifikasi §5.1 menjalankan ketiganya sebagai perintah terpisah.
+    Kalau proses mati di antara DELETE dan INSERT, portal tertinggal TANPA hasil
+    untuk berkas itu, padahal job-nya belum pernah dinyatakan gagal. Di sini
+    ketiganya satu transaksi — sudah diuji: INSERT yang gagal membatalkan
+    DELETE-nya, dan baris lama tetap utuh.
+
+    Semua nilai lewat `q()`, BUKAN ditempel mentah seperti contoh di
+    spesifikasi. `actor` adalah email operator yang dikirim portal; menempelnya
+    langsung ke SQL berarti injeksi SQL ke database portal.
+
+    INSERT membaca dari parquet di S3, bukan dari tabel di memori — persis
+    alur di spesifikasi, dan sekaligus membuktikan berkas yang terunggah itu
+    utuh dan terbaca.
+    """
+    sumber = f"s3://{job['s3_bucket']}/{kunci}"
+    con.execute("BEGIN TRANSACTION")
+    try:
+        _pg(con, f"DELETE FROM syncrono_matching_result "
+                 f"WHERE csv_file_id = {q(job['file_id'])} "
+                 f"AND master_file_id = {q(job['master_file_id'])}")
+        con.execute(f"""
+            INSERT INTO portal.syncrono_matching_result (
+                id, csv_file_id, master_file_id, job_id, id_incoming, master_nik,
+                score, status, method, rank_conflict, pattern_group, reasoning,
+                incoming_snapshot, master_snapshot,
+                created_at, updated_at, created_by, updated_by)
+            SELECT id, csv_file_id, master_file_id, job_id, id_incoming, master_nik,
+                   score, status, method, rank_conflict, pattern_group, reasoning,
+                   -- Cast EKSPLISIT. Kolom portal bertipe JSONB, dan UPDATE lewat
+                   -- DuckDB menolak VARCHAR ke JSONB ("column is of type jsonb but
+                   -- expression is of type character varying") — terbukti saat
+                   -- dijalankan. INSERT kebetulan lolos tanpa cast; mengandalkan
+                   -- kebetulan itu untuk satu perintah dan tidak untuk yang lain
+                   -- hanya menunggu perilaku DuckDB berubah.
+                   CAST(incoming_snapshot AS JSON), CAST(master_snapshot AS JSON),
+                   created_at, updated_at, created_by, updated_by
+            FROM read_parquet('{sumber}')
+        """)
+        _pg(con, f"""
+            UPDATE syncrono_matching_job SET
+                status = 'COMPLETED', current_stage = 'COMPLETED',
+                completed_at = now(), last_error = NULL,
+                total_incoming = {m['totalIncoming']},
+                total_candidates = {m['totalCandidates']},
+                avg_candidates_per_row = {m['avgCandidatesPerRow']},
+                pass1_count = {m['pass1Count']}, pass2_count = {m['pass2Count']},
+                scoring_count = {m['scoringCount']},
+                auto_count = {m['autoCount']}, review_count = {m['reviewCount']},
+                unmatch_count = {m['unmatchCount']},
+                conflict_count = {m['conflictCount']},
+                result_parquet_key = {q(kunci)},
+                stage_durations = {q(durasi)}::jsonb,
+                peak_rss_mb = {rss_mb},
+                updated_at = now(), updated_by = {q(AKTOR_ENGINE)}
+            WHERE id = {q(job['job_id'])}""")
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+    return con.execute(f"""SELECT count(*) FROM portal.syncrono_matching_result
+                           WHERE job_id = {q(job['job_id'])}""").fetchone()[0]
+
+
+def kirim_callback(url: str, muatan: dict) -> str:
+    """
+    POST ke `callbackUrl` (spesifikasi §7). Kembalikan keterangan hasilnya.
+
+    Kebijakan ulangnya sama dengan callback grading: 4xx selain 429 berarti
+    muatannya yang salah dan tidak diulang. Kegagalan di sini TIDAK
+    menggagalkan job — hasilnya sudah ada di tabel portal, dan portal bisa
+    membacanya langsung dari sana.
+    """
+    badan = json.dumps(muatan, ensure_ascii=False).encode()
+    header = {"Content-Type": "application/json",
+              "x-callback-source": "matching-engine"}
+    galat = None
+    for percobaan in range(1, CALLBACK_PERCOBAAN + 1):
+        try:
+            req = urllib.request.Request(url, data=badan, headers=header, method="POST")
+            with urllib.request.urlopen(req, timeout=CALLBACK_TIMEOUT) as r:
+                return f"terkirim, HTTP {r.status} (percobaan {percobaan})"
+        except urllib.error.HTTPError as e:
+            galat = f"HTTP {e.code}: {e.read().decode(errors='replace')[:200]}"
+            if 400 <= e.code < 500 and e.code != 429:
+                break
+        except Exception as e:  # noqa: BLE001 — jaringan, DNS, timeout
+            galat = f"{type(e).__name__}: {e}"
+        if percobaan < CALLBACK_PERCOBAAN:
+            time.sleep(2 ** percobaan)
+    return f"GAGAL: {galat}"
+
+
+def _rss_puncak_mb() -> int:
+    """
+    Puncak RSS PROSES ini, dalam MB.
+
+    Proses ini adalah Langflow utuh, jadi angkanya mencakup lebih dari satu job
+    ini — ia batas atas, bukan ukuran tepat. Tidak ada cara jujur memisahkan
+    memori satu thread dari prosesnya.
+    """
+    try:
+        # Diimpor di sini, bukan di kepala modul: `resource` hanya ada di Linux,
+        # dan memaksanya di tingkat modul membuat seluruh logika matching tidak
+        # bisa diimpor untuk diuji di luar container.
+        import resource
+    except ImportError:
+        return 0
+    return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024)
+
+
+# ── Rangkaian penuh ─────────────────────────────────────────────────────────
+
+def jalankan(job: dict, lapor=lambda t: None) -> dict:
+    """Satu job utuh, dari payload sampai callback. Galat dilempar ke pemanggil."""
+    ms = {}
+    awal = time.perf_counter()
+
+    def jam(nama, mulai):
+        ms[nama] = int((time.perf_counter() - mulai) * 1000)
+
+    t = time.perf_counter()
+    con = buka_koneksi()
+    try:
+        pasang_endpoint_s3(con, job, "[M]")
+        _pasang_portal(con)
+
+        status = _status_portal(con, job["job_id"])
+        if status is None:
+            raise ValueError(
+                f"Job '{job['job_id']}' tidak ada di syncrono_matching_job. Portal "
+                f"membuat baris job-nya SEBELUM dispatch (spesifikasi §1 langkah 1); "
+                f"tanpa baris itu hasilnya tidak punya tempat.")
+        if status == "CANCELLED":
+            raise Dibatalkan(job["job_id"])
+
+        _tandai(con, job, status="IN_PROGRESS", current_stage="BLOCKING",
+                started_at="now()")
+        grade = cari_grade(con, job)
+        aturan, kueri = _konfigurasi(con, grade)
+        n = muat_masukan(con, job)
+        print(f"[M] {job['job_id']} {n:,} baris incoming, grade {grade}, "
+              f"preset {job['rule_preset'] or '-'}")
+        jam("prepMs", t)
+
+        _cek_batal(con, job)
+        _tandai(con, job, current_stage="DETERMINISTIC")
+        lapor("M1 pass 1")
+        t = time.perf_counter()
+        pass1(con)
+        jam("pass1Ms", t)
+
+        lapor("M2 pass 2")
+        t = time.perf_counter()
+        pass2(con)
+        jam("pass2Ms", t)
+
+        _cek_batal(con, job)
+        _tandai(con, job, current_stage="SCORING")
+        lapor("M3 pass 3")
+        t = time.perf_counter()
+        pass3(con, grade, aturan, kueri)
+        # Blocking dan scoring Pass 3 berjalan MENYATU: kandidat mengalir dari
+        # join langsung ke agregasi tanpa pernah dimaterialkan (lihat N5). Tidak
+        # ada titik untuk mengukur blocking sendirian tanpa menjalankannya dua
+        # kali — jadi seluruh waktunya dilaporkan di scoringMs, dan blockingMs 0.
+        ms["blockingMs"] = 0
+        jam("scoringMs", t)
+
+        _tandai(con, job, current_stage="CLASSIFYING")
+        lapor("M4 klasifikasi")
+        t = time.perf_counter()
+        gabung(con)
+        susun_hasil(con, job)
+        n_hasil = con.execute("SELECT count(*) FROM hasil").fetchone()[0]
+        if n_hasil != n:
+            raise RuntimeError(
+                f"Hasil memuat {n_hasil:,} baris untuk {n:,} baris incoming. "
+                f"Setiap baris incoming harus punya tepat satu baris hasil.")
+        m = metrik(con)
+        jam("classificationMs", t)
+
+        _cek_batal(con, job)
+        lapor("M5 unggah parquet")
+        t = time.perf_counter()
+        kunci = unggah_parquet(con, job)
+        jam("parquetUploadMs", t)
+
+        lapor("M6 suntik ke portal")
+        t = time.perf_counter()
+        ms["totalMs"] = int((time.perf_counter() - awal) * 1000)
+        rss = _rss_puncak_mb()
+        tersuntik = suntik(con, job, kunci, m, ms, rss)
+        jam("duckdbInjectMs", t)
+        ms["totalMs"] = int((time.perf_counter() - awal) * 1000)
+        # stage_durations di tabel portal ditulis DI DALAM transaksi, sebelum
+        # durasi penyuntikan itu sendiri diketahui. Angka lengkapnya disusulkan.
+        _pg(con, f"UPDATE syncrono_matching_job SET stage_durations = "
+                 f"{q(ms)}::jsonb WHERE id = {q(job['job_id'])}")
+    finally:
+        con.close()
+
+    m["stageDurations"] = ms
+    m["peakRssMb"] = rss
+    muatan = {
+        "jobId": job["job_id"], "fileId": job["file_id"],
+        "masterFileId": job["master_file_id"], "status": "COMPLETED",
+        "resultParquetKey": kunci, "metrics": m,
+        "message": "Pencocokan data selesai, Parquet terunggah ke S3 dan berhasil "
+                   "diinjeksi via DuckDB.",
+    }
+    print(f"[M] {job['job_id']} SELESAI: {tersuntik:,} baris tersuntik — "
+          f"AUTO {m['autoCount']:,} REVIEW {m['reviewCount']:,} "
+          f"UNMATCH {m['unmatchCount']:,} CONFLICT {m['conflictCount']:,} "
+          f"({ms['totalMs']:,} ms)")
+    print(f"[M] {job['job_id']} callback {kirim_callback(job['callback_url'], muatan)}")
+    return muatan
+
+
+def tutup_gagal(job: dict, galat: str) -> None:
+    """
+    Job gagal: tandai FAILED di portal, lalu callback FAILED (§8.1).
+
+    Koneksinya BARU, bukan milik job yang gagal — koneksi itu mungkin justru
+    yang rusak. Kalau menandai pun gagal, callback tetap dicoba: portal lebih
+    baik tahu dari salah satu jalur daripada tidak tahu sama sekali.
+    """
+    try:
+        con = buka_koneksi()
+        try:
+            _pasang_portal(con)
+            _tandai(con, job, status="FAILED", current_stage="FAILED",
+                    failed_at="now()", last_error=galat[:2000])
+        finally:
+            con.close()
+    except Exception as e:  # noqa: BLE001
+        print(f"[M] {job.get('job_id')} status FAILED pun gagal ditulis: {e}")
+
+    if job.get("callback_url"):
+        hasil = kirim_callback(job["callback_url"], {
+            "jobId": job.get("job_id"), "fileId": job.get("file_id"),
+            "masterFileId": job.get("master_file_id"), "status": "FAILED",
+            "error": galat[:2000], "message": "Proses matching gagal dieksekusi.",
+        })
+        print(f"[M] {job.get('job_id')} callback FAILED {hasil}")

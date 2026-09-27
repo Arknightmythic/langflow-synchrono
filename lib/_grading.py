@@ -214,44 +214,7 @@ def buka(job: dict) -> dict:
     kunci = _pilih_sumber(job, tujuan)
 
     con = buka_koneksi()
-
-    endpoint = str(job.get("s3_endpoint") or "").strip()
-    if endpoint and _endpoint_mustahil(endpoint):
-        # `localhost` dari dalam container ini berarti CONTAINER INI SENDIRI —
-        # dan SeaweedFS tidak pernah berjalan di sini. Jadi nilai seperti itu
-        # tidak mungkin benar, apa pun maksud pengirimnya: yang ia maksud adalah
-        # localhost MESINNYA, yang tidak punya arti di sisi kami.
-        #
-        # Diabaikan, bukan diikuti sampai gagal. Sebelumnya ini menggagalkan
-        # setiap job dengan "Could not connect to server ... localhost:8333",
-        # padahal env engine sudah menunjuk SeaweedFS yang benar.
-        print(f"[G1] s3Endpoint '{endpoint}' DIABAIKAN — 'localhost' di dalam "
-              f"container menunjuk container ini sendiri. Memakai S3_ENDPOINT "
-              f"dari environment.")
-        endpoint = ""
-
-    if endpoint and not _endpoint_terjangkau(endpoint):
-        # Alamat yang benar bagi portal belum tentu benar bagi engine: keduanya
-        # melihat penyimpanan yang sama dari jaringan yang berbeda. Daripada
-        # menggantung sampai DuckDB menyerah dan menyumbat antrean, jatuh
-        # kembali ke alamat yang memang sudah terbukti bisa dijangkau.
-        print(f"[G1] s3Endpoint '{endpoint}' TIDAK TERJANGKAU dari container "
-              f"ini dalam {BATAS_PERIKSA_ENDPOINT:.0f} detik. Memakai "
-              f"S3_ENDPOINT dari environment.")
-        endpoint = ""
-
-    if endpoint:
-        # DuckDB menginginkan host:port tanpa skema.
-        bersih = re.sub(r"^https?://", "", endpoint).rstrip("/")
-        pakai_ssl = endpoint.lower().startswith("https://")
-        con.execute(f"""
-            CREATE OR REPLACE SECRET seaweed (
-                TYPE s3, KEY_ID '{job.get("s3_key") or _kunci_env()[0]}',
-                SECRET '{job.get("s3_secret") or _kunci_env()[1]}',
-                ENDPOINT '{bersih}', URL_STYLE 'path',
-                USE_SSL {str(pakai_ssl).lower()}
-            )
-        """)
+    pasang_endpoint_s3(con, job, "[G1]")
 
     sumber = f"s3://{bucket}/{kunci}"
 
@@ -277,6 +240,58 @@ def buka(job: dict) -> dict:
 def _kunci_env() -> tuple[str, str]:
     from _shared import S3_KEY, S3_SECRET
     return S3_KEY, S3_SECRET
+
+
+def pasang_endpoint_s3(con, job: dict, tag: str) -> None:
+    """
+    Pakai `s3Endpoint` dari muatan portal HANYA kalau memang bisa dipakai.
+
+    Dipakai grading DAN matching. Keduanya menerima `s3Endpoint` dari portal,
+    dan keduanya pernah — atau akan — tersandung jebakan yang sama; logikanya
+    ditaruh di satu tempat supaya perbaikan di satu jalur tidak tertinggal di
+    jalur lainnya. Contoh di spesifikasi integrasi matching sendiri masih
+    `http://localhost:8333`.
+
+    Tanpa `s3Endpoint` yang layak, secret S3 bawaan dari `buka_koneksi()` —
+    yang menunjuk S3_ENDPOINT environment — tetap berlaku.
+    """
+    endpoint = str(job.get("s3_endpoint") or "").strip()
+    if endpoint and _endpoint_mustahil(endpoint):
+        # `localhost` dari dalam container ini berarti CONTAINER INI SENDIRI —
+        # dan SeaweedFS tidak pernah berjalan di sini. Jadi nilai seperti itu
+        # tidak mungkin benar, apa pun maksud pengirimnya: yang ia maksud adalah
+        # localhost MESINNYA, yang tidak punya arti di sisi kami.
+        #
+        # Diabaikan, bukan diikuti sampai gagal. Sebelumnya ini menggagalkan
+        # setiap job dengan "Could not connect to server ... localhost:8333",
+        # padahal env engine sudah menunjuk SeaweedFS yang benar.
+        print(f"{tag} s3Endpoint '{endpoint}' DIABAIKAN — 'localhost' di dalam "
+              f"container menunjuk container ini sendiri. Memakai S3_ENDPOINT "
+              f"dari environment.")
+        return
+
+    if endpoint and not _endpoint_terjangkau(endpoint):
+        # Alamat yang benar bagi portal belum tentu benar bagi engine: keduanya
+        # melihat penyimpanan yang sama dari jaringan yang berbeda. Daripada
+        # menggantung sampai DuckDB menyerah dan menyumbat antrean, jatuh
+        # kembali ke alamat yang memang sudah terbukti bisa dijangkau.
+        print(f"{tag} s3Endpoint '{endpoint}' TIDAK TERJANGKAU dari container "
+              f"ini dalam {BATAS_PERIKSA_ENDPOINT:.0f} detik. Memakai "
+              f"S3_ENDPOINT dari environment.")
+        return
+
+    if endpoint:
+        # DuckDB menginginkan host:port tanpa skema.
+        bersih = re.sub(r"^https?://", "", endpoint).rstrip("/")
+        pakai_ssl = endpoint.lower().startswith("https://")
+        con.execute(f"""
+            CREATE OR REPLACE SECRET seaweed (
+                TYPE s3, KEY_ID '{job.get("s3_key") or _kunci_env()[0]}',
+                SECRET '{job.get("s3_secret") or _kunci_env()[1]}',
+                ENDPOINT '{bersih}', URL_STYLE 'path',
+                USE_SSL {str(pakai_ssl).lower()}
+            )
+        """)
 
 
 # Berkas yang dibaca sebagai teks berpemisah, bukan parquet.
