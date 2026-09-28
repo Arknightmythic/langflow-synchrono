@@ -97,6 +97,7 @@ Yang **sudah** terbukti:
 | **`uv` (Astral)** | *Package & Project Manager* modern, mengelola `pyproject.toml` dan `uv.lock` |
 | **Docker** | Menjalankan kontainer SeaweedFS (S3) dan Langflow |
 | **PostgreSQL** | `localhost:5432`, database `synchrono` |
+| **Redis** | `localhost:6379`, message broker distributed task queue Celery |
 | **Ollama** | Penyedia model LLM lokal on-premise (`gemma3:12b`) |
 
 ### Instalasi & Menjalankan dengan `uv` (Direkomendasikan)
@@ -111,7 +112,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh          # Linux / WSL / macOS
 # 2. Sinkronkan seluruh dependency sesuai uv.lock:
 uv sync
 
-# 3. Jalankan test suite otomatis (13/13 tests passed):
+# 3. Jalankan test suite otomatis (15/15 tests passed):
 uv run pytest tests/ -v
 
 # 4. Jalankan AI Reasoning FastAPI microservice:
