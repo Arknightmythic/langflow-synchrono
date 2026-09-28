@@ -34,7 +34,63 @@ Synchrono AI Reasoning memecahkan ketiga masalah tersebut melalui pendekatan ars
 
 ## 2. High-Level Architecture & End-to-End Dataflow
 
-### 2.1 Arsitektur Komponen
+### 2.1 Diagram Arsitektur Pipeline End-to-End
+
+Berikut adalah alur lengkap pemrosesan data anomali manual review dari pembacaan PostgreSQL hingga penyimpanan narasi akhir:
+
+```mermaid
+flowchart TD
+    subgraph S1 ["1. READ FROM POSTGRESQL"]
+        direction TB
+        MM[("PostgreSQL:<br/>manual_matches")] -->|"Ambil data institusi:<br/>nama, tgl lahir, dll"| DDB_P["DuckDB Engine<br/>(pending_records)"]
+        INST[("PostgreSQL:<br/>institution")] -->|"Ambil nik_master kandidat<br/>(hasil matching)"| DDB_P
+    end
+
+    subgraph S2 ["2. READ MASTER FROM S3"]
+        direction TB
+        S3_MST[("SeaweedFS S3:<br/>Master 300JT Parquet")]
+        DDB_P -.->|"Pushdown Filter:<br/>WHERE nik IN (nik_master)"| S3_MST
+        S3_MST -->|"HTTP Range Request<br/>(Hanya byte 6 kolom orang terkait)"| DDB_M["DuckDB Engine<br/>(target_master)"]
+    end
+
+    subgraph S3 ["3. DUCKDB VECTORIZED COMPARISON"]
+        direction TB
+        DDB_P & DDB_M --> DDB_JOIN["raw_joined (LEFT JOIN)"]
+        DDB_JOIN --> DDB_NORM["Normalisasi Format<br/>(Gender, Tanggal ISO 10-char)"]
+        DDB_NORM --> DDB_VERD["Evaluasi 5 Kolom SQL:<br/>v_nama, v_tempat, v_tanggal,<br/>v_gender, v_ibu"]
+        DDB_VERD --> DDB_HASH["Ekstraksi Pola & MD5 Hash:<br/>pattern_signature & pattern_hash"]
+    end
+
+    subgraph S4 ["4. AI REASONING & PATTERN CACHE"]
+        direction TB
+        DDB_HASH --> PG_CHECK{"Cek Status di<br/>reasoning_patterns"}
+        PG_CHECK -->|"Status: COMPLETED<br/>(99.9% Baris)"| CACHE_HIT["Ambil Template dari DB<br/>(0.001s, 0 LLM Call)"]
+        PG_CHECK -->|"Status: Belum Ada<br/>(Atomic Claim Lock)"| LLM_CALL["Kirim 1 Sampel ke<br/>Ollama Gemma 3:12B"]
+        LLM_CALL --> TPL_GEN["Generate Template Kalimat<br/>& Simpan ke DB (COMPLETED)"]
+        PG_CHECK -->|"Status: RESOLVING<br/>(Sedang diproses worker lain)"| AWAIT["Active Wait (300ms)<br/>hingga COMPLETED"]
+        AWAIT --> CACHE_HIT
+    end
+
+    subgraph S5 ["5. BULK HYDRATION & WRITE TO POSTGRESQL"]
+        direction TB
+        TPL_GEN & CACHE_HIT --> DDB_HYD["DuckDB Vectorized SQL:<br/>REPLACE placeholder {incoming} & {master}<br/>dengan nilai riil tiap baris"]
+        DDB_HYD -->|"Vectorized Bulk UPDATE<br/>1 query untuk 1.000 baris"| PG_SAVE[("PostgreSQL:<br/>manual_matches<br/>(ai_reasoning = narasi,<br/>reasoning_status = 'COMPLETED')")]
+    end
+
+    classDef db fill:#059669,stroke:#047857,stroke-width:2px,color:#ffffff;
+    classDef engine fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#ffffff;
+    classDef ai fill:#7c3aed,stroke:#6d28d9,stroke-width:2px,color:#ffffff;
+    classDef process fill:#d97706,stroke:#b45309,stroke-width:2px,color:#ffffff;
+
+    class MM,INST,S3_MST,PG_SAVE db;
+    class DDB_P,DDB_M,DDB_JOIN,DDB_NORM,DDB_VERD,DDB_HASH,DDB_HYD engine;
+    class LLM_CALL,TPL_GEN ai;
+    class PG_CHECK,CACHE_HIT,AWAIT process;
+```
+
+---
+
+### 2.2 Arsitektur Komponen Event-Driven (Celery & Redis)
 
 ```
                   ┌──────────────────────────────────────────────┐
@@ -43,94 +99,92 @@ Synchrono AI Reasoning memecahkan ketiga masalah tersebut melalui pendekatan ars
                                   │
                  HTTP REST API    │  (atau Direct Function Call)
                                   ▼
-      ┌──────────────────────────────────────────────────────────────┐
-      │               FastAPI Layer (`reasoning.router`)             │
-      │   - POST /v1/reasoning/trigger/{file_id:path}                │
-      │   - POST /v1/reasoning/dispatch                              │
-      │   - GET  /v1/reasoning/status/{file_id:path}                 │
-      │   - POST /v1/reasoning/clear-cache                           │
-      └──────────────────────┬───────────────────────▲───────────────┘
-                             │                       │
-                       Enqueues Job             Polls Status
-                             ▼                       │
-      ┌──────────────────────────────────────────────┴───────────────┐
-      │        PostgreSQL State Machine (`reasoning_jobs`)           │
-      │   - Antrean Job Asinkron                                     │
-      │   - Heartbeat & Stale Job Auto-Recovery                      │
-      │   - Metadata & Hasil Eksekusi                                │
-      └──────────────────────┬───────────────────────────────────────┘
-                             │
-                     Worker Dequeue
-                             ▼
-      ┌──────────────────────────────────────────────────────────────┐
-      │             Background Worker (`reasoning.worker`)           │
-      │   - Semaphore Concurrency Limiter (REASONING_MAX_CONCURRENT) │
-      └──────────────────────┬───────────────────────────────────────┘
-                             │
-                             ▼
-      ┌──────────────────────────────────────────────────────────────┐
-      │          Core Engine (`reasoning.core.execute_reasoning`)    │
-      │                                                              │
-      │  [Tahap 1] Ambil review kandidat dari `manual_matches`       │
-      │  [Tahap 2] Two-Phase Semi-Join ke Parquet 100M / S3          │
-      │  [Tahap 3] Ekstraksi Vektor Perbedaan (5 Kolom Utama)        │
-      │  [Tahap 4] Pattern Signature Hashing (SHA-256)               │
-      │  [Tahap 5] Pattern Cache Lookup (`reasoning_patterns`)       │
-      │            ├── HIT  ─► Pakai template yang sudah ada         │
-      │            └── MISS ─► Panggil Ollama Gemma 3:12B            │
-      │  [Tahap 6] Vectorized SQL Batch Hydration & Template Replace │
-      │  [Tahap 7] Batch Persist UPDATE ke `manual_matches.reason`   │
-      └──────────────────────────────────────────────────────────────┘
+       ┌──────────────────────────────────────────────────────────────┐
+       │               FastAPI Layer (`reasoning.router`)             │
+       │   - POST /v1/reasoning/trigger/{file_id:path}                │
+       │   - POST /v1/reasoning/dispatch                              │
+       │   - GET  /v1/reasoning/status/{file_id:path}                 │
+       │   - POST /v1/reasoning/clear-cache                           │
+       └──────────────────────┬───────────────────────▲───────────────┘
+                              │                       │
+                        Enqueues Job             Polls Status
+                              ▼                       │
+       ┌──────────────────────────────────────────────┴───────────────┐
+       │                 Message Broker (Redis Queue)                 │
+       │   - Distributed Task Queue (`reasoning_queue`)               │
+       │   - Prefetch Multiplier = 1 & Late Acks                      │
+       └──────────────────────┬───────────────────────────────────────┘
+                              │
+                      Worker Dequeue
+                              ▼
+       ┌──────────────────────────────────────────────────────────────┐
+       │               Celery Worker Pool (`reasoning.tasks`)         │
+       │   - Concurrency N Worker                                     │
+       │   - Automatic Failover ke In-Process Thread jika Redis mati  │
+       └──────────────────────┬───────────────────────────────────────┘
+                              │
+                              ▼
+       ┌──────────────────────────────────────────────────────────────┐
+       │          Core Engine (`reasoning.core.execute_reasoning`)    │
+       │                                                              │
+       │  [Tahap 1] Ambil review kandidat dari `manual_matches` &     │
+       │            `institution` di PostgreSQL                       │
+       │  [Tahap 2] Two-Phase Semi-Join ke Parquet 300M / S3          │
+       │  [Tahap 3] Ekstraksi Vektor Perbedaan (5 Kolom Utama)        │
+       │  [Tahap 4] Pattern Signature Hashing (MD5)                   │
+       │  [Tahap 5] Distributed Pattern Lock (`reasoning_patterns`)   │
+       │            ├── HIT  ─► Pakai template yang sudah ada         │
+       │            ├── WAIT ─► Active Await (300ms) jika 'RESOLVING' │
+       │            └── MISS ─► Claim 'RESOLVING' & Panggil Gemma 3   │
+       │  [Tahap 6] Vectorized SQL Batch Hydration & Template Replace │
+       │  [Tahap 7] Vectorized Bulk UPDATE ke `manual_matches`        │
+       └──────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 Sequence Diagram Alur End-to-End
+---
+
+### 2.3 Sequence Diagram Alur End-to-End Terpadu
+
+Diagram berikut memperlihatkan urutan komunikasi antar-service dari saat job di-trigger hingga hasil narasi tersimpan:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Client as Klien / UI Synchrono
-    participant API as FastAPI Router
-    participant DB as PostgreSQL (Jobs & Patterns)
-    participant Worker as Background Worker
-    participant Duck as DuckDB Engine
-    participant S3 as SeaweedFS (Parquet 100M)
+    actor Client as FastAPI / Celery Worker
+    participant PG as PostgreSQL
+    participant DuckDB as DuckDB In-Memory Engine
+    participant S3 as SeaweedFS (Parquet 300JT)
     participant LLM as Ollama (Gemma 3:12B)
 
-    Client->>API: POST /v1/reasoning/trigger/{file_id}
-    API->>DB: INSERT INTO reasoning_jobs (status='QUEUED')
-    API-->>Client: 202 Accepted (jobId, fileId, status='QUEUED')
+    Note over Client, PG: 1. BACA DATA PENDING DARI POSTGRESQL
+    Client->>PG: SELECT id_incoming, nama, ..., nik_master FROM manual_matches JOIN institution
+    PG-->>DuckDB: Mengembalikan data pending untuk file_id aktif (misal 1.000 baris)
 
-    API->>Worker: dispatch_worker(job)
-    Worker->>DB: UPDATE reasoning_jobs SET status='PROCESSING'
+    Note over DuckDB, S3: 2. BACA MASTER SECARA SPESIFIK DARI S3
+    DuckDB->>S3: HTTP Range GET: Ambil footer metadata Parquet (~2 MB)
+    DuckDB->>S3: HTTP Range GET: Ambil potongan baris 1.000 nik_master target (~50 MB)
+    S3-->>DuckDB: Mengembalikan data master 1.000 orang tersebut langsung ke RAM
 
-    Worker->>Duck: execute_reasoning(job)
-    Duck->>DB: Baca manual_matches WHERE file_id = :file_id
-    Duck->>S3: Two-Phase Semi-Join read_parquet(s3://...) ON nik
-    Note over Duck,S3: Zero-OOM: Filter pushdown hanya membaca kolom yang dibutuhkan
+    Note over DuckDB: 3. BANDINGKAN 5 KOLOM SECARA VEKTOR (SQL)
+    DuckDB->>DuckDB: LEFT JOIN incoming x master
+    DuckDB->>DuckDB: Bandingkan nama, tempat lahir, tgl lahir, gender, nama ibu
+    DuckDB->>DuckDB: Buat pattern_signature & MD5 pattern_hash
 
-    Duck->>Duck: Hitung selisih 5 kolom & ekstrak signature hash
-    Duck->>DB: Lookup signature di reasoning_patterns
-
-    alt Signature Belum Ada di Cache (MISS)
-        Duck->>LLM: Prompt Gemma 3:12B dengan representative row
-        LLM-->>Duck: Template berparameter ({nama_incoming}, dll.)
-        Duck->>DB: INSERT INTO reasoning_patterns (signature, template)
-    else Signature Sudah Ada di Cache (HIT)
-        DB-->>Duck: Gunakan template yang tersimpan
+    Note over DuckDB, LLM: 4. RESOLUSI POLA & PENGUNCIAN ATOMIK
+    DuckDB->>PG: Cek apakah pattern_hash sudah ada di reasoning_patterns?
+    alt Pola Sudah Ada di Database (Cache Hit)
+        PG-->>DuckDB: Return reason_template (0 detik, tanpa panggil LLM)
+    else Pola Baru (Hanya 1x per pola unik)
+        DuckDB->>PG: INSERT ... ON CONFLICT DO UPDATE status='RESOLVING' (Claim Lock)
+        DuckDB->>LLM: Kirim 1 sampel pasangan data untuk pola tersebut
+        LLM-->>DuckDB: "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap})."
+        DuckDB->>PG: UPDATE status='COMPLETED', reason_template=...
     end
 
-    Duck->>Duck: Vectorized SQL Replace ({placeholders} -> nilai baris)
-    Duck->>DB: UPDATE manual_matches SET reason = :reason, reasoning_pattern_id = :pattern_id
-    Duck-->>Worker: Summary (total_rows, cache_hits, llm_calls, duration)
-
-    Worker->>DB: UPDATE reasoning_jobs SET status='COMPLETED', result=:summary
-
-    loop Polling Status
-        Client->>API: GET /v1/reasoning/status/{file_id}
-        API->>DB: SELECT * FROM reasoning_jobs WHERE file_id = :file_id
-        DB-->>API: Job status & summary
-        API-->>Client: 200 OK (status='COMPLETED', result={...})
-    end
+    Note over DuckDB, PG: 5. BULK HYDRATION & TULIS BALIK KE POSTGRESQL
+    DuckDB->>DuckDB: Substitusi placeholder dengan nilai riil 1.000 baris (SQL REPLACE)
+    DuckDB->>PG: Bulk UPDATE manual_matches SET ai_reasoning = ..., reasoning_status = 'COMPLETED'
+    PG-->>Client: Job Selesai (HTTP 200 OK)
 ```
 
 ---
