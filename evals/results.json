@@ -1,11 +1,72 @@
 [
   {
-    "id": "qa/grade_b_cold::inc_00618",
-    "file_id": "qa/grade_b_cold",
+    "id": "qa/grade_b_warm::inc_00098",
+    "file_id": "qa/grade_b_warm",
     "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_IBU_DIFF_2f78ce30",
     "reasoning_source": "CACHE",
     "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Icha Kuswoyo vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Makassar vs Master: Lhokseumawe), date of birth is different (Institution: 1981-02-23 vs Master: 1992-12-04), and mother's name is different (Institution: Shakila Halim vs Master: Clara Natsir).",
+    "hydrated_reason": "Full name is different (Institution: Maimunah Mangunsong vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Bengkulu vs Master: Medan), date of birth is different (Institution: 1960-03-01 vs Master: 1972-02-25), and mother's name is different (Institution: Chelsea Tamba vs Master: Elisa Budiman).",
+    "field_verdicts": {
+      "v_jenis_kelamin": "SAME",
+      "v_nama_ibu": "DIFFERENT",
+      "v_nama_lengkap": "DIFFERENT",
+      "v_tanggal_lahir": "DIFFERENT",
+      "v_tempat_lahir": "DIFFERENT"
+    },
+    "incoming_values": {
+      "nama_lengkap": "Maimunah Mangunsong",
+      "tempat_lahir": "Bengkulu",
+      "tanggal_lahir": "1960-03-01",
+      "jenis_kelamin": "PEREMPUAN",
+      "nama_ibu": "Chelsea Tamba"
+    },
+    "master_values": {},
+    "verdicts": {
+      "factuality_fidelity": {
+        "criterion": "factuality_fidelity",
+        "score": "pass",
+        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
+        "metadata": {
+          "hallucinated_fields": [],
+          "missing_fields": []
+        }
+      },
+      "template_consistency": {
+        "criterion": "template_consistency",
+        "score": "pass",
+        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
+        "metadata": {
+          "found_placeholders": [
+            "{incoming.nama_lengkap}",
+            "{master.nama_lengkap}",
+            "{incoming.tempat_lahir}",
+            "{master.tempat_lahir}",
+            "{incoming.tanggal_lahir}",
+            "{master.tanggal_lahir}",
+            "{incoming.nama_ibu}",
+            "{master.nama_ibu}"
+          ]
+        }
+      },
+      "conciseness_readability": {
+        "criterion": "conciseness_readability",
+        "score": "pass",
+        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
+        "metadata": {
+          "sentence_count": 1,
+          "has_preamble": false
+        }
+      }
+    },
+    "overall_pass": true
+  },
+  {
+    "id": "qa/grade_b_warm::inc_00618",
+    "file_id": "qa/grade_b_warm",
+    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_IBU_DIFF_2f78ce30",
+    "reasoning_source": "CACHE",
+    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
+    "hydrated_reason": "Full name is different (Institution: Icha Kuswoyo vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Makassar vs Master: Medan), date of birth is different (Institution: 1981-02-23 vs Master: 1972-02-25), and mother's name is different (Institution: Shakila Halim vs Master: Elisa Budiman).",
     "field_verdicts": {
       "v_jenis_kelamin": "SAME",
       "v_nama_ibu": "DIFFERENT",
@@ -61,12 +122,12 @@
     "overall_pass": true
   },
   {
-    "id": "qa/grade_b_cold::inc_02278",
-    "file_id": "qa/grade_b_cold",
+    "id": "qa/grade_b_warm::inc_00978",
+    "file_id": "qa/grade_b_warm",
     "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
     "reasoning_source": "CACHE",
     "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Dipa Umaya Nurdiyanti vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Magelang vs Master: Lhokseumawe), date of birth is different (Institution: 1957-04-08 vs Master: 1992-12-04), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Agnes Winarsih vs Master: Clara Natsir).",
+    "hydrated_reason": "Full name is different (Institution: Karsana Kusmawati vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Surabaya vs Master: Medan), date of birth is different (Institution: 1988-11-03 vs Master: 1972-02-25), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Eka Mandala vs Master: Elisa Budiman).",
     "field_verdicts": {
       "v_jenis_kelamin": "DIFFERENT",
       "v_nama_ibu": "DIFFERENT",
@@ -75,11 +136,11 @@
       "v_tempat_lahir": "DIFFERENT"
     },
     "incoming_values": {
-      "nama_lengkap": "Dipa Umaya Nurdiyanti",
-      "tempat_lahir": "Magelang",
-      "tanggal_lahir": "1957-04-08",
+      "nama_lengkap": "Karsana Kusmawati",
+      "tempat_lahir": "Surabaya",
+      "tanggal_lahir": "1988-11-03",
       "jenis_kelamin": "LAKI-LAKI",
-      "nama_ibu": "Agnes Winarsih"
+      "nama_ibu": "Eka Mandala"
     },
     "master_values": {},
     "verdicts": {
@@ -124,12 +185,12 @@
     "overall_pass": true
   },
   {
-    "id": "qa/grade_b_cold::inc_02498",
-    "file_id": "qa/grade_b_cold",
+    "id": "qa/grade_b_warm::inc_00858",
+    "file_id": "qa/grade_b_warm",
     "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
     "reasoning_source": "CACHE",
     "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Anom Bala Thamrin vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Blitar vs Master: Lhokseumawe), date of birth is different (Institution: 1996-03-15 vs Master: 1992-12-04), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Wirda Marpaung vs Master: Clara Natsir).",
+    "hydrated_reason": "Full name is different (Institution: Wadi Nyoman Zulaika vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Manado vs Master: Medan), date of birth is different (Institution: 1995-01-28 vs Master: 1972-02-25), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Qori Mangunsong vs Master: Elisa Budiman).",
     "field_verdicts": {
       "v_jenis_kelamin": "DIFFERENT",
       "v_nama_ibu": "DIFFERENT",
@@ -138,11 +199,11 @@
       "v_tempat_lahir": "DIFFERENT"
     },
     "incoming_values": {
-      "nama_lengkap": "Anom Bala Thamrin",
-      "tempat_lahir": "Blitar",
-      "tanggal_lahir": "1996-03-15",
+      "nama_lengkap": "Wadi Nyoman Zulaika",
+      "tempat_lahir": "Manado",
+      "tanggal_lahir": "1995-01-28",
       "jenis_kelamin": "LAKI-LAKI",
-      "nama_ibu": "Wirda Marpaung"
+      "nama_ibu": "Qori Mangunsong"
     },
     "master_values": {},
     "verdicts": {
@@ -187,636 +248,12 @@
     "overall_pass": true
   },
   {
-    "id": "qa/grade_b_cold::inc_02798",
-    "file_id": "qa/grade_b_cold",
+    "id": "qa/grade_b_warm::inc_01418",
+    "file_id": "qa/grade_b_warm",
     "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
     "reasoning_source": "CACHE",
     "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Kunthara Suwarno vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Tangerang Selatan vs Master: Lhokseumawe), date of birth is different (Institution: 1955-07-16 vs Master: 1992-12-04), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Nurul Winarsih vs Master: Clara Natsir).",
-    "field_verdicts": {
-      "v_jenis_kelamin": "DIFFERENT",
-      "v_nama_ibu": "DIFFERENT",
-      "v_nama_lengkap": "DIFFERENT",
-      "v_tanggal_lahir": "DIFFERENT",
-      "v_tempat_lahir": "DIFFERENT"
-    },
-    "incoming_values": {
-      "nama_lengkap": "Kunthara Suwarno",
-      "tempat_lahir": "Tangerang Selatan",
-      "tanggal_lahir": "1955-07-16",
-      "jenis_kelamin": "LAKI-LAKI",
-      "nama_ibu": "Nurul Winarsih"
-    },
-    "master_values": {},
-    "verdicts": {
-      "factuality_fidelity": {
-        "criterion": "factuality_fidelity",
-        "score": "pass",
-        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
-        "metadata": {
-          "hallucinated_fields": [],
-          "missing_fields": []
-        }
-      },
-      "template_consistency": {
-        "criterion": "template_consistency",
-        "score": "pass",
-        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
-        "metadata": {
-          "found_placeholders": [
-            "{incoming.nama_lengkap}",
-            "{master.nama_lengkap}",
-            "{incoming.tempat_lahir}",
-            "{master.tempat_lahir}",
-            "{incoming.tanggal_lahir}",
-            "{master.tanggal_lahir}",
-            "{incoming.jenis_kelamin}",
-            "{master.jenis_kelamin}",
-            "{incoming.nama_ibu}",
-            "{master.nama_ibu}"
-          ]
-        }
-      },
-      "conciseness_readability": {
-        "criterion": "conciseness_readability",
-        "score": "pass",
-        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
-        "metadata": {
-          "sentence_count": 1,
-          "has_preamble": false
-        }
-      }
-    },
-    "overall_pass": true
-  },
-  {
-    "id": "qa/grade_b_cold::inc_00458",
-    "file_id": "qa/grade_b_cold",
-    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_IBU_DIFF_2f78ce30",
-    "reasoning_source": "CACHE",
-    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Olivia Oktaviani vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Padangpanjang vs Master: Lhokseumawe), date of birth is different (Institution: 1970-06-03 vs Master: 1992-12-04), and mother's name is different (Institution: Cornelia Wijaya vs Master: Clara Natsir).",
-    "field_verdicts": {
-      "v_jenis_kelamin": "SAME",
-      "v_nama_ibu": "DIFFERENT",
-      "v_nama_lengkap": "DIFFERENT",
-      "v_tanggal_lahir": "DIFFERENT",
-      "v_tempat_lahir": "DIFFERENT"
-    },
-    "incoming_values": {
-      "nama_lengkap": "Olivia Oktaviani",
-      "tempat_lahir": "Padangpanjang",
-      "tanggal_lahir": "1970-06-03",
-      "jenis_kelamin": "PEREMPUAN",
-      "nama_ibu": "Cornelia Wijaya"
-    },
-    "master_values": {},
-    "verdicts": {
-      "factuality_fidelity": {
-        "criterion": "factuality_fidelity",
-        "score": "pass",
-        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
-        "metadata": {
-          "hallucinated_fields": [],
-          "missing_fields": []
-        }
-      },
-      "template_consistency": {
-        "criterion": "template_consistency",
-        "score": "pass",
-        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
-        "metadata": {
-          "found_placeholders": [
-            "{incoming.nama_lengkap}",
-            "{master.nama_lengkap}",
-            "{incoming.tempat_lahir}",
-            "{master.tempat_lahir}",
-            "{incoming.tanggal_lahir}",
-            "{master.tanggal_lahir}",
-            "{incoming.nama_ibu}",
-            "{master.nama_ibu}"
-          ]
-        }
-      },
-      "conciseness_readability": {
-        "criterion": "conciseness_readability",
-        "score": "pass",
-        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
-        "metadata": {
-          "sentence_count": 1,
-          "has_preamble": false
-        }
-      }
-    },
-    "overall_pass": true
-  },
-  {
-    "id": "qa/grade_b_cold::inc_01678",
-    "file_id": "qa/grade_b_cold",
-    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_IBU_DIFF_2f78ce30",
-    "reasoning_source": "CACHE",
-    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Yance Ulya Wacana vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Bukittinggi vs Master: Lhokseumawe), date of birth is different (Institution: 1964-02-12 vs Master: 1992-12-04), and mother's name is different (Institution: Yance Sitompul vs Master: Clara Natsir).",
-    "field_verdicts": {
-      "v_jenis_kelamin": "SAME",
-      "v_nama_ibu": "DIFFERENT",
-      "v_nama_lengkap": "DIFFERENT",
-      "v_tanggal_lahir": "DIFFERENT",
-      "v_tempat_lahir": "DIFFERENT"
-    },
-    "incoming_values": {
-      "nama_lengkap": "Yance Ulya Wacana",
-      "tempat_lahir": "Bukittinggi",
-      "tanggal_lahir": "1964-02-12",
-      "jenis_kelamin": "PEREMPUAN",
-      "nama_ibu": "Yance Sitompul"
-    },
-    "master_values": {},
-    "verdicts": {
-      "factuality_fidelity": {
-        "criterion": "factuality_fidelity",
-        "score": "pass",
-        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
-        "metadata": {
-          "hallucinated_fields": [],
-          "missing_fields": []
-        }
-      },
-      "template_consistency": {
-        "criterion": "template_consistency",
-        "score": "pass",
-        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
-        "metadata": {
-          "found_placeholders": [
-            "{incoming.nama_lengkap}",
-            "{master.nama_lengkap}",
-            "{incoming.tempat_lahir}",
-            "{master.tempat_lahir}",
-            "{incoming.tanggal_lahir}",
-            "{master.tanggal_lahir}",
-            "{incoming.nama_ibu}",
-            "{master.nama_ibu}"
-          ]
-        }
-      },
-      "conciseness_readability": {
-        "criterion": "conciseness_readability",
-        "score": "pass",
-        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
-        "metadata": {
-          "sentence_count": 1,
-          "has_preamble": false
-        }
-      }
-    },
-    "overall_pass": true
-  },
-  {
-    "id": "qa/grade_b_cold::inc_01058",
-    "file_id": "qa/grade_b_cold",
-    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
-    "reasoning_source": "CACHE",
-    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Caket Thamrin vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Tasikmalaya vs Master: Lhokseumawe), date of birth is different (Institution: 1986-04-07 vs Master: 1992-12-04), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Gawati Haryanto vs Master: Clara Natsir).",
-    "field_verdicts": {
-      "v_jenis_kelamin": "DIFFERENT",
-      "v_nama_ibu": "DIFFERENT",
-      "v_nama_lengkap": "DIFFERENT",
-      "v_tanggal_lahir": "DIFFERENT",
-      "v_tempat_lahir": "DIFFERENT"
-    },
-    "incoming_values": {
-      "nama_lengkap": "Caket Thamrin",
-      "tempat_lahir": "Tasikmalaya",
-      "tanggal_lahir": "1986-04-07",
-      "jenis_kelamin": "LAKI-LAKI",
-      "nama_ibu": "Gawati Haryanto"
-    },
-    "master_values": {},
-    "verdicts": {
-      "factuality_fidelity": {
-        "criterion": "factuality_fidelity",
-        "score": "pass",
-        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
-        "metadata": {
-          "hallucinated_fields": [],
-          "missing_fields": []
-        }
-      },
-      "template_consistency": {
-        "criterion": "template_consistency",
-        "score": "pass",
-        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
-        "metadata": {
-          "found_placeholders": [
-            "{incoming.nama_lengkap}",
-            "{master.nama_lengkap}",
-            "{incoming.tempat_lahir}",
-            "{master.tempat_lahir}",
-            "{incoming.tanggal_lahir}",
-            "{master.tanggal_lahir}",
-            "{incoming.jenis_kelamin}",
-            "{master.jenis_kelamin}",
-            "{incoming.nama_ibu}",
-            "{master.nama_ibu}"
-          ]
-        }
-      },
-      "conciseness_readability": {
-        "criterion": "conciseness_readability",
-        "score": "pass",
-        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
-        "metadata": {
-          "sentence_count": 1,
-          "has_preamble": false
-        }
-      }
-    },
-    "overall_pass": true
-  },
-  {
-    "id": "qa/grade_b_cold::inc_02978",
-    "file_id": "qa/grade_b_cold",
-    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
-    "reasoning_source": "CACHE",
-    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Latif Siregar vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Subulussalam vs Master: Lhokseumawe), date of birth is different (Institution: 2003-05-14 vs Master: 1992-12-04), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Widya Wacana vs Master: Clara Natsir).",
-    "field_verdicts": {
-      "v_jenis_kelamin": "DIFFERENT",
-      "v_nama_ibu": "DIFFERENT",
-      "v_nama_lengkap": "DIFFERENT",
-      "v_tanggal_lahir": "DIFFERENT",
-      "v_tempat_lahir": "DIFFERENT"
-    },
-    "incoming_values": {
-      "nama_lengkap": "Latif Siregar",
-      "tempat_lahir": "Subulussalam",
-      "tanggal_lahir": "2003-05-14",
-      "jenis_kelamin": "LAKI-LAKI",
-      "nama_ibu": "Widya Wacana"
-    },
-    "master_values": {},
-    "verdicts": {
-      "factuality_fidelity": {
-        "criterion": "factuality_fidelity",
-        "score": "pass",
-        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
-        "metadata": {
-          "hallucinated_fields": [],
-          "missing_fields": []
-        }
-      },
-      "template_consistency": {
-        "criterion": "template_consistency",
-        "score": "pass",
-        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
-        "metadata": {
-          "found_placeholders": [
-            "{incoming.nama_lengkap}",
-            "{master.nama_lengkap}",
-            "{incoming.tempat_lahir}",
-            "{master.tempat_lahir}",
-            "{incoming.tanggal_lahir}",
-            "{master.tanggal_lahir}",
-            "{incoming.jenis_kelamin}",
-            "{master.jenis_kelamin}",
-            "{incoming.nama_ibu}",
-            "{master.nama_ibu}"
-          ]
-        }
-      },
-      "conciseness_readability": {
-        "criterion": "conciseness_readability",
-        "score": "pass",
-        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
-        "metadata": {
-          "sentence_count": 1,
-          "has_preamble": false
-        }
-      }
-    },
-    "overall_pass": true
-  },
-  {
-    "id": "qa/grade_b_cold::inc_00518",
-    "file_id": "qa/grade_b_cold",
-    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
-    "reasoning_source": "CACHE",
-    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Rafi Lamar Astuti vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Surakarta vs Master: Lhokseumawe), date of birth is different (Institution: 1968-08-16 vs Master: 1992-12-04), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Wirda Rajasa vs Master: Clara Natsir).",
-    "field_verdicts": {
-      "v_jenis_kelamin": "DIFFERENT",
-      "v_nama_ibu": "DIFFERENT",
-      "v_nama_lengkap": "DIFFERENT",
-      "v_tanggal_lahir": "DIFFERENT",
-      "v_tempat_lahir": "DIFFERENT"
-    },
-    "incoming_values": {
-      "nama_lengkap": "Rafi Lamar Astuti",
-      "tempat_lahir": "Surakarta",
-      "tanggal_lahir": "1968-08-16",
-      "jenis_kelamin": "LAKI-LAKI",
-      "nama_ibu": "Wirda Rajasa"
-    },
-    "master_values": {},
-    "verdicts": {
-      "factuality_fidelity": {
-        "criterion": "factuality_fidelity",
-        "score": "pass",
-        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
-        "metadata": {
-          "hallucinated_fields": [],
-          "missing_fields": []
-        }
-      },
-      "template_consistency": {
-        "criterion": "template_consistency",
-        "score": "pass",
-        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
-        "metadata": {
-          "found_placeholders": [
-            "{incoming.nama_lengkap}",
-            "{master.nama_lengkap}",
-            "{incoming.tempat_lahir}",
-            "{master.tempat_lahir}",
-            "{incoming.tanggal_lahir}",
-            "{master.tanggal_lahir}",
-            "{incoming.jenis_kelamin}",
-            "{master.jenis_kelamin}",
-            "{incoming.nama_ibu}",
-            "{master.nama_ibu}"
-          ]
-        }
-      },
-      "conciseness_readability": {
-        "criterion": "conciseness_readability",
-        "score": "pass",
-        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
-        "metadata": {
-          "sentence_count": 1,
-          "has_preamble": false
-        }
-      }
-    },
-    "overall_pass": true
-  },
-  {
-    "id": "qa/grade_b_cold::inc_00998",
-    "file_id": "qa/grade_b_cold",
-    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
-    "reasoning_source": "CACHE",
-    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Kayun Nasab Hidayat vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Bau-Bau vs Master: Lhokseumawe), date of birth is different (Institution: 1961-07-20 vs Master: 1992-12-04), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Hamima Hutapea vs Master: Clara Natsir).",
-    "field_verdicts": {
-      "v_jenis_kelamin": "DIFFERENT",
-      "v_nama_ibu": "DIFFERENT",
-      "v_nama_lengkap": "DIFFERENT",
-      "v_tanggal_lahir": "DIFFERENT",
-      "v_tempat_lahir": "DIFFERENT"
-    },
-    "incoming_values": {
-      "nama_lengkap": "Kayun Nasab Hidayat",
-      "tempat_lahir": "Bau-Bau",
-      "tanggal_lahir": "1961-07-20",
-      "jenis_kelamin": "LAKI-LAKI",
-      "nama_ibu": "Hamima Hutapea"
-    },
-    "master_values": {},
-    "verdicts": {
-      "factuality_fidelity": {
-        "criterion": "factuality_fidelity",
-        "score": "pass",
-        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
-        "metadata": {
-          "hallucinated_fields": [],
-          "missing_fields": []
-        }
-      },
-      "template_consistency": {
-        "criterion": "template_consistency",
-        "score": "pass",
-        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
-        "metadata": {
-          "found_placeholders": [
-            "{incoming.nama_lengkap}",
-            "{master.nama_lengkap}",
-            "{incoming.tempat_lahir}",
-            "{master.tempat_lahir}",
-            "{incoming.tanggal_lahir}",
-            "{master.tanggal_lahir}",
-            "{incoming.jenis_kelamin}",
-            "{master.jenis_kelamin}",
-            "{incoming.nama_ibu}",
-            "{master.nama_ibu}"
-          ]
-        }
-      },
-      "conciseness_readability": {
-        "criterion": "conciseness_readability",
-        "score": "pass",
-        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
-        "metadata": {
-          "sentence_count": 1,
-          "has_preamble": false
-        }
-      }
-    },
-    "overall_pass": true
-  },
-  {
-    "id": "qa/grade_b_cold::inc_01158",
-    "file_id": "qa/grade_b_cold",
-    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
-    "reasoning_source": "CACHE",
-    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Nasab Anggabaya Widodo vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Surakarta vs Master: Lhokseumawe), date of birth is different (Institution: 1973-03-18 vs Master: 1992-12-04), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Sakura Kusmawati vs Master: Clara Natsir).",
-    "field_verdicts": {
-      "v_jenis_kelamin": "DIFFERENT",
-      "v_nama_ibu": "DIFFERENT",
-      "v_nama_lengkap": "DIFFERENT",
-      "v_tanggal_lahir": "DIFFERENT",
-      "v_tempat_lahir": "DIFFERENT"
-    },
-    "incoming_values": {
-      "nama_lengkap": "Nasab Anggabaya Widodo",
-      "tempat_lahir": "Surakarta",
-      "tanggal_lahir": "1973-03-18",
-      "jenis_kelamin": "LAKI-LAKI",
-      "nama_ibu": "Sakura Kusmawati"
-    },
-    "master_values": {},
-    "verdicts": {
-      "factuality_fidelity": {
-        "criterion": "factuality_fidelity",
-        "score": "pass",
-        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
-        "metadata": {
-          "hallucinated_fields": [],
-          "missing_fields": []
-        }
-      },
-      "template_consistency": {
-        "criterion": "template_consistency",
-        "score": "pass",
-        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
-        "metadata": {
-          "found_placeholders": [
-            "{incoming.nama_lengkap}",
-            "{master.nama_lengkap}",
-            "{incoming.tempat_lahir}",
-            "{master.tempat_lahir}",
-            "{incoming.tanggal_lahir}",
-            "{master.tanggal_lahir}",
-            "{incoming.jenis_kelamin}",
-            "{master.jenis_kelamin}",
-            "{incoming.nama_ibu}",
-            "{master.nama_ibu}"
-          ]
-        }
-      },
-      "conciseness_readability": {
-        "criterion": "conciseness_readability",
-        "score": "pass",
-        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
-        "metadata": {
-          "sentence_count": 1,
-          "has_preamble": false
-        }
-      }
-    },
-    "overall_pass": true
-  },
-  {
-    "id": "qa/grade_b_cold::inc_00418",
-    "file_id": "qa/grade_b_cold",
-    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_IBU_DIFF_2f78ce30",
-    "reasoning_source": "CACHE",
-    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Chelsea Aurora Saputra vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Pagaralam vs Master: Lhokseumawe), date of birth is different (Institution: 1973-06-08 vs Master: 1992-12-04), and mother's name is different (Institution: Farah Wijayanti vs Master: Clara Natsir).",
-    "field_verdicts": {
-      "v_jenis_kelamin": "SAME",
-      "v_nama_ibu": "DIFFERENT",
-      "v_nama_lengkap": "DIFFERENT",
-      "v_tanggal_lahir": "DIFFERENT",
-      "v_tempat_lahir": "DIFFERENT"
-    },
-    "incoming_values": {
-      "nama_lengkap": "Chelsea Aurora Saputra",
-      "tempat_lahir": "Pagaralam",
-      "tanggal_lahir": "1973-06-08",
-      "jenis_kelamin": "PEREMPUAN",
-      "nama_ibu": "Farah Wijayanti"
-    },
-    "master_values": {},
-    "verdicts": {
-      "factuality_fidelity": {
-        "criterion": "factuality_fidelity",
-        "score": "pass",
-        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
-        "metadata": {
-          "hallucinated_fields": [],
-          "missing_fields": []
-        }
-      },
-      "template_consistency": {
-        "criterion": "template_consistency",
-        "score": "pass",
-        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
-        "metadata": {
-          "found_placeholders": [
-            "{incoming.nama_lengkap}",
-            "{master.nama_lengkap}",
-            "{incoming.tempat_lahir}",
-            "{master.tempat_lahir}",
-            "{incoming.tanggal_lahir}",
-            "{master.tanggal_lahir}",
-            "{incoming.nama_ibu}",
-            "{master.nama_ibu}"
-          ]
-        }
-      },
-      "conciseness_readability": {
-        "criterion": "conciseness_readability",
-        "score": "pass",
-        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
-        "metadata": {
-          "sentence_count": 1,
-          "has_preamble": false
-        }
-      }
-    },
-    "overall_pass": true
-  },
-  {
-    "id": "qa/grade_b_cold::inc_01258",
-    "file_id": "qa/grade_b_cold",
-    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
-    "reasoning_source": "CACHE",
-    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Reksa Wasita vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Purwokerto vs Master: Lhokseumawe), date of birth is different (Institution: 1985-04-06 vs Master: 1992-12-04), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Silvia Situmorang vs Master: Clara Natsir).",
-    "field_verdicts": {
-      "v_jenis_kelamin": "DIFFERENT",
-      "v_nama_ibu": "DIFFERENT",
-      "v_nama_lengkap": "DIFFERENT",
-      "v_tanggal_lahir": "DIFFERENT",
-      "v_tempat_lahir": "DIFFERENT"
-    },
-    "incoming_values": {
-      "nama_lengkap": "Reksa Wasita",
-      "tempat_lahir": "Purwokerto",
-      "tanggal_lahir": "1985-04-06",
-      "jenis_kelamin": "LAKI-LAKI",
-      "nama_ibu": "Silvia Situmorang"
-    },
-    "master_values": {},
-    "verdicts": {
-      "factuality_fidelity": {
-        "criterion": "factuality_fidelity",
-        "score": "pass",
-        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
-        "metadata": {
-          "hallucinated_fields": [],
-          "missing_fields": []
-        }
-      },
-      "template_consistency": {
-        "criterion": "template_consistency",
-        "score": "pass",
-        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
-        "metadata": {
-          "found_placeholders": [
-            "{incoming.nama_lengkap}",
-            "{master.nama_lengkap}",
-            "{incoming.tempat_lahir}",
-            "{master.tempat_lahir}",
-            "{incoming.tanggal_lahir}",
-            "{master.tanggal_lahir}",
-            "{incoming.jenis_kelamin}",
-            "{master.jenis_kelamin}",
-            "{incoming.nama_ibu}",
-            "{master.nama_ibu}"
-          ]
-        }
-      },
-      "conciseness_readability": {
-        "criterion": "conciseness_readability",
-        "score": "pass",
-        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
-        "metadata": {
-          "sentence_count": 1,
-          "has_preamble": false
-        }
-      }
-    },
-    "overall_pass": true
-  },
-  {
-    "id": "qa/grade_b_cold::inc_01418",
-    "file_id": "qa/grade_b_cold",
-    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
-    "reasoning_source": "CACHE",
-    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Rafi Jindra Maheswara vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Ternate vs Master: Lhokseumawe), date of birth is different (Institution: 1990-02-09 vs Master: 1992-12-04), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Gilda Prabowo vs Master: Clara Natsir).",
+    "hydrated_reason": "Full name is different (Institution: Rafi Jindra Maheswara vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Ternate vs Master: Medan), date of birth is different (Institution: 1990-02-09 vs Master: 1972-02-25), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Gilda Prabowo vs Master: Elisa Budiman).",
     "field_verdicts": {
       "v_jenis_kelamin": "DIFFERENT",
       "v_nama_ibu": "DIFFERENT",
@@ -874,12 +311,12 @@
     "overall_pass": true
   },
   {
-    "id": "qa/grade_b_cold::inc_01778",
-    "file_id": "qa/grade_b_cold",
+    "id": "qa/grade_b_warm::inc_01058",
+    "file_id": "qa/grade_b_warm",
     "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
     "reasoning_source": "CACHE",
     "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Pangestu Lurhur Pudjiastuti vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Bitung vs Master: Lhokseumawe), date of birth is different (Institution: 2000-01-12 vs Master: 1992-12-04), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Laila Kuswandari vs Master: Clara Natsir).",
+    "hydrated_reason": "Full name is different (Institution: Caket Thamrin vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Tasikmalaya vs Master: Medan), date of birth is different (Institution: 1986-04-07 vs Master: 1972-02-25), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Gawati Haryanto vs Master: Elisa Budiman).",
     "field_verdicts": {
       "v_jenis_kelamin": "DIFFERENT",
       "v_nama_ibu": "DIFFERENT",
@@ -888,11 +325,11 @@
       "v_tempat_lahir": "DIFFERENT"
     },
     "incoming_values": {
-      "nama_lengkap": "Pangestu Lurhur Pudjiastuti",
-      "tempat_lahir": "Bitung",
-      "tanggal_lahir": "2000-01-12",
+      "nama_lengkap": "Caket Thamrin",
+      "tempat_lahir": "Tasikmalaya",
+      "tanggal_lahir": "1986-04-07",
       "jenis_kelamin": "LAKI-LAKI",
-      "nama_ibu": "Laila Kuswandari"
+      "nama_ibu": "Gawati Haryanto"
     },
     "master_values": {},
     "verdicts": {
@@ -937,12 +374,75 @@
     "overall_pass": true
   },
   {
-    "id": "qa/grade_b_cold::inc_02118",
-    "file_id": "qa/grade_b_cold",
+    "id": "qa/grade_b_warm::inc_01498",
+    "file_id": "qa/grade_b_warm",
+    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
+    "reasoning_source": "CACHE",
+    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
+    "hydrated_reason": "Full name is different (Institution: Yahya Bagiya Sihotang vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Kotamobagu vs Master: Medan), date of birth is different (Institution: 1999-11-13 vs Master: 1972-02-25), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Dinda Utami vs Master: Elisa Budiman).",
+    "field_verdicts": {
+      "v_jenis_kelamin": "DIFFERENT",
+      "v_nama_ibu": "DIFFERENT",
+      "v_nama_lengkap": "DIFFERENT",
+      "v_tanggal_lahir": "DIFFERENT",
+      "v_tempat_lahir": "DIFFERENT"
+    },
+    "incoming_values": {
+      "nama_lengkap": "Yahya Bagiya Sihotang",
+      "tempat_lahir": "Kotamobagu",
+      "tanggal_lahir": "1999-11-13",
+      "jenis_kelamin": "LAKI-LAKI",
+      "nama_ibu": "Dinda Utami"
+    },
+    "master_values": {},
+    "verdicts": {
+      "factuality_fidelity": {
+        "criterion": "factuality_fidelity",
+        "score": "pass",
+        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
+        "metadata": {
+          "hallucinated_fields": [],
+          "missing_fields": []
+        }
+      },
+      "template_consistency": {
+        "criterion": "template_consistency",
+        "score": "pass",
+        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
+        "metadata": {
+          "found_placeholders": [
+            "{incoming.nama_lengkap}",
+            "{master.nama_lengkap}",
+            "{incoming.tempat_lahir}",
+            "{master.tempat_lahir}",
+            "{incoming.tanggal_lahir}",
+            "{master.tanggal_lahir}",
+            "{incoming.jenis_kelamin}",
+            "{master.jenis_kelamin}",
+            "{incoming.nama_ibu}",
+            "{master.nama_ibu}"
+          ]
+        }
+      },
+      "conciseness_readability": {
+        "criterion": "conciseness_readability",
+        "score": "pass",
+        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
+        "metadata": {
+          "sentence_count": 1,
+          "has_preamble": false
+        }
+      }
+    },
+    "overall_pass": true
+  },
+  {
+    "id": "qa/grade_b_warm::inc_02478",
+    "file_id": "qa/grade_b_warm",
     "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_IBU_DIFF_2f78ce30",
     "reasoning_source": "CACHE",
     "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Zahra Hasna Simanjuntak vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Yogyakarta vs Master: Lhokseumawe), date of birth is different (Institution: 1975-02-27 vs Master: 1992-12-04), and mother's name is different (Institution: Rina Rahmawati vs Master: Clara Natsir).",
+    "hydrated_reason": "Full name is different (Institution: Ciaobella Icha Yuliarti vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Sawahlunto vs Master: Medan), date of birth is different (Institution: 1998-08-16 vs Master: 1972-02-25), and mother's name is different (Institution: Farah Rahmawati vs Master: Elisa Budiman).",
     "field_verdicts": {
       "v_jenis_kelamin": "SAME",
       "v_nama_ibu": "DIFFERENT",
@@ -951,11 +451,11 @@
       "v_tempat_lahir": "DIFFERENT"
     },
     "incoming_values": {
-      "nama_lengkap": "Zahra Hasna Simanjuntak",
-      "tempat_lahir": "Yogyakarta",
-      "tanggal_lahir": "1975-02-27",
+      "nama_lengkap": "Ciaobella Icha Yuliarti",
+      "tempat_lahir": "Sawahlunto",
+      "tanggal_lahir": "1998-08-16",
       "jenis_kelamin": "PEREMPUAN",
-      "nama_ibu": "Rina Rahmawati"
+      "nama_ibu": "Farah Rahmawati"
     },
     "master_values": {},
     "verdicts": {
@@ -998,12 +498,12 @@
     "overall_pass": true
   },
   {
-    "id": "qa/grade_b_cold::inc_00078",
-    "file_id": "qa/grade_b_cold",
+    "id": "qa/grade_b_warm::inc_00018",
+    "file_id": "qa/grade_b_warm",
     "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
     "reasoning_source": "CACHE",
     "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: M. Gangsar Wasis Sinaga vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Makassar vs Master: Lhokseumawe), date of birth is different (Institution: 1989-09-26 vs Master: 1992-12-04), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Maya Prayoga vs Master: Clara Natsir).",
+    "hydrated_reason": "Full name is different (Institution: Mahmud Yuliarti vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Tegal vs Master: Medan), date of birth is different (Institution: 1982-12-24 vs Master: 1972-02-25), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Puji Prayoga vs Master: Elisa Budiman).",
     "field_verdicts": {
       "v_jenis_kelamin": "DIFFERENT",
       "v_nama_ibu": "DIFFERENT",
@@ -1012,11 +512,11 @@
       "v_tempat_lahir": "DIFFERENT"
     },
     "incoming_values": {
-      "nama_lengkap": "M. Gangsar Wasis Sinaga",
-      "tempat_lahir": "Makassar",
-      "tanggal_lahir": "1989-09-26",
+      "nama_lengkap": "Mahmud Yuliarti",
+      "tempat_lahir": "Tegal",
+      "tanggal_lahir": "1982-12-24",
       "jenis_kelamin": "LAKI-LAKI",
-      "nama_ibu": "Maya Prayoga"
+      "nama_ibu": "Puji Prayoga"
     },
     "master_values": {},
     "verdicts": {
@@ -1051,9 +551,9 @@
       "conciseness_readability": {
         "criterion": "conciseness_readability",
         "score": "pass",
-        "rationale": "Crisp, direct explanation in 2 sentence(s) without conversational fluff.",
+        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
         "metadata": {
-          "sentence_count": 2,
+          "sentence_count": 1,
           "has_preamble": false
         }
       }
@@ -1061,12 +561,569 @@
     "overall_pass": true
   },
   {
-    "id": "qa/grade_b_cold::inc_00358",
-    "file_id": "qa/grade_b_cold",
+    "id": "qa/grade_b_warm::inc_02818",
+    "file_id": "qa/grade_b_warm",
+    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
+    "reasoning_source": "CACHE",
+    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
+    "hydrated_reason": "Full name is different (Institution: Satya Raden Ardianto vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Salatiga vs Master: Medan), date of birth is different (Institution: 1956-06-20 vs Master: 1972-02-25), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Vicky Saefullah vs Master: Elisa Budiman).",
+    "field_verdicts": {
+      "v_jenis_kelamin": "DIFFERENT",
+      "v_nama_ibu": "DIFFERENT",
+      "v_nama_lengkap": "DIFFERENT",
+      "v_tanggal_lahir": "DIFFERENT",
+      "v_tempat_lahir": "DIFFERENT"
+    },
+    "incoming_values": {
+      "nama_lengkap": "Satya Raden Ardianto",
+      "tempat_lahir": "Salatiga",
+      "tanggal_lahir": "1956-06-20",
+      "jenis_kelamin": "LAKI-LAKI",
+      "nama_ibu": "Vicky Saefullah"
+    },
+    "master_values": {},
+    "verdicts": {
+      "factuality_fidelity": {
+        "criterion": "factuality_fidelity",
+        "score": "pass",
+        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
+        "metadata": {
+          "hallucinated_fields": [],
+          "missing_fields": []
+        }
+      },
+      "template_consistency": {
+        "criterion": "template_consistency",
+        "score": "pass",
+        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
+        "metadata": {
+          "found_placeholders": [
+            "{incoming.nama_lengkap}",
+            "{master.nama_lengkap}",
+            "{incoming.tempat_lahir}",
+            "{master.tempat_lahir}",
+            "{incoming.tanggal_lahir}",
+            "{master.tanggal_lahir}",
+            "{incoming.jenis_kelamin}",
+            "{master.jenis_kelamin}",
+            "{incoming.nama_ibu}",
+            "{master.nama_ibu}"
+          ]
+        }
+      },
+      "conciseness_readability": {
+        "criterion": "conciseness_readability",
+        "score": "pass",
+        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
+        "metadata": {
+          "sentence_count": 1,
+          "has_preamble": false
+        }
+      }
+    },
+    "overall_pass": true
+  },
+  {
+    "id": "qa/grade_b_warm::inc_01098",
+    "file_id": "qa/grade_b_warm",
     "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_IBU_DIFF_2f78ce30",
     "reasoning_source": "CACHE",
     "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Winda Ghaliyati Rajata vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Depok vs Master: Lhokseumawe), date of birth is different (Institution: 1967-04-28 vs Master: 1992-12-04), and mother's name is different (Institution: Ika Thamrin vs Master: Clara Natsir).",
+    "hydrated_reason": "Full name is different (Institution: Vicky Elvina Napitupulu vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Sibolga vs Master: Medan), date of birth is different (Institution: 2000-12-15 vs Master: 1972-02-25), and mother's name is different (Institution: Amelia Hartati vs Master: Elisa Budiman).",
+    "field_verdicts": {
+      "v_jenis_kelamin": "SAME",
+      "v_nama_ibu": "DIFFERENT",
+      "v_nama_lengkap": "DIFFERENT",
+      "v_tanggal_lahir": "DIFFERENT",
+      "v_tempat_lahir": "DIFFERENT"
+    },
+    "incoming_values": {
+      "nama_lengkap": "Vicky Elvina Napitupulu",
+      "tempat_lahir": "Sibolga",
+      "tanggal_lahir": "2000-12-15",
+      "jenis_kelamin": "PEREMPUAN",
+      "nama_ibu": "Amelia Hartati"
+    },
+    "master_values": {},
+    "verdicts": {
+      "factuality_fidelity": {
+        "criterion": "factuality_fidelity",
+        "score": "pass",
+        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
+        "metadata": {
+          "hallucinated_fields": [],
+          "missing_fields": []
+        }
+      },
+      "template_consistency": {
+        "criterion": "template_consistency",
+        "score": "pass",
+        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
+        "metadata": {
+          "found_placeholders": [
+            "{incoming.nama_lengkap}",
+            "{master.nama_lengkap}",
+            "{incoming.tempat_lahir}",
+            "{master.tempat_lahir}",
+            "{incoming.tanggal_lahir}",
+            "{master.tanggal_lahir}",
+            "{incoming.nama_ibu}",
+            "{master.nama_ibu}"
+          ]
+        }
+      },
+      "conciseness_readability": {
+        "criterion": "conciseness_readability",
+        "score": "pass",
+        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
+        "metadata": {
+          "sentence_count": 1,
+          "has_preamble": false
+        }
+      }
+    },
+    "overall_pass": true
+  },
+  {
+    "id": "qa/grade_b_warm::inc_01178",
+    "file_id": "qa/grade_b_warm",
+    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
+    "reasoning_source": "CACHE",
+    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
+    "hydrated_reason": "Full name is different (Institution: Bambang Uda Rahayu vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Batu vs Master: Medan), date of birth is different (Institution: 1989-01-09 vs Master: 1972-02-25), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Farhunnisa Wijaya vs Master: Elisa Budiman).",
+    "field_verdicts": {
+      "v_jenis_kelamin": "DIFFERENT",
+      "v_nama_ibu": "DIFFERENT",
+      "v_nama_lengkap": "DIFFERENT",
+      "v_tanggal_lahir": "DIFFERENT",
+      "v_tempat_lahir": "DIFFERENT"
+    },
+    "incoming_values": {
+      "nama_lengkap": "Bambang Uda Rahayu",
+      "tempat_lahir": "Batu",
+      "tanggal_lahir": "1989-01-09",
+      "jenis_kelamin": "LAKI-LAKI",
+      "nama_ibu": "Farhunnisa Wijaya"
+    },
+    "master_values": {},
+    "verdicts": {
+      "factuality_fidelity": {
+        "criterion": "factuality_fidelity",
+        "score": "pass",
+        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
+        "metadata": {
+          "hallucinated_fields": [],
+          "missing_fields": []
+        }
+      },
+      "template_consistency": {
+        "criterion": "template_consistency",
+        "score": "pass",
+        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
+        "metadata": {
+          "found_placeholders": [
+            "{incoming.nama_lengkap}",
+            "{master.nama_lengkap}",
+            "{incoming.tempat_lahir}",
+            "{master.tempat_lahir}",
+            "{incoming.tanggal_lahir}",
+            "{master.tanggal_lahir}",
+            "{incoming.jenis_kelamin}",
+            "{master.jenis_kelamin}",
+            "{incoming.nama_ibu}",
+            "{master.nama_ibu}"
+          ]
+        }
+      },
+      "conciseness_readability": {
+        "criterion": "conciseness_readability",
+        "score": "pass",
+        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
+        "metadata": {
+          "sentence_count": 1,
+          "has_preamble": false
+        }
+      }
+    },
+    "overall_pass": true
+  },
+  {
+    "id": "qa/grade_b_warm::inc_02158",
+    "file_id": "qa/grade_b_warm",
+    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_IBU_DIFF_2f78ce30",
+    "reasoning_source": "CACHE",
+    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
+    "hydrated_reason": "Full name is different (Institution: Karen Uchita Narpati vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Denpasar vs Master: Medan), date of birth is different (Institution: 1986-03-21 vs Master: 1972-02-25), and mother's name is different (Institution: Jasmin Yuliarti vs Master: Elisa Budiman).",
+    "field_verdicts": {
+      "v_jenis_kelamin": "SAME",
+      "v_nama_ibu": "DIFFERENT",
+      "v_nama_lengkap": "DIFFERENT",
+      "v_tanggal_lahir": "DIFFERENT",
+      "v_tempat_lahir": "DIFFERENT"
+    },
+    "incoming_values": {
+      "nama_lengkap": "Karen Uchita Narpati",
+      "tempat_lahir": "Denpasar",
+      "tanggal_lahir": "1986-03-21",
+      "jenis_kelamin": "PEREMPUAN",
+      "nama_ibu": "Jasmin Yuliarti"
+    },
+    "master_values": {},
+    "verdicts": {
+      "factuality_fidelity": {
+        "criterion": "factuality_fidelity",
+        "score": "pass",
+        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
+        "metadata": {
+          "hallucinated_fields": [],
+          "missing_fields": []
+        }
+      },
+      "template_consistency": {
+        "criterion": "template_consistency",
+        "score": "pass",
+        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
+        "metadata": {
+          "found_placeholders": [
+            "{incoming.nama_lengkap}",
+            "{master.nama_lengkap}",
+            "{incoming.tempat_lahir}",
+            "{master.tempat_lahir}",
+            "{incoming.tanggal_lahir}",
+            "{master.tanggal_lahir}",
+            "{incoming.nama_ibu}",
+            "{master.nama_ibu}"
+          ]
+        }
+      },
+      "conciseness_readability": {
+        "criterion": "conciseness_readability",
+        "score": "pass",
+        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
+        "metadata": {
+          "sentence_count": 1,
+          "has_preamble": false
+        }
+      }
+    },
+    "overall_pass": true
+  },
+  {
+    "id": "qa/grade_b_warm::inc_00298",
+    "file_id": "qa/grade_b_warm",
+    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_IBU_DIFF_2f78ce30",
+    "reasoning_source": "CACHE",
+    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
+    "hydrated_reason": "Full name is different (Institution: Endah Dian Damanik vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Pangkalpinang vs Master: Medan), date of birth is different (Institution: 1955-08-10 vs Master: 1972-02-25), and mother's name is different (Institution: Kayla Sinaga vs Master: Elisa Budiman).",
+    "field_verdicts": {
+      "v_jenis_kelamin": "SAME",
+      "v_nama_ibu": "DIFFERENT",
+      "v_nama_lengkap": "DIFFERENT",
+      "v_tanggal_lahir": "DIFFERENT",
+      "v_tempat_lahir": "DIFFERENT"
+    },
+    "incoming_values": {
+      "nama_lengkap": "Endah Dian Damanik",
+      "tempat_lahir": "Pangkalpinang",
+      "tanggal_lahir": "1955-08-10",
+      "jenis_kelamin": "PEREMPUAN",
+      "nama_ibu": "Kayla Sinaga"
+    },
+    "master_values": {},
+    "verdicts": {
+      "factuality_fidelity": {
+        "criterion": "factuality_fidelity",
+        "score": "pass",
+        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
+        "metadata": {
+          "hallucinated_fields": [],
+          "missing_fields": []
+        }
+      },
+      "template_consistency": {
+        "criterion": "template_consistency",
+        "score": "pass",
+        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
+        "metadata": {
+          "found_placeholders": [
+            "{incoming.nama_lengkap}",
+            "{master.nama_lengkap}",
+            "{incoming.tempat_lahir}",
+            "{master.tempat_lahir}",
+            "{incoming.tanggal_lahir}",
+            "{master.tanggal_lahir}",
+            "{incoming.nama_ibu}",
+            "{master.nama_ibu}"
+          ]
+        }
+      },
+      "conciseness_readability": {
+        "criterion": "conciseness_readability",
+        "score": "pass",
+        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
+        "metadata": {
+          "sentence_count": 1,
+          "has_preamble": false
+        }
+      }
+    },
+    "overall_pass": true
+  },
+  {
+    "id": "qa/grade_b_warm::inc_01078",
+    "file_id": "qa/grade_b_warm",
+    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
+    "reasoning_source": "CACHE",
+    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
+    "hydrated_reason": "Full name is different (Institution: Anom Pradana vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Balikpapan vs Master: Medan), date of birth is different (Institution: 1964-10-18 vs Master: 1972-02-25), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Mila Narpati vs Master: Elisa Budiman).",
+    "field_verdicts": {
+      "v_jenis_kelamin": "DIFFERENT",
+      "v_nama_ibu": "DIFFERENT",
+      "v_nama_lengkap": "DIFFERENT",
+      "v_tanggal_lahir": "DIFFERENT",
+      "v_tempat_lahir": "DIFFERENT"
+    },
+    "incoming_values": {
+      "nama_lengkap": "Anom Pradana",
+      "tempat_lahir": "Balikpapan",
+      "tanggal_lahir": "1964-10-18",
+      "jenis_kelamin": "LAKI-LAKI",
+      "nama_ibu": "Mila Narpati"
+    },
+    "master_values": {},
+    "verdicts": {
+      "factuality_fidelity": {
+        "criterion": "factuality_fidelity",
+        "score": "pass",
+        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
+        "metadata": {
+          "hallucinated_fields": [],
+          "missing_fields": []
+        }
+      },
+      "template_consistency": {
+        "criterion": "template_consistency",
+        "score": "pass",
+        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
+        "metadata": {
+          "found_placeholders": [
+            "{incoming.nama_lengkap}",
+            "{master.nama_lengkap}",
+            "{incoming.tempat_lahir}",
+            "{master.tempat_lahir}",
+            "{incoming.tanggal_lahir}",
+            "{master.tanggal_lahir}",
+            "{incoming.jenis_kelamin}",
+            "{master.jenis_kelamin}",
+            "{incoming.nama_ibu}",
+            "{master.nama_ibu}"
+          ]
+        }
+      },
+      "conciseness_readability": {
+        "criterion": "conciseness_readability",
+        "score": "pass",
+        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
+        "metadata": {
+          "sentence_count": 1,
+          "has_preamble": false
+        }
+      }
+    },
+    "overall_pass": true
+  },
+  {
+    "id": "qa/grade_b_warm::inc_02018",
+    "file_id": "qa/grade_b_warm",
+    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_IBU_DIFF_2f78ce30",
+    "reasoning_source": "CACHE",
+    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
+    "hydrated_reason": "Full name is different (Institution: Puti Yani Kusmawati vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Sibolga vs Master: Medan), date of birth is different (Institution: 1956-05-06 vs Master: 1972-02-25), and mother's name is different (Institution: Maya Wijayanti vs Master: Elisa Budiman).",
+    "field_verdicts": {
+      "v_jenis_kelamin": "SAME",
+      "v_nama_ibu": "DIFFERENT",
+      "v_nama_lengkap": "DIFFERENT",
+      "v_tanggal_lahir": "DIFFERENT",
+      "v_tempat_lahir": "DIFFERENT"
+    },
+    "incoming_values": {
+      "nama_lengkap": "Puti Yani Kusmawati",
+      "tempat_lahir": "Sibolga",
+      "tanggal_lahir": "1956-05-06",
+      "jenis_kelamin": "PEREMPUAN",
+      "nama_ibu": "Maya Wijayanti"
+    },
+    "master_values": {},
+    "verdicts": {
+      "factuality_fidelity": {
+        "criterion": "factuality_fidelity",
+        "score": "pass",
+        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
+        "metadata": {
+          "hallucinated_fields": [],
+          "missing_fields": []
+        }
+      },
+      "template_consistency": {
+        "criterion": "template_consistency",
+        "score": "pass",
+        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
+        "metadata": {
+          "found_placeholders": [
+            "{incoming.nama_lengkap}",
+            "{master.nama_lengkap}",
+            "{incoming.tempat_lahir}",
+            "{master.tempat_lahir}",
+            "{incoming.tanggal_lahir}",
+            "{master.tanggal_lahir}",
+            "{incoming.nama_ibu}",
+            "{master.nama_ibu}"
+          ]
+        }
+      },
+      "conciseness_readability": {
+        "criterion": "conciseness_readability",
+        "score": "pass",
+        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
+        "metadata": {
+          "sentence_count": 1,
+          "has_preamble": false
+        }
+      }
+    },
+    "overall_pass": true
+  },
+  {
+    "id": "qa/grade_b_warm::inc_01378",
+    "file_id": "qa/grade_b_warm",
+    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_IBU_DIFF_2f78ce30",
+    "reasoning_source": "CACHE",
+    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
+    "hydrated_reason": "Full name is different (Institution: Unjani Eli Halim vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Tual vs Master: Medan), date of birth is different (Institution: 1978-11-21 vs Master: 1972-02-25), and mother's name is different (Institution: Maya Saputra vs Master: Elisa Budiman).",
+    "field_verdicts": {
+      "v_jenis_kelamin": "SAME",
+      "v_nama_ibu": "DIFFERENT",
+      "v_nama_lengkap": "DIFFERENT",
+      "v_tanggal_lahir": "DIFFERENT",
+      "v_tempat_lahir": "DIFFERENT"
+    },
+    "incoming_values": {
+      "nama_lengkap": "Unjani Eli Halim",
+      "tempat_lahir": "Tual",
+      "tanggal_lahir": "1978-11-21",
+      "jenis_kelamin": "PEREMPUAN",
+      "nama_ibu": "Maya Saputra"
+    },
+    "master_values": {},
+    "verdicts": {
+      "factuality_fidelity": {
+        "criterion": "factuality_fidelity",
+        "score": "pass",
+        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
+        "metadata": {
+          "hallucinated_fields": [],
+          "missing_fields": []
+        }
+      },
+      "template_consistency": {
+        "criterion": "template_consistency",
+        "score": "pass",
+        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
+        "metadata": {
+          "found_placeholders": [
+            "{incoming.nama_lengkap}",
+            "{master.nama_lengkap}",
+            "{incoming.tempat_lahir}",
+            "{master.tempat_lahir}",
+            "{incoming.tanggal_lahir}",
+            "{master.tanggal_lahir}",
+            "{incoming.nama_ibu}",
+            "{master.nama_ibu}"
+          ]
+        }
+      },
+      "conciseness_readability": {
+        "criterion": "conciseness_readability",
+        "score": "pass",
+        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
+        "metadata": {
+          "sentence_count": 1,
+          "has_preamble": false
+        }
+      }
+    },
+    "overall_pass": true
+  },
+  {
+    "id": "qa/grade_b_warm::inc_02958",
+    "file_id": "qa/grade_b_warm",
+    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
+    "reasoning_source": "CACHE",
+    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
+    "hydrated_reason": "Full name is different (Institution: Raden Danang Anggraini vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Kota Administrasi Jakarta Utara vs Master: Medan), date of birth is different (Institution: 1967-05-08 vs Master: 1972-02-25), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Siti Prabowo vs Master: Elisa Budiman).",
+    "field_verdicts": {
+      "v_jenis_kelamin": "DIFFERENT",
+      "v_nama_ibu": "DIFFERENT",
+      "v_nama_lengkap": "DIFFERENT",
+      "v_tanggal_lahir": "DIFFERENT",
+      "v_tempat_lahir": "DIFFERENT"
+    },
+    "incoming_values": {
+      "nama_lengkap": "Raden Danang Anggraini",
+      "tempat_lahir": "Kota Administrasi Jakarta Utara",
+      "tanggal_lahir": "1967-05-08",
+      "jenis_kelamin": "LAKI-LAKI",
+      "nama_ibu": "Siti Prabowo"
+    },
+    "master_values": {},
+    "verdicts": {
+      "factuality_fidelity": {
+        "criterion": "factuality_fidelity",
+        "score": "pass",
+        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
+        "metadata": {
+          "hallucinated_fields": [],
+          "missing_fields": []
+        }
+      },
+      "template_consistency": {
+        "criterion": "template_consistency",
+        "score": "pass",
+        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
+        "metadata": {
+          "found_placeholders": [
+            "{incoming.nama_lengkap}",
+            "{master.nama_lengkap}",
+            "{incoming.tempat_lahir}",
+            "{master.tempat_lahir}",
+            "{incoming.tanggal_lahir}",
+            "{master.tanggal_lahir}",
+            "{incoming.jenis_kelamin}",
+            "{master.jenis_kelamin}",
+            "{incoming.nama_ibu}",
+            "{master.nama_ibu}"
+          ]
+        }
+      },
+      "conciseness_readability": {
+        "criterion": "conciseness_readability",
+        "score": "pass",
+        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
+        "metadata": {
+          "sentence_count": 1,
+          "has_preamble": false
+        }
+      }
+    },
+    "overall_pass": true
+  },
+  {
+    "id": "qa/grade_b_warm::inc_00358",
+    "file_id": "qa/grade_b_warm",
+    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_IBU_DIFF_2f78ce30",
+    "reasoning_source": "CACHE",
+    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
+    "hydrated_reason": "Full name is different (Institution: Winda Ghaliyati Rajata vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Depok vs Master: Medan), date of birth is different (Institution: 1967-04-28 vs Master: 1972-02-25), and mother's name is different (Institution: Ika Thamrin vs Master: Elisa Budiman).",
     "field_verdicts": {
       "v_jenis_kelamin": "SAME",
       "v_nama_ibu": "DIFFERENT",
@@ -1122,12 +1179,12 @@
     "overall_pass": true
   },
   {
-    "id": "qa/grade_b_cold::inc_01818",
-    "file_id": "qa/grade_b_cold",
+    "id": "qa/grade_b_warm::inc_01818",
+    "file_id": "qa/grade_b_warm",
     "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
     "reasoning_source": "CACHE",
     "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Praba Safitri vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Tasikmalaya vs Master: Lhokseumawe), date of birth is different (Institution: 1986-03-23 vs Master: 1992-12-04), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Cindy Pranowo vs Master: Clara Natsir).",
+    "hydrated_reason": "Full name is different (Institution: Praba Safitri vs Master: Anastasia Janet Rajasa), place of birth is different (Institution: Tasikmalaya vs Master: Medan), date of birth is different (Institution: 1986-03-23 vs Master: 1972-02-25), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Cindy Pranowo vs Master: Elisa Budiman).",
     "field_verdicts": {
       "v_jenis_kelamin": "DIFFERENT",
       "v_nama_ibu": "DIFFERENT",
@@ -1141,69 +1198,6 @@
       "tanggal_lahir": "1986-03-23",
       "jenis_kelamin": "LAKI-LAKI",
       "nama_ibu": "Cindy Pranowo"
-    },
-    "master_values": {},
-    "verdicts": {
-      "factuality_fidelity": {
-        "criterion": "factuality_fidelity",
-        "score": "pass",
-        "rationale": "All discordant fields accurately captured with zero hallucination on matching fields.",
-        "metadata": {
-          "hallucinated_fields": [],
-          "missing_fields": []
-        }
-      },
-      "template_consistency": {
-        "criterion": "template_consistency",
-        "score": "pass",
-        "rationale": "Template cleanly tokenized with standard placeholders and zero hardcoded record leaks.",
-        "metadata": {
-          "found_placeholders": [
-            "{incoming.nama_lengkap}",
-            "{master.nama_lengkap}",
-            "{incoming.tempat_lahir}",
-            "{master.tempat_lahir}",
-            "{incoming.tanggal_lahir}",
-            "{master.tanggal_lahir}",
-            "{incoming.jenis_kelamin}",
-            "{master.jenis_kelamin}",
-            "{incoming.nama_ibu}",
-            "{master.nama_ibu}"
-          ]
-        }
-      },
-      "conciseness_readability": {
-        "criterion": "conciseness_readability",
-        "score": "pass",
-        "rationale": "Crisp, direct explanation in 1 sentence(s) without conversational fluff.",
-        "metadata": {
-          "sentence_count": 1,
-          "has_preamble": false
-        }
-      }
-    },
-    "overall_pass": true
-  },
-  {
-    "id": "qa/grade_b_cold::inc_02578",
-    "file_id": "qa/grade_b_cold",
-    "pattern_name": "pattern_NAMA_DIFF_TMPT_DIFF_TGLL_DIFF_JKEL_DIFF_IBU_DIFF_3813a2e0",
-    "reasoning_source": "CACHE",
-    "template": "Full name is different (Institution: {incoming.nama_lengkap} vs Master: {master.nama_lengkap}), place of birth is different (Institution: {incoming.tempat_lahir} vs Master: {master.tempat_lahir}), date of birth is different (Institution: {incoming.tanggal_lahir} vs Master: {master.tanggal_lahir}), gender is different (Institution: {incoming.jenis_kelamin} vs Master: {master.jenis_kelamin}), and mother's name is different (Institution: {incoming.nama_ibu} vs Master: {master.nama_ibu}).",
-    "hydrated_reason": "Full name is different (Institution: Akarsana Simanjuntak vs Master: Lala Kamila Prayoga), place of birth is different (Institution: Lubuklinggau vs Master: Lhokseumawe), date of birth is different (Institution: 1994-11-21 vs Master: 1992-12-04), gender is different (Institution: LAKI-LAKI vs Master: PEREMPUAN), and mother's name is different (Institution: Lala Pangestu vs Master: Clara Natsir).",
-    "field_verdicts": {
-      "v_jenis_kelamin": "DIFFERENT",
-      "v_nama_ibu": "DIFFERENT",
-      "v_nama_lengkap": "DIFFERENT",
-      "v_tanggal_lahir": "DIFFERENT",
-      "v_tempat_lahir": "DIFFERENT"
-    },
-    "incoming_values": {
-      "nama_lengkap": "Akarsana Simanjuntak",
-      "tempat_lahir": "Lubuklinggau",
-      "tanggal_lahir": "1994-11-21",
-      "jenis_kelamin": "LAKI-LAKI",
-      "nama_ibu": "Lala Pangestu"
     },
     "master_values": {},
     "verdicts": {

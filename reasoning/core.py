@@ -102,10 +102,14 @@ def build_verdict_table(con, file_id: str, master_parquet_path: str | None = Non
                     mm.id_incoming,
                     TRIM(COALESCE(mm.nama_incoming, '')) AS nama_incoming,
                     TRIM(COALESCE(mm.tempat_lahir_incoming, '')) AS tempat_lahir_incoming,
-                    TRIM(COALESCE(mm.tanggal_lahir_incoming, '')) AS tanggal_lahir_incoming,
+                    SUBSTRING(TRIM(COALESCE(mm.tanggal_lahir_incoming, '')), 1, 10) AS tanggal_lahir_incoming,
                     TRIM(COALESCE(mm.jenis_kelamin_incoming, '')) AS jenis_kelamin_incoming,
                     TRIM(COALESCE(mm.nama_ibu_incoming, '')) AS nama_ibu_incoming,
-                    i.nik_master
+                    CASE 
+                        WHEN i.nik_master IS NOT NULL AND TRIM(CAST(i.nik_master AS VARCHAR)) != '' 
+                        THEN LPAD(TRIM(CAST(i.nik_master AS VARCHAR)), 16, '0')
+                        ELSE NULL 
+                    END AS nik_master
                 FROM pg.public.manual_matches mm
                 JOIN pg.public.institution i USING (file_id, id_incoming)
                 WHERE mm.file_id = {q(file_id)}
@@ -113,20 +117,21 @@ def build_verdict_table(con, file_id: str, master_parquet_path: str | None = Non
             ),
             target_master AS (
                 SELECT
-                    CAST(nik AS VARCHAR) AS nik_master,
+                    LPAD(TRIM(CAST(nik AS VARCHAR)), 16, '0') AS nik_master,
                     TRIM(COALESCE(nama_lengkap, '')) AS nama_master,
                     TRIM(COALESCE(tempat_lahir, '')) AS tempat_lahir_master,
-                    TRIM(COALESCE(CAST(tanggal_lahir AS VARCHAR), '')) AS tanggal_lahir_master,
+                    SUBSTRING(TRIM(COALESCE(CAST(tanggal_lahir AS VARCHAR), '')), 1, 10) AS tanggal_lahir_master,
                     TRIM(COALESCE(jenis_kelamin, '')) AS jenis_kelamin_master,
                     TRIM(COALESCE(nama_ibu, '')) AS nama_ibu_master
                 FROM read_parquet({q(m_path)})
                 WHERE nik IN (SELECT DISTINCT nik_master FROM pending_records WHERE nik_master IS NOT NULL)
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY nik) = 1
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY LPAD(TRIM(CAST(nik AS VARCHAR)), 16, '0')) = 1
             ),
             raw_joined AS (
                 SELECT
                     p.file_id,
                     p.id_incoming,
+                    p.nik_master,
                     p.nama_incoming,
                     p.tempat_lahir_incoming,
                     p.tanggal_lahir_incoming,
@@ -221,14 +226,15 @@ def build_verdict_table(con, file_id: str, master_parquet_path: str | None = Non
                 SELECT
                     mm.file_id,
                     mm.id_incoming,
+                    i.nik_master,
                     TRIM(COALESCE(mm.nama_incoming, '')) AS nama_incoming,
                     TRIM(COALESCE(mm.tempat_lahir_incoming, '')) AS tempat_lahir_incoming,
-                    TRIM(COALESCE(mm.tanggal_lahir_incoming, '')) AS tanggal_lahir_incoming,
+                    SUBSTRING(TRIM(COALESCE(mm.tanggal_lahir_incoming, '')), 1, 10) AS tanggal_lahir_incoming,
                     TRIM(COALESCE(mm.jenis_kelamin_incoming, '')) AS jenis_kelamin_incoming,
                     TRIM(COALESCE(mm.nama_ibu_incoming, '')) AS nama_ibu_incoming,
                     TRIM(COALESCE(m.nama_lengkap, '')) AS nama_master,
                     TRIM(COALESCE(m.tempat_lahir, '')) AS tempat_lahir_master,
-                    TRIM(COALESCE(CAST(m.tanggal_lahir AS VARCHAR), '')) AS tanggal_lahir_master,
+                    SUBSTRING(TRIM(COALESCE(CAST(m.tanggal_lahir AS VARCHAR), '')), 1, 10) AS tanggal_lahir_master,
                     TRIM(COALESCE(m.jenis_kelamin, '')) AS jenis_kelamin_master,
                     TRIM(COALESCE(m.nama_ibu, '')) AS nama_ibu_master
                 FROM pg.public.manual_matches mm
@@ -418,6 +424,10 @@ def construct_deterministic_fallback(sample_row: dict) -> str:
         "mother's name": (sample_row.get("v_nama_ibu"), sample_row.get("nama_ibu_incoming"), sample_row.get("nama_ibu_master")),
     }
 
+    v_list = [sample_row.get("v_nama"), sample_row.get("v_tempat_lahir"), sample_row.get("v_tanggal_lahir"), sample_row.get("v_jenis_kelamin"), sample_row.get("v_nama_ibu")]
+    if not sample_row.get("nik_master") and all(v == "EMPTY_IN_MASTER" for v in v_list):
+        return "No matching reference record found in master kependudukan for this NIK."
+
     clauses = []
     for label, (v, inc, mst) in verdicts.items():
         if v == "SAME":
@@ -504,7 +514,11 @@ def convert_explanation_to_template(explanation: str, sample_row: dict) -> str:
     valid_pairs = []
     for val, placeholder in pairs:
         if val is not None and str(val).strip() and str(val).strip().lower() not in {"null", "none", "nan", "-", "kosong"}:
-            valid_pairs.append((str(val).strip(), placeholder))
+            val_clean = str(val).strip()
+            # Hardening: Skip single characters or short stopwords that could collide with common English grammar
+            if len(val_clean) < 2 or val_clean.upper() in {"A", "AN", "OR", "NO", "DI", "IN", "IS", "VS", "TO"}:
+                continue
+            valid_pairs.append((val_clean, placeholder))
 
     valid_pairs.sort(key=lambda p: len(p[0]), reverse=True)
 
