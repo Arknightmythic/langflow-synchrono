@@ -48,15 +48,32 @@ Langflow** — portal pindah tanpa mengubah setelan kuncinya sekalipun.
 | Matching grade D & B lewat simulasi portal (`matching-dispatch`) | 400.040 baris: keputusan, snapshot, dan **reasoning identik**; cache reasoning dipakai bersama (22/22 dan 32/32 pola dari cache, nol panggilan LLM); callback HTTP 200 |
 | `infra/uji_asap.py` (endpoint REST + pembanding 62 field) | 21/21 |
 | `.sql` MySQL/MariaDB lewat `grading-dispatch` — tanpa dan dengan `sqlDialect` | COMPLETED; result **identik di setiap field** dengan `.csv` dan `.sql` PostgreSQL (grade A, 3.000 trusted, 0 anomali). Tanpa `sqlDialect`, konverter PostgreSQL hanya mengintip kepalanya lalu engine membelokkannya ke `konverter-mysql` |
+| **Berdiri sendiri** (tanpa checkout Langflow): 15 dump dummy (`test-data-csv/uji-sql/`, pg_dump 16 / mysqldump 8.4 / mariadb-dump 10.11, grade A–E) + 5 CSV | 20/20 COMPLETED; **setiap dump identik di setiap field dengan CSV grade-nya** |
+| Berdiri sendiri: matching grade D lewat simulasi portal | 200.020 baris, COMPLETED, reasoning 22 pola, tersuntik ke DB portal; migrasi/seed dari `infra/skema/` jalan |
 
 ---
 
-## Satu logika — dimuat langsung, bukan disalin
+## Berdiri sendiri — logika Langflow, disalin ke repo ini
 
-Yang dijalankan adalah **kelas komponen yang sama** dengan yang dipakai
-Langflow (`langflow-synchrono/components/`) dan modul `lib/` yang sama, dimuat
-langsung dari checkout repo yang sama ([`app/alur.py`](app/alur.py)). Teks
-balasan identik bukan karena ditiru, tapi karena kode yang menghasilkannya sama.
+Sejak 28 Sep 2026 service ini **tidak butuh checkout langflow-synchrono** untuk
+jalan. Yang dijalankan tetap **kelas komponen yang sama** dengan milik Langflow
+— tapi salinannya ada di repo ini:
+
+| Folder | Isi | Asal |
+|---|---|---|
+| `lib/` | grading, matching, reasoning, konversi, normalisasi | `langflow-synchrono/lib/` |
+| `components/` | komponen keenam flow + matching lama | `langflow-synchrono/components/` |
+| `konverter/`, `infra/Dockerfile.konverter*` | konverter jalur B `.sql`/`.mdf`/`.dmp` | `langflow-synchrono/konverter/`, `infra/` |
+| `infra/skema/` | `migrate.py`, `seed.py`, migrasi & seeder | `langflow-synchrono/infra/` |
+
+Teks balasan identik dengan Langflow karena kodenya sama, dimuat lewat
+[`app/alur.py`](app/alur.py). Kedua repo kini berkembang sendiri; perbaikan di
+satu sisi biasanya perlu dibawa ke sisi lain. Kalau kedua checkout
+bersebelahan, perbedaannya terlihat dengan:
+
+```powershell
+python infra\cek_salinan.py      # N/N sama, atau daftar yang berbeda
+```
 
 Satu kelebihan nyata dibanding Langflow: **tidak ada flow yang perlu dibangun
 ulang.** Langflow menyimpan salinan kode komponen DI DALAM flow; komponen yang
@@ -66,41 +83,30 @@ format yang ditambahkan 24 Sep — `.xls` diterima lalu gagal di pekerja,
 alih-alih ditolak seketika. Service ini selalu memuat berkas komponen terkini;
 cukup restart container.
 
-**Satu pengecualian: konverter jalur B DISALIN.** Keputusan 28 Sep 2026 —
-konverter `.sql`/`.mdf`/`.dmp` (`konverter/`, `infra/Dockerfile.konverter*`)
-ada di kedua branch, dan service membangun miliknya sendiri. Rute konversinya
-(`lib/_konversi.py`) tetap dimuat dari `lib/` bersama. Dua salinan harus
-sejalan — periksa sebelum deploy:
-
-```powershell
-python infra\cek_konverter.py      # 16/16 sama, atau daftar yang berbeda
-```
-
 ---
 
 ## Menjalankan di mesin ini
 
-Service ini menumpang jaringan dan penyimpanan stack Langflow — SeaweedFS
-lokal, penerus S3, dan PostgreSQL di host — jadi stack itu harus hidup lebih
-dulu. Konverter jalur B-nya milik service sendiri (`service-konverter*`):
+Yang dibutuhkan dari luar hanya PostgreSQL di `localhost:5432` (DBngin) dan
+SeaweedFS/S3 di `localhost:8333` — milik stack mana pun, atau
+`docker-compose.infra.yml` di folder ini. Konverter dan penerus S3 ikut naik:
 
 ```powershell
-cd ..\langflow-synchrono\infra ; docker compose up -d seaweedfs s3-relay
-cd ..\..\synchrono-service      ; docker compose up -d --build
+docker compose up -d --build
 ```
 
-- Login lokal: `admin` / `synchrono123` (sama dengan Langflow lokal).
+- Login lokal: `admin` / `synchrono123`.
 - Kunci tetap untuk skrip & benchmark: `synchrono-bench-key`.
 - Dokumentasi API otomatis: <http://localhost:8000/docs>.
 - Perubahan di `lib/`, `components/`, atau `app/`: **`docker restart synchrono-service`**.
 - Dump `.sql` MySQL/MariaDB, `.mdf`, `.dmp` butuh konverternya sendiri, di balik
-  profil: `docker compose --profile mysql up -d --build service-konverter-mysql`
+  profil: `docker compose --profile mysql up -d --build konverter-mysql`
   (atau `mssql` / `oracle`). Tanpa itu unggahan format tersebut gagal dengan
   pesan yang menyebut profilnya.
 - Perubahan di `konverter/`: **`docker restart synchrono-service-konverter`**
   (dan `-mysql` dst. yang hidup) — kodenya di-mount, dimuat sekali saat menyala.
   Kalau `infra/Dockerfile.konverter*` yang berubah: `docker compose up -d --build
-  service-konverter`.
+  konverter`.
 
 Koleksi Postman: **`infra/postman_synchrono_service.json`** — auth, enam flow,
 contoh galat, kesehatan, dan REST. Jalankan 0a → 0b dulu (atau isi `api_key`);
@@ -158,25 +164,30 @@ app/
   rute_config.py     REST aturan grade
   rute_matching.py   REST matching lama (n1..n7)
   skema.py           model muatan REST (dokumentasi /docs)
+lib/                 logika grading/matching/reasoning/konversi — salinan dari Langflow
+components/          komponen keenam flow + matching lama — salinan dari Langflow
+konverter/           layanan konversi jalur B — salinan dari Langflow
 infra/
-  postman_synchrono_service.json   koleksi Postman (dibangkitkan)
-  buat_postman.py    pembangkit koleksi Postman
-  uji_kompat.py      Langflow vs service, permintaan yang sama
-  uji_asap.py        uji REST + pembanding hasil grading
-  siapkan_seaweed.py isi SeaweedFS lokal dengan tata letak server
-  cek_konverter.py   salinan konverter di sini vs langflow-synchrono
+  skema/             migrate.py, seed.py, db/migrasi, db/seeder — salinan dari Langflow
   Dockerfile.konverter*, konverter*-nyalakan.sh, konverter-mysql.cnf
                      image konverter jalur B (PostgreSQL 18, SQL Server,
-                     Oracle, MariaDB) — SALINAN dari langflow-synchrono
-konverter/           layanan konversi jalur B — SALINAN dari langflow-synchrono
-beban/               benchmark k6, Prometheus, Grafana
-docker-compose.yml         lokal, berdampingan dengan stack Langflow
-docker-compose.server.yml  server — dipakai BERSAMA compose server Langflow
-compose.langflow-lokal.yml override Langflow lokal: rujukan wilayah dari SeaweedFS lokal
+                     Oracle, MariaDB)
+  s3-config.json     identitas S3 untuk SeaweedFS di docker-compose.infra.yml
+  cek_salinan.py     apa saja yang berbeda dari langflow-synchrono
+  postman_synchrono_service.json   koleksi Postman (dibangkitkan)
+  buat_postman.py    pembangkit koleksi Postman
+  uji_kompat.py      Langflow vs service, permintaan yang sama (alat uji)
+  uji_asap.py        uji REST + pembanding hasil grading
+  siapkan_seaweed.py isi SeaweedFS lokal dengan tata letak server
+beban/               benchmark k6, Prometheus, Grafana (service vs Langflow)
+docker-compose.yml         lokal, berdiri sendiri
+docker-compose.server.yml  server, berdiri sendiri — `.env` di folder ini
+docker-compose.infra.yml   PostgreSQL + SeaweedFS untuk server yang belum punya
+.env.server.example        contoh `.env` server
+compose.langflow-lokal.yml override Langflow lokal (hanya untuk membandingkan)
 ```
 
-> **Branch terpisah, dua checkout.** Service ini di-push sebagai branch
-> tersendiri di repo inocts, terpisah dari branch Langflow, dan tidak mengubah
-> satu pun berkas di sana demi service. Saat jalan ia tetap memuat `lib/` dan
-> `components/` dari checkout `langflow-synchrono` di sebelahnya — lihat
-> DEPLOY.md. Konverter jalur B satu-satunya yang disalin (lihat di atas).
+> **Branch terpisah, berdiri sendiri.** Service ini di-push sebagai branch
+> tersendiri di repo inocts, dan tidak butuh checkout `langflow-synchrono` untuk
+> jalan — lihat DEPLOY.md. Yang masih menyebut Langflow hanya alat pembanding
+> (`uji_kompat.py`, `beban/`, `compose.langflow-lokal.yml`).

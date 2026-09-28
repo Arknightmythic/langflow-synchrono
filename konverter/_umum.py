@@ -98,18 +98,28 @@ def pilih_dari_kandidat(kandidat: dict, paksa: str | None = None
     }
 
 
+def kolom_ada(peta: dict) -> list[str]:
+    """Kolom kontrak yang ADA di tabel sumber, dalam urutan kontrak."""
+    return [e for e in KONTRAK if peta.get(e)]
+
+
 def sql_kontrak(peta: dict, kutip: str = '""', cast: str = "VARCHAR") -> str:
     """
-    Daftar kolom SELECT yang menghasilkan enam kolom kontrak, seluruhnya teks.
+    Daftar kolom SELECT untuk kolom kontrak yang ADA di sumber, seluruhnya teks.
 
-    Kolom yang tidak ada di sumbernya tetap ikut sebagai NULL bertipe. Itu bukan
-    kerapian: parquet yang bentuk kolomnya berubah-ubah memaksa pembaca di sisi
-    grading bercabang, dan cabang seperti itu adalah tempat bug bersembunyi.
+    KOLOM YANG TIDAK ADA TIDAK DITULIS — bukan ditulis sebagai NULL.
+
+    Versi pertama menulis keenamnya, yang tidak ada sebagai NULL bertipe, demi
+    parquet berbentuk tetap. Itu keliru, dan baru terlihat saat dump grade C/D/E
+    diuji (28 Sep 2026): grading tidak bisa membedakan kolom yang tidak ada dari
+    kolom yang ada tapi kosong seluruhnya. Dump tanpa kolom NIK jadi "punya
+    kolom NIK dengan 3.000 NIK tidak tepercaya", dan grade C/D-nya jatuh ke E —
+    sementara berkas yang sama sebagai CSV mendapat C/D.
+
+    Bentuk yang berubah-ubah bukan hal baru bagi grading: CSV dan parquet kiriman
+    portal pun membawa kolom sebanyak yang dimiliki sumbernya. Parquet dari
+    konverter kini sama persis dengan itu.
     """
     buka, tutup = kutip[0], kutip[-1]
-    bagian = []
-    for e in KONTRAK:
-        asal = peta.get(e)
-        bagian.append(f"CAST({buka}{asal}{tutup} AS {cast}) AS {e}" if asal
-                      else f"CAST(NULL AS {cast}) AS {e}")
-    return ", ".join(bagian)
+    return ", ".join(f"CAST({buka}{peta[e]}{tutup} AS {cast}) AS {e}"
+                     for e in kolom_ada(peta))

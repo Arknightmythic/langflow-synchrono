@@ -44,11 +44,14 @@ RUN python -c "import duckdb; duckdb.connect().execute('INSTALL excel')"
 COPY app ./app
 COPY infra ./infra
 
-# lib/ dan components/ TIDAK disalin ke image — keduanya di-mount dari
-# langflow-synchrono saat runtime, di lokal maupun di server. Menyalinnya
-# berarti ada dua salinan logika yang bisa berbeda diam-diam. Kelas komponen
-# dimuat langsung dari SYNCHRONO_COMPONENTS (lihat app/alur.py); folder
-# matching ada di PYTHONPATH untuk endpoint REST matching lama (n1..n7).
+# lib/ dan components/ milik repo INI — service berdiri sendiri, tanpa checkout
+# langflow-synchrono (keputusan 28 Sep 2026). Keduanya ikut di image, jadi image
+# ini jalan tanpa mount apa pun; compose tetap me-mount folder yang sama supaya
+# `git pull` + restart cukup, tanpa build ulang. Kelas komponen dimuat dari
+# SYNCHRONO_COMPONENTS (lihat app/alur.py); folder matching ada di PYTHONPATH
+# untuk endpoint REST matching lama (n1..n7).
+COPY lib ./lib
+COPY components /components
 ENV PYTHONPATH=/synchrono/lib:/components/matching \
     SYNCHRONO_COMPONENTS=/components
 

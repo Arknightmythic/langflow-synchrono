@@ -69,7 +69,7 @@ import time
 
 import duckdb
 
-from _umum import KONTRAK, pilih_dari_kandidat, sql_kontrak
+from _umum import kolom_ada, pilih_dari_kandidat, sql_kontrak
 
 HOST = os.getenv("KONV_MYSQL_HOST", "127.0.0.1")
 PORT = os.getenv("KONV_MYSQL_PORT", "3306")
@@ -201,17 +201,17 @@ def pilih_tabel(con, tabel_paksa: str | None = None) -> tuple[str, dict]:
 
 def ekspor(con, tabel: str, peta: dict, tujuan: str) -> int:
     """
-    Enam kolom kontrak, seluruhnya teks — DUA KALI dipaksa jadi teks.
+    Kolom kontrak yang ada di sumber, seluruhnya teks — DUA KALI dipaksa jadi teks.
 
     Di MariaDB (`CAST ... AS CHAR`) supaya nilainya keluar dalam bentuk
     tulisannya sendiri: tanggal `0000-00-00` warisan MySQL lama tetap teks
     `0000-00-00` untuk dinilai grading, bukan galat konversi tanggal di DuckDB.
-    Di DuckDB (`VARCHAR`) supaya kolom yang tidak ada di sumber tetap bertipe
-    teks di parquet, bukan tipe NULL.
+    Di DuckDB (`VARCHAR`) supaya tipe parquet-nya pasti teks, apa pun yang
+    dilaporkan driver. Kolom yang tidak ada TIDAK ditulis — lihat `sql_kontrak()`.
     """
     dalam = (f"SELECT {sql_kontrak(peta, kutip='``', cast='CHAR')} "
              f"FROM {_kutip(tabel)}").replace("'", "''")
-    luar = ", ".join(f"CAST({e} AS VARCHAR) AS {e}" for e in KONTRAK)
+    luar = ", ".join(f"CAST({e} AS VARCHAR) AS {e}" for e in kolom_ada(peta))
     con.execute(f"""COPY (SELECT {luar} FROM mysql_query('sumber', '{dalam}'))
                     TO '{tujuan}' (FORMAT parquet)""")
     return con.execute(f"SELECT count(*) FROM read_parquet('{tujuan}')").fetchone()[0]

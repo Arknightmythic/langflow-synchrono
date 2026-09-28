@@ -7,18 +7,15 @@ Portal sudah terikat pada kontrak Langflow: `POST /api/v1/run/<endpoint>`,
 apa adanya, supaya portal bisa dipindahkan ke service ini tanpa mengubah satu
 baris kode pun.
 
-KOMPONENNYA SAMA PERSIS, BUKAN SALINAN
+KOMPONENNYA SAMA DENGAN MILIK LANGFLOW — SALINANNYA ADA DI REPO INI
 
 Yang dijalankan di sini adalah KELAS KOMPONEN YANG SAMA dengan yang dipakai
-Langflow — berkas di `langflow-synchrono/components/`, dimuat langsung. Tanpa
-Langflow terpasang, `_shared.py` memberinya kelas pengganti (`Component`,
-`Message`, ...), dan metode keluarannya dipanggil persis seperti Langflow
-memanggilnya. Akibatnya:
-
-  * teks balasan identik dengan versi Langflow — bukan karena ditiru, tapi
-    karena kode yang menghasilkannya sama;
-  * perubahan komponen berikutnya otomatis berlaku di sini juga. Tidak ada dua
-    salinan logika yang bisa berbeda diam-diam.
+Langflow — `components/` di repo ini, salinan dari langflow-synchrono (sejak 28
+Sep 2026 service berdiri sendiri, tanpa checkout Langflow). Tanpa Langflow
+terpasang, `_shared.py` memberinya kelas pengganti (`Component`, `Message`,
+...), dan metode keluarannya dipanggil persis seperti Langflow memanggilnya.
+Akibatnya teks balasan identik dengan versi Langflow — bukan karena ditiru,
+tapi karena kodenya sama. Perbedaan antar-repo ditunjukkan `infra/cek_salinan.py`.
 
 ID NODE DITURUNKAN DENGAN RUMUS YANG SAMA
 
@@ -59,9 +56,9 @@ def _pasang_stub_bertipe() -> None:
 
     Diganti di atribut modul `_shared`, SEBELUM komponen mana pun dimuat:
     komponen melakukan `from _shared import MessageTextInput` saat dimuat, jadi
-    mereka mendapat versi ini. lib/ milik langflow-synchrono tidak perlu diubah
-    — service ini berada di branch sendiri dan tidak boleh menuntut perubahan
-    di sana.
+    mereka mendapat versi ini. Dipasang dari sini, bukan ditulis di lib/, supaya
+    lib/ tetap identik dengan salinan Langflow dan perbaikan mudah dibawa
+    bolak-balik.
     """
     if getattr(_shared, "LANGFLOW_TERSEDIA", False):
         return

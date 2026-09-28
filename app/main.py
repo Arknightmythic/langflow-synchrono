@@ -14,9 +14,9 @@ DUA MUKA API, SATU LOGIKA
                      status bermakna. Dipertahankan untuk perkakas benchmark
                      (beban/, infra/uji_asap.py).
 
-Keduanya menjalankan logika yang sama: `langflow-synchrono/lib/` dan kelas
-komponen di `langflow-synchrono/components/`, dimuat langsung — tidak ada
-salinan yang bisa tertinggal (lihat alur.py).
+Keduanya menjalankan logika yang sama: `lib/` dan kelas komponen di
+`components/` repo ini — salinan dari langflow-synchrono, sehingga service
+berjalan tanpa checkout Langflow (lihat alur.py).
 """
 
 from __future__ import annotations

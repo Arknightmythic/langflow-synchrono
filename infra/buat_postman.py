@@ -28,8 +28,10 @@ from pathlib import Path
 
 DISINI = Path(__file__).resolve().parent
 sys.path.insert(0, str(DISINI.parent))
+# app.alur mengimpor `_shared` dari lib/ repo ini.
+sys.path.insert(0, str(DISINI.parent / "lib"))
 
-from app.alur import ALUR  # noqa: E402 — hanya pustaka standar di tingkat modul
+from app.alur import ALUR  # noqa: E402
 
 KELUARAN = DISINI / "postman_synchrono_service.json"
 

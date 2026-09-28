@@ -47,7 +47,7 @@ import time
 
 import duckdb
 
-from _umum import KONTRAK, pilih_dari_kandidat, sql_kontrak
+from _umum import kolom_ada, pilih_dari_kandidat, sql_kontrak
 
 ORA_DSN = os.getenv("KONV_ORA_DSN", "localhost:1521/FREEPDB1")
 ORA_ADMIN = os.getenv("KONV_ORA_ADMIN", "system")
@@ -247,8 +247,10 @@ def konversi(jalur_dmp: str, job_id: str, tujuan: str,
             nama_tabel, alasan = pilih_dari_kandidat(kandidat, tabel)
 
             con = duckdb.connect()
+            # Hanya kolom yang ada di sumber — lihat `sql_kontrak()`.
             con.execute("CREATE TABLE hasil ("
-                        + ", ".join(f"{k} VARCHAR" for k in KONTRAK) + ")")
+                        + ", ".join(f"{k} VARCHAR" for k in kolom_ada(alasan["peta"]))
+                        + ")")
             pilih = sql_kontrak(alasan["peta"], kutip='""', cast="VARCHAR2(4000)")
 
             # LEWAT ARROW, BUKAN BARIS PER BARIS.
@@ -295,5 +297,5 @@ def konversi(jalur_dmp: str, job_id: str, tujuan: str,
         "skema_asal": asal,
         "row_count": baris,
         "durasi_detik": round(time.perf_counter() - mulai, 1),
-        "kolom_kontrak": KONTRAK,
+        "kolom_kontrak": kolom_ada(alasan["peta"]),
     }

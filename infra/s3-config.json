@@ -1,0 +1,14 @@
+{
+  "identities": [
+    {
+      "name": "synchrono",
+      "credentials": [
+        {
+          "accessKey": "synchrono",
+          "secretKey": "synchrono123"
+        }
+      ],
+      "actions": ["Read", "Write", "List", "Tagging", "Admin"]
+    }
+  ]
+}

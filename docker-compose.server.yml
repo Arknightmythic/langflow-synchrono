@@ -1,64 +1,44 @@
-# Synchrono Service — DEPLOY KE SERVER, TANPA LANGFLOW.
+# Synchrono Service — DEPLOY KE SERVER, BERDIRI SENDIRI.
 #
-# BUKAN BERKAS YANG BERDIRI SENDIRI. Dipakai BERSAMA docker-compose.server.yml
-# milik langflow-synchrono, sebagai berkas KEDUA:
+# Tidak butuh checkout langflow-synchrono sama sekali (keputusan 28 Sep 2026):
+# lib/, components/, konverter jalur B, dan migrasi/seed semuanya ada di repo
+# ini. Yang dibutuhkan dari luar hanya PostgreSQL engine dan SeaweedFS — dua-duanya
+# dijangkau lewat alamat di .env, dan boleh milik stack mana pun.
 #
-#     cd <repo>/langflow-synchrono/infra          # folder yang memuat .env
-#     docker compose -f docker-compose.server.yml \
-#                    -f ../../synchrono-service/docker-compose.server.yml \
-#                    up -d --build synchrono-service
+#     cp .env.server.example .env        # lalu isi
+#     docker compose -f docker-compose.server.yml --env-file .env up -d --build
 #
-# Kenapa begitu:
+# Server yang belum punya PostgreSQL + SeaweedFS: `docker-compose.infra.yml` di
+# folder ini (lihat DEPLOY.md).
 #
-#   * `.env` yang SAMA dengan Langflow — PG_HOST/PG_PASSWORD, S3_ENDPOINT,
-#     PORTAL_PG_DSN, REASONING_AI_* — tidak ditulis dua kali.
-#   * `s3-relay` milik berkas pertama dipakai apa adanya, dan migrasi/seed
-#     memakai migrate.py & seed.py yang sama (`skema-service` di bawah).
-#     `depends_on` membuat perintah di atas ikut menaikkan semuanya, tapi TIDAK
-#     menaikkan — maupun membangun — Langflow.
-#   * KONVERTER jalur B dibangun dari branch INI (`konverter/`, `infra/Dockerfile.
-#     konverter*`), bukan dari checkout Langflow — lihat blok konverter di bawah.
-#   * Satu proyek compose — kalau Langflow juga jalan di server yang sama,
-#     keduanya berbagi konverter & penerus S3, bukan saling bentrok nama.
-#
-# SEMUA PATH DI SINI RELATIF TERHADAP FOLDER BERKAS PERTAMA
-# (langflow-synchrono/infra), bukan folder berkas ini — aturan compose untuk
-# beberapa `-f`. Karena itu `../lib` di bawah berarti langflow-synchrono/lib,
-# dan build context `../../synchrono-service` mengandaikan kedua folder
-# bersebelahan:
-#
-#     <induk>/langflow-synchrono/     (repo git)
-#     <induk>/synchrono-service/      (folder ini)
-#
-# ENV DITULIS EKSPLISIT, bukan `extends: langflow`. `extends` ikut mewarisi port
-# 7860, container_name, dan volume data Langflow; membuangnya butuh tag
-# `!override` yang baru ada di Compose 2.24 — belum tentu tersedia di server.
-# Kalau layanan `langflow` di berkas pertama mendapat variabel baru yang
-# dipakai lib/, tambahkan juga di sini.
+# lib/, components/, konverter/, dan infra/skema/ di-mount dari folder ini —
+# `git pull` lalu restart container yang bersangkutan, tanpa build ulang. Image
+# service juga membawa salinannya, jadi mount itu bukan syarat untuk jalan.
+
+# DSN ditulis SEKALI lalu dipakai dua service. Kalau ditulis dua kali, cepat
+# atau lambat yang satu diubah dan yang lain tertinggal — skema masuk ke satu
+# basis data, service membaca yang lain.
+x-pg-dsn: &pg_dsn "host=${PG_HOST:?isi di .env} port=${PG_PORT:-5430} dbname=${PG_DB:-synchrono} user=${PG_USER:-root} password=${PG_PASSWORD:?isi di .env}"
 
 services:
-  # ── Migrasi + seeder, dengan image service ─────────────────────────────
+  # ── Migrasi + seeder, sekali jalan lalu berhenti ────────────────────────
   #
-  # Setara `skema` di berkas pertama — migrate.py dan seed.py yang SAMA, dari
-  # langflow-synchrono/infra — tapi dijalankan dengan image service, bukan
-  # image Langflow. `skema` di berkas pertama memakai Dockerfile.langflow:
-  # bergantung padanya berarti membangun image Langflow (~1,2 GB) hanya untuk
-  # menjalankan dua skrip yang cuma butuh DuckDB. Aman berdampingan dengan
-  # `skema`: migrasi dicatat dan tidak pernah dijalankan dua kali, seeder tidak
-  # pernah menimpa.
+  # migrate.py mengubah BENTUK basis data (tiap migrasi dicatat di
+  # `schema_migrations`, tidak pernah dua kali); seed.py mengisi DATA awal dengan
+  # ON CONFLICT DO NOTHING, jadi ambang yang disetel operator tidak pernah
+  # ditimpa. Service menunggunya selesai dengan sukses.
   skema-service:
     build:
-      context: ../../synchrono-service
+      context: .
       dockerfile: Dockerfile
     image: synchrono-service:2.0.0
     container_name: synchrono-skema-service
     environment:
-      PG_DSN: "host=${PG_HOST:-172.16.12.98} port=${PG_PORT:-5430} dbname=${PG_DB:-synchrono} user=${PG_USER:-root} password=${PG_PASSWORD:?isi di .env}"
+      PG_DSN: *pg_dsn
       SKEMA_PERCOBAAN: "${SKEMA_PERCOBAAN:-12}"
     networks: [luar]
     volumes:
-      # `.` = langflow-synchrono/infra (folder berkas pertama).
-      - .:/skema:ro
+      - ./infra/skema:/skema:ro
     command:
       - sh
       - -c
@@ -80,44 +60,30 @@ services:
 
   synchrono-service:
     build:
-      context: ../../synchrono-service
+      context: .
       dockerfile: Dockerfile
     image: synchrono-service:2.0.0
     container_name: synchrono-service
     ports:
-      # 8000 = berdampingan dengan Langflow. Setel SERVICE_PORT=7860 di .env
-      # kalau service ini MENGGANTIKAN Langflow (Langflow harus berhenti dulu):
-      # alamat yang disetel di portal tidak perlu diubah sama sekali.
+      # 7860 = menggantikan Langflow: alamat yang disetel di portal tidak perlu
+      # diubah. 8000 kalau berdampingan dengan Langflow yang masih jalan.
       - "${SERVICE_PORT:-8000}:8000"
     environment:
       WEB_CONCURRENCY: "${WEB_CONCURRENCY:-1}"
       ACCESS_LOG: "${ACCESS_LOG:-0}"
 
       # ── Autentikasi, kontrak Langflow ────────────────────────────────────
-      # Login dengan akun yang sama seperti admin Langflow, kecuali diisi lain.
-      SERVICE_SUPERUSER: "${SERVICE_SUPERUSER:-${LANGFLOW_SUPERUSER:-admin}}"
-      SERVICE_SUPERUSER_PASSWORD: "${SERVICE_SUPERUSER_PASSWORD:-${LANGFLOW_SUPERUSER_PASSWORD:-}}"
-      # Isi dengan kunci sk-... yang SEKARANG dipakai portal untuk Langflow:
-      # portal pindah ke service ini tanpa mengubah setelan kuncinya.
+      SERVICE_SUPERUSER: "${SERVICE_SUPERUSER:-admin}"
+      # Kosong = login dimatikan; hanya kunci statis/terdaftar yang berlaku.
+      SERVICE_SUPERUSER_PASSWORD: "${SERVICE_SUPERUSER_PASSWORD:-}"
+      # Kunci sk-... yang dipakai portal — portal pindah tanpa mengubah setelannya.
       SERVICE_API_KEY: "${SERVICE_API_KEY:-}"
       # Penanda tangan token login. Kosong = acak tiap restart (cukup login ulang).
       SERVICE_SECRET_KEY: "${SERVICE_SECRET_KEY:-}"
 
-      # ── Sama dengan layanan `langflow` di berkas pertama ────────────────
-      PYTHONPATH: /synchrono/lib:/components/matching
-      SYNCHRONO_COMPONENTS: /components
-      PG_DSN: "host=${PG_HOST:-172.16.12.98} port=${PG_PORT:-5430} dbname=${PG_DB:-synchrono} user=${PG_USER:-root} password=${PG_PASSWORD:?isi di .env}"
-
-      PORTAL_PG_DSN: "${PORTAL_PG_DSN:-}"
-      MATCHING_MAX_CONCURRENT: "${MATCHING_MAX_CONCURRENT:-1}"
-      REASONING_AI_BASE_URL: "${REASONING_AI_BASE_URL:-}"
-      REASONING_AI_MODEL: "${REASONING_AI_MODEL:-gemma3:12b}"
-      REASONING_AI_API_KEY: "${REASONING_AI_API_KEY:-}"
-      REASONING_AI_ALLOW_EXTERNAL: "${REASONING_AI_ALLOW_EXTERNAL:-0}"
-      REASONING_AI_MAX_PATTERNS_PER_JOB: "${REASONING_AI_MAX_PATTERNS_PER_JOB:-25}"
-      REASONING_AI_BUDGET_SECONDS: "${REASONING_AI_BUDGET_SECONDS:-90}"
-
-      S3_ENDPOINT: "${S3_ENDPOINT:-172.16.12.98:8333}"
+      # ── Penyimpanan ─────────────────────────────────────────────────────
+      PG_DSN: *pg_dsn
+      S3_ENDPOINT: "${S3_ENDPOINT:?isi di .env}"
       S3_ACCESS_KEY: "${S3_ACCESS_KEY:-ADMIN}"
       S3_SECRET_KEY: "${S3_SECRET_KEY:-Password1234}"
       S3_USE_SSL: "false"
@@ -128,6 +94,17 @@ services:
       WILAYAH_S3_SECRET: ""
       WILAYAH_KECAMATAN_TEGAS: "${WILAYAH_KECAMATAN_TEGAS:-0}"
 
+      # ── Matching & reasoning ────────────────────────────────────────────
+      PORTAL_PG_DSN: "${PORTAL_PG_DSN:-}"
+      MATCHING_MAX_CONCURRENT: "${MATCHING_MAX_CONCURRENT:-1}"
+      REASONING_AI_BASE_URL: "${REASONING_AI_BASE_URL:-}"
+      REASONING_AI_MODEL: "${REASONING_AI_MODEL:-gemma3:12b}"
+      REASONING_AI_API_KEY: "${REASONING_AI_API_KEY:-}"
+      REASONING_AI_ALLOW_EXTERNAL: "${REASONING_AI_ALLOW_EXTERNAL:-0}"
+      REASONING_AI_MAX_PATTERNS_PER_JOB: "${REASONING_AI_MAX_PATTERNS_PER_JOB:-25}"
+      REASONING_AI_BUDGET_SECONDS: "${REASONING_AI_BUDGET_SECONDS:-90}"
+
+      # ── DuckDB ──────────────────────────────────────────────────────────
       DUCKDB_MEMORY_LIMIT: "${DUCKDB_MEMORY_LIMIT:-3GB}"
       DUCKDB_TEMP_DIR: "${DUCKDB_TEMP_DIR:-/tmp/duckdb_spill}"
       DUCKDB_MODE: "${DUCKDB_MODE:-kolam}"
@@ -135,21 +112,18 @@ services:
       DUCKDB_POOL_TIMEOUT: "${DUCKDB_POOL_TIMEOUT:-30}"
       DUCKDB_POOL_MAX_UMUR: "${DUCKDB_POOL_MAX_UMUR:-1800}"
 
+      # ── Grading & normalisasi ───────────────────────────────────────────
       GRADING_MAX_CONCURRENT: "${GRADING_MAX_CONCURRENT:-2}"
       GRADING_STALE_MINUTES: "15"
       GRADING_CALLBACK_RETRIES: "3"
       GRADING_CALLBACK_TIMEOUT: "20"
-
       NORMALISASI_AI: "${NORMALISASI_AI:-nama_saja}"
       NORMALISASI_AI_MODEL: "${NORMALISASI_AI_MODEL:-gemma4:31b}"
       NORMALISASI_AI_BASE_URL: "${NORMALISASI_AI_BASE_URL:-}"
       OLLAMA_API_KEY: "${OLLAMA_API_KEY:-ollama}"
     volumes:
-      # Relatif terhadap langflow-synchrono/infra: logika yang SAMA dengan
-      # Langflow, dari checkout git yang sama. `git pull` di sana lalu restart
-      # container ini — tanpa build ulang.
-      - ../lib:/synchrono/lib:ro
-      - ../components:/components:ro
+      - ./lib:/synchrono/lib:ro
+      - ./components:/components:ro
     depends_on:
       skema-service:
         condition: service_completed_successfully
@@ -170,19 +144,34 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  # ── Konverter jalur B — DIBANGUN DARI BRANCH INI ─────────────────────────
+  # ── Penerus S3 untuk konverter ──────────────────────────────────────────
   #
-  # Nama service SAMA dengan di berkas pertama, jadi definisi di sini MENIMPA
-  # yang di sana: compose menggabungkan berkas `-f`, dan `build`, `environment`,
-  # serta volume dengan tujuan yang sama diambil dari berkas terakhir. Hasilnya
-  # tetap SATU set container — tidak ada nama yang bentrok — tapi kodenya milik
-  # synchrono-service.
+  # Konverter tinggal di jaringan `dalam` yang TIDAK punya rute ke mana pun —
+  # berkas tidak tepercaya yang dipulihkannya tidak bisa mengirim apa pun keluar.
+  # Penerus ini satu-satunya jembatan: berkaki di kedua jaringan, meneruskan
+  # SATU port TCP ke SATU alamat. TCP mentah, bukan HTTP — tanda tangan SigV4
+  # dihitung atas header Host, dan proxy HTTP yang menulis ulangnya membatalkan
+  # tanda tangan itu.
+  s3-relay:
+    image: alpine/socat:latest
+    container_name: synchrono-s3-relay
+    command: >
+      TCP-LISTEN:8333,fork,reuseaddr
+      TCP:${S3_RELAY_TARGET:?isi di .env - biasanya sama dengan S3_ENDPOINT}
+    networks: [dalam, luar]
+    restart: unless-stopped
+
+  # ── Konverter jalur B (.sql / .mdf / .dmp) ──────────────────────────────
   #
-  # Salinan `konverter/` di sini dan di langflow-synchrono harus SEJALAN.
-  # Periksa dengan `python infra/cek_konverter.py` (dari folder service).
+  # PostgreSQL selalu naik; yang lain di balik profil karena memegang memori
+  # sepanjang hidup, dipakai atau tidak:
+  #     docker compose -f docker-compose.server.yml --env-file .env \
+  #       --profile mysql up -d --build konverter-mysql      (atau mssql / oracle)
+  # Hanya di jaringan `dalam`, tanpa `ports:` — port yang dipublikasikan Docker
+  # melewati ufw, dan layanan ini memulihkan berkas tidak tepercaya.
   konverter:
     build:
-      context: ../../synchrono-service
+      context: .
       dockerfile: infra/Dockerfile.konverter
     container_name: synchrono-konverter
     environment:
@@ -202,10 +191,9 @@ services:
       S3_SECRET_KEY: "${S3_SECRET_KEY:-Password1234}"
       S3_USE_SSL: "false"
     volumes:
-      # lib/ tetap dari checkout Langflow — `_umum.py` memakai pengenal kolom
-      # yang sama dengan grading, satu mesin, bukan dua.
-      - ../lib:/synchrono/lib:ro
-      - ../../synchrono-service/konverter:/konverter:ro
+      # lib/ dipakai `_umum.py`: pengenal kolom yang sama dengan grading.
+      - ./lib:/synchrono/lib:ro
+      - ./konverter:/konverter:ro
       - konverter-pg18:/var/lib/postgresql
     networks: [dalam]
     restart: unless-stopped
@@ -213,7 +201,7 @@ services:
   konverter-mssql:
     profiles: [mssql]
     build:
-      context: ../../synchrono-service
+      context: .
       dockerfile: infra/Dockerfile.konverter-mssql
     container_name: synchrono-konverter-mssql
     environment:
@@ -233,8 +221,8 @@ services:
       S3_SECRET_KEY: "${S3_SECRET_KEY:-Password1234}"
       S3_USE_SSL: "false"
     volumes:
-      - ../lib:/synchrono/lib:ro
-      - ../../synchrono-service/konverter:/konverter:ro
+      - ./lib:/synchrono/lib:ro
+      - ./konverter:/konverter:ro
       - konverter-mssql-data:/var/opt/mssql/data
     networks: [dalam]
     restart: unless-stopped
@@ -242,7 +230,7 @@ services:
   konverter-oracle:
     profiles: [oracle]
     build:
-      context: ../../synchrono-service
+      context: .
       dockerfile: infra/Dockerfile.konverter-oracle
     container_name: synchrono-konverter-oracle
     environment:
@@ -261,8 +249,8 @@ services:
       S3_SECRET_KEY: "${S3_SECRET_KEY:-Password1234}"
       S3_USE_SSL: "false"
     volumes:
-      - ../lib:/synchrono/lib:ro
-      - ../../synchrono-service/konverter:/konverter:ro
+      - ./lib:/synchrono/lib:ro
+      - ./konverter:/konverter:ro
       - konverter-oracle-data:/opt/oracle/oradata
     networks: [dalam]
     restart: unless-stopped
@@ -270,7 +258,7 @@ services:
   konverter-mysql:
     profiles: [mysql]
     build:
-      context: ../../synchrono-service
+      context: .
       dockerfile: infra/Dockerfile.konverter-mysql
     container_name: synchrono-konverter-mysql
     environment:
@@ -286,11 +274,19 @@ services:
       S3_SECRET_KEY: "${S3_SECRET_KEY:-Password1234}"
       S3_USE_SSL: "false"
     volumes:
-      - ../lib:/synchrono/lib:ro
-      - ../../synchrono-service/konverter:/konverter:ro
+      - ./lib:/synchrono/lib:ro
+      - ./konverter:/konverter:ro
       - konverter-mysql-data:/var/lib/mysql
     networks: [dalam]
     restart: unless-stopped
+
+networks:
+  # `luar` — bridge biasa: bisa menjangkau host, untuk PostgreSQL & SeaweedFS.
+  luar:
+    driver: bridge
+  # `dalam` — TANPA rute ke mana pun. Konverter, penerus S3, dan service saja.
+  dalam:
+    internal: true
 
 volumes:
   konverter-pg18:

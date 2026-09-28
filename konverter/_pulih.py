@@ -318,11 +318,10 @@ def pilih_tabel(con, tabel_paksa: str | None = None) -> tuple[str, dict]:
 
 def ekspor(con, tabel: str, peta: dict, tujuan: str) -> int:
     """
-    Tulis parquet berisi HANYA kolom kontrak, seluruhnya teks.
+    Tulis parquet berisi HANYA kolom kontrak yang ada di sumber, seluruhnya teks.
 
-    Kolom yang tidak ada di sumbernya tetap ditulis sebagai NULL bertipe. Itu
-    bukan kerapian: parquet yang bentuk kolomnya berubah-ubah memaksa pembaca di
-    sisi grading bercabang, dan cabang seperti itu adalah tempat bug bersembunyi.
+    Kolom yang tidak ada di sumbernya TIDAK ditulis — lihat `sql_kontrak()`
+    untuk kenapa menulisnya sebagai NULL justru menurunkan grade.
     """
     con.execute(f'''COPY (SELECT {sql_kontrak(peta)} FROM sumber."{tabel}")
                     TO '{tujuan}' (FORMAT parquet)''')

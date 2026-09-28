@@ -44,7 +44,7 @@ import time
 
 import duckdb
 
-from _umum import KONTRAK, pilih_dari_kandidat, sql_kontrak
+from _umum import kolom_ada, pilih_dari_kandidat, sql_kontrak
 
 PG_SA = os.getenv("MSSQL_SA_USER", "sa")
 SANDI = os.getenv("MSSQL_SA_PASSWORD", "")
@@ -205,5 +205,5 @@ def konversi(jalur_mdf: str, job_id: str, tujuan: str,
         "cara_lampir": cara,
         "row_count": baris,
         "durasi_detik": round(time.perf_counter() - mulai, 1),
-        "kolom_kontrak": KONTRAK,
+        "kolom_kontrak": kolom_ada(alasan["peta"]),
     }
