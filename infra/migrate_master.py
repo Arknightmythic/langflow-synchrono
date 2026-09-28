@@ -13,7 +13,8 @@ Langkah 2 tidak memuat data ke memori Python sama sekali.
 import os, sys, time, tempfile
 from pathlib import Path
 
-VENV_BE = Path(r"d:\ISGS\PROJECT\synchrono\data-matching")
+AKAR = Path(__file__).resolve().parents[1]
+VENV_BE = Path(os.getenv("DATA_MATCHING_DIR", AKAR.parent / "data-matching"))
 PARQUET = Path(tempfile.gettempdir()) / "master_migrasi.parquet"
 PG = os.getenv("PG_DSN", "host=127.0.0.1 port=5432 dbname=synchrono user=postgres")
 

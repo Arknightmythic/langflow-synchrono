@@ -27,7 +27,8 @@ import polars as pl
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
-BACKEND = Path(r"d:\ISGS\PROJECT\synchrono\data-matching")
+AKAR = Path(__file__).resolve().parents[1]
+BACKEND = Path(os.getenv("DATA_MATCHING_DIR", AKAR.parent / "data-matching"))
 TUJUAN = Path(__file__).parent / "cadangan"
 
 

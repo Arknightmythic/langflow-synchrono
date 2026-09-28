@@ -1,116 +1,87 @@
-# Synchrono Matching Service — Langflow + DuckDB
+# Synchrono Engine — Matching, Grading & AI Reasoning
 
-Service matching yang **berdiri sendiri**, terpisah dari backend `data-matching` lama.
-Logikanya dipecah menjadi 7 custom component Langflow. Backend Synchrono baru memanggilnya
-lewat API.
+Platform pemrosesan data kependudukan skala besar yang **berdiri sendiri**, terpisah dari backend `data-matching` lama. Terdiri dari engine Matching & Grading (Langflow + DuckDB) serta modul **AI Reasoning** mandiri (*FastAPI microservice & embeddable package*).
 
 ```
-Backend Synchrono  ──HTTP──►  Langflow (flow matching)
-                                   │
-                                   ▼
-                              node 1 … 7
-                                   │
-              ┌────────────────────┼────────────────────┐
-              ▼                    ▼                    ▼
-        SeaweedFS (S3)      PostgreSQL            DuckDB
-        parquet incoming    master + konfigurasi  mesin hitung
-                            + hasil
+                            ┌────────────────────────────────────────┐
+                            │       Backend Synchrono / Klien        │
+                            └───────┬────────────────────────┬───────┘
+                                    │ HTTP                   │ HTTP
+                                    ▼                        ▼
+                       ┌────────────────────────┐  ┌────────────────────────┐
+                       │ Langflow Matching &    │  │ FastAPI AI Reasoning   │
+                       │ Grading Flows          │  │ Service (`reasoning/`) │
+                       └────────────┬───────────┘  └────────────┬───────────┘
+                                    │                           │
+                   ┌────────────────┼───────────────────────────┤
+                   ▼                ▼                           ▼
+            SeaweedFS (S3)     PostgreSQL                    DuckDB
+            Parquet incoming   Master kependudukan,          Mesin hitung analitik,
+            & Master 100M      jobs, patterns & hasil        join & vectorized SQL
 ```
 
-**Satu-satunya dependency Python: `duckdb`.** Tidak ada Polars, rapidfuzz, pymysql,
-maupun client S3 — DuckDB menangani parquet di S3, koneksi PostgreSQL, dan
-`jaro_winkler_similarity` sekaligus.
-
-> **Daftar lengkap API + koleksi Postman: [`docs/API.md`](docs/API.md).**
-> Enam endpoint aktif, cara memperoleh API key, dan tiga jebakan yang
-> sudah terbukti. Koleksi siap impor: `infra/postman_synchrono.json`.
-
-> **Bekerja tanpa VPN (lembur): [`docs/LURING.md`](docs/LURING.md).**
-> Server StarRocks/MinIO mati di luar jam kantor. Matching dan grading
-> sudah sepenuhnya mandiri di mesin lokal — dokumen itu mencatat apa yang
-> sudah disalin dan cara menyegarkannya.
-
-> **Normalisasi kolom & tanggal: [`docs/NORMALISASI.md`](docs/NORMALISASI.md).**
-> Berkas dengan nama kolom tidak baku dan tanggal bercampur tetap
-> dikenali. Matching membaca berkas hasilnya, bukan parquet mentah.
-
-> **Aturan grade bisa disetel lewat API: [`docs/KONFIGURASI.md`](docs/KONFIGURASI.md).**
-> Dua API untuk menu Rule di UI Synchrono — lihat dan ubah ambang tiap
-> grade. Perubahan berlaku seketika, tanpa restart.
-
-> **Grading ada di dokumen terpisah: [`docs/GRADING.md`](docs/GRADING.md).**
-> Service grading berbagi container Langflow, PostgreSQL, dan SeaweedFS yang
-> sama, tapi punya node, flow, dan dua API-nya sendiri (dispatch + polling
-> status). Matching berjalan sinkron; grading asinkron.
-
-> **AI Reasoning & Parquet 100 Juta Baris: [`docs/PARQUET_MATCHING_REASONING.md`](docs/PARQUET_MATCHING_REASONING.md).**
-> Penjelasan lengkap alur matching CSV, integrasi master Parquet 100M, dan
-> narasi cerdas AI `gemma3:12b` untuk verifikator manual review.
+**Karakteristik Utama Arsitektur:**
+- **Matching & Grading:** Didorong oleh 7 custom node Langflow dan DuckDB. Tidak ada ketergantungan pada Polars, rapidfuzz, maupun pymysql — DuckDB menangani parquet di S3, koneksi PostgreSQL, dan `jaro_winkler_similarity` sekaligus.
+- **AI Reasoning (FastAPI & Modular Core):** Berdiri sendiri di direktori `reasoning/`. Menggunakan *Two-Phase Semi-Join Pushdown* langsung ke master Parquet 100 juta baris di S3, *Pattern Caching & Signature Hashing* (menghemat beban LLM hingga 99%), dan model lokal **Gemma 3:12B** (Ollama). Dapat dijalankan sebagai microservice independen atau "dijahit" (*embedded*) ke dalam aplikasi FastAPI lain dengan 2 baris kode.
 
 ---
 
-## Indeks Dokumentasi Sistem (Folder `docs/`)
+## Indeks Dokumentasi Sistem
 
-Seluruh dokumentasi teknis, kontrak API, dan spesifikasi arsitektur telah dirapikan ke dalam direktori [`docs/`](docs/):
+Seluruh dokumentasi teknis, kontrak API, dan spesifikasi arsitektur terbagi rapi berdasarkan topik:
 
 | Dokumen | Topik & Cakupan Utama |
 | :--- | :--- |
-| [`docs/PARQUET_MATCHING_REASONING.md`](docs/PARQUET_MATCHING_REASONING.md) | **Dokumentasi Utama AI Reasoning + Parquet 100M**, spesifikasi skema PostgreSQL lengkap, dan panduan API Langflow. |
-| [`docs/PLUGGABLE_REASONING_ARCHITECTURE.md`](docs/PLUGGABLE_REASONING_ARCHITECTURE.md) | **Cetak Biru Modularitas:** Panduan mengganti sumber data (Parquet / PostgreSQL Master / S3) dan API layer (Langflow vs FastAPI). |
-| [`docs/LARGE_SCALE_EVENT_DRIVEN_REASONING.md`](docs/LARGE_SCALE_EVENT_DRIVEN_REASONING.md) | Panduan stress-testing data jutaan baris & arsitektur event-driven paralel anti double-hit LLM (*Pattern Locking*). |
+| [`reasoning/ARCHITECTURE.md`](reasoning/ARCHITECTURE.md) | **Spesifikasi Arsitektur AI Reasoning (Standar Industri):** Zero-OOM Two-Phase Semi-Join 100M baris, Pattern Signature Hashing, State Machine PostgreSQL, dan Anti-Double-Hit Cache. |
+| [`reasoning/README.md`](reasoning/README.md) | **Panduan Pengembang AI Reasoning:** Quickstart FastAPI microservice, playbook integrasi (*embedding/jahit*), dan contoh API cURL. |
+| [`docs/PARQUET_MATCHING_REASONING.md`](docs/PARQUET_MATCHING_REASONING.md) | Penjelasan alur matching CSV, integrasi master Parquet 100M, dan narasi cerdas AI untuk manual review. |
+| [`docs/PLUGGABLE_REASONING_ARCHITECTURE.md`](docs/PLUGGABLE_REASONING_ARCHITECTURE.md) | Cetak Biru Modularitas: Panduan fleksibilitas sumber data (Parquet / PostgreSQL Master / S3) dan decoupling API. |
+| [`docs/LARGE_SCALE_EVENT_DRIVEN_REASONING.md`](docs/LARGE_SCALE_EVENT_DRIVEN_REASONING.md) | Panduan stress-testing data jutaan baris & arsitektur event-driven paralel anti double-hit LLM. |
 | [`docs/API.md`](docs/API.md) | Daftar endpoint REST API Langflow, format payload, otentikasi API key, dan koleksi Postman. |
-| [`docs/REASONING.md`](docs/REASONING.md) | Dokumentasi teknis dasar AI Reasoning dan skema migrasi awal. |
 | [`docs/GRADING.md`](docs/GRADING.md) | Layanan grading kualitas data asinkron (5 lapis penilaian aturan). |
 | [`docs/NORMALISASI.md`](docs/NORMALISASI.md) | Normalisasi kolom dan format tanggal bercampur menggunakan DuckDB/AI. |
 | [`docs/KONFIGURASI.md`](docs/KONFIGURASI.md) | Panduan konfigurasi ambang batas grade melalui API dinamis. |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | Panduan instalasi dan deployment kontainer Docker on-premise / server. |
 | [`docs/LURING.md`](docs/LURING.md) | Panduan bekerja mandiri secara luring/offline tanpa koneksi VPN kantor. |
 
-
 ---
 
-## Status verifikasi
+## Status Verifikasi
 
-Diuji dengan **data produksi asli** (file `825fc484`, grade 4, 200.020 baris),
-dibandingkan dengan hasil backend lama di StarRocks:
+Diuji dengan **data produksi asli** (file `825fc484`, grade 4, 200.020 baris), dibandingkan dengan hasil backend lama di StarRocks:
 
-| | Backend StarRocks | Service ini | |
-|---|---|---|---|
-| AUTO_MATCH | 115.551 | 115.551 | ✅ |
-| MANUAL_REVIEW | 24.022 | 24.022 | ✅ |
-| AUTO_UNMATCH | 60.447 | 60.447 | ✅ |
+| Kategori | Backend StarRocks | Service ini | Status |
+|---|---|---|:---:|
+| `AUTO_MATCH` | 115.551 | 115.551 | ✅ |
+| `MANUAL_REVIEW` | 24.022 | 24.022 | ✅ |
+| `AUTO_UNMATCH` | 60.447 | 60.447 | ✅ |
 | **Total** | **200.020** | **200.020** | ✅ |
 
 Waktu: **15,9 detik** (join 2,8 + skor 1,3 + tulis 10,6), diukur dari laptop.
-Backend lama butuh ~51 detik, itu pun diukur di server.
+Backend lama butuh ~51 detik di server.
 
 Yang **sudah** terbukti:
-- hasil matching identik dengan produksi (grade 1 & 4)
-- `jaro_winkler_similarity` DuckDB identik bit-per-bit dengan rapidfuzz, termasuk
-  rumus grade 5 yang memakai rata-rata wilayah bersyarat (selisih `0.00e+00`)
-- upsert mencegah duplikasi — dijalankan 2× tetap 1,00× (StarRocks langsung 2,00×)
+- Hasil matching identik dengan produksi (grade 1 & 4)
+- `jaro_winkler_similarity` DuckDB identik bit-per-bit dengan rapidfuzz, termasuk rumus grade 5 yang memakai rata-rata wilayah bersyarat (selisih `0.00e+00`)
+- Upsert mencegah duplikasi — dijalankan 2× tetap 1,00× (StarRocks langsung 2,00×)
 - SeaweedFS baca-tulis parquet, PostgreSQL baca-tulis
-
-- Langflow 1.12.1 di Docker berjalan dan **ketujuh node terdaftar** di kategori
-  `matching` (diverifikasi lewat `GET /api/v1/all`)
-
-Yang **belum** terbukti:
-- perangkaian flow di kanvas dan pemanggilan `POST /api/v1/run/<flow_id>`
-- grade 6 (custom mapping) — belum diimplementasikan
+- Langflow 1.12.1 di Docker berjalan dan **ketujuh node terdaftar** di kategori `matching`
+- **AI Reasoning FastAPI:** 13/13 unit & integration test lulus 100%, mendukung trigger path ber-slash (`/trigger/{file_id:path}`), pattern caching instan (0 LLM call pada warm cache), serta integrasi *embed/jahit* ke aplikasi eksternal.
 
 ---
 
 ## 1. Prasyarat
 
-| | |
+| Komponen | Kegunaan |
 |---|---|
-| Docker | untuk SeaweedFS dan Langflow |
-| PostgreSQL | sudah ada di `localhost:5432`, database `synchrono` (DBngin) |
-| Python 3.12 + `duckdb` | hanya untuk menjalankan skrip di `infra/` dan `run_local.py` |
+| Docker | Untuk SeaweedFS dan Langflow |
+| PostgreSQL | `localhost:5432` (port standar), database `synchrono` |
+| Python 3.12+ | Untuk CLI tools, skrip infrastruktur, dan modul AI Reasoning |
+| Ollama | Penyedia model LLM lokal on-premise (`gemma3:12b`) |
 
 ---
 
-## 2. Siapkan infrastruktur
+## 2. Siapkan Infrastruktur
 
 ### SeaweedFS
 
@@ -119,245 +90,100 @@ cd infra
 docker compose up -d seaweedfs
 ```
 
-| | |
-|---|---|
-| S3 API | `localhost:8333` ← yang dipakai DuckDB |
-| master UI | `localhost:9333` |
-| filer | `localhost:8888` |
-| kredensial | `synchrono` / `synchrono123` (lihat `s3-config.json`) |
+| Antarmuka | Alamat / Port | Keterangan |
+|---|---|---|
+| S3 API | `localhost:8333` | Digunakan oleh DuckDB membaca/menulis Parquet |
+| Master UI | `localhost:9333` | Dasbor status SeaweedFS |
+| Filer | `localhost:8888` | File browser |
+| Kredensial | `synchrono` / `synchrono123` | Lihat `infra/s3-config.json` |
 
 ### Skema PostgreSQL
 
 Masih dari folder `infra/`:
 
 ```bash
-python migrate.py                 # bentuk basis data: 13 tabel
-python seed.py                    # data awal: ref_*, grade_rules, matching_queries
+python migrate.py                 # Bentuk basis data: 13 tabel
+python seed.py                    # Data awal: ref_*, grade_rules, matching_queries
 ```
 
-Membuat 13 tabel dan mengisi konfigurasinya. Hanya butuh `duckdb` — DDL dijalankan
-lewat `postgres_execute()`, tanpa psycopg maupun sqlalchemy.
+Membuat 13 tabel dan mengisi konfigurasinya. Hanya butuh `duckdb` — DDL dijalankan lewat `postgres_execute()`.
 
-**Keduanya aman diulang**, dan pemisahannya disengaja:
-
-* `migrate.py` mengubah *bentuk* basis data. Tiap berkas di `db/migrasi/`
-  dicatat di `schema_migrations` beserta checksum-nya dan tidak pernah
-  dijalankan dua kali.
-* `seed.py` mengisi *data awal* dari `db/seeder/` dengan `ON CONFLICT DO
-  NOTHING` — mengisi yang belum ada, tidak pernah menimpa yang sudah ada.
-
-Jadi ambang yang sudah disetel lewat API config **tidak kembali ke nilai
-bawaan** saat keduanya dijalankan ulang.
-
-Untuk melihat kondisinya tanpa mengubah apa pun:
+### Isi Tabel Master & Sinkronisasi Parquet
 
 ```bash
-python migrate.py --status        # migrasi mana yang sudah & belum diterapkan
-python migrate.py --kering        # yang akan dijalankan, tanpa menjalankan
-python seed.py --daftar           # daftar seeder
-```
-
-Alamat PostgreSQL diambil dari `PG_DSN`; bawaannya
-`host=127.0.0.1 port=5432 dbname=synchrono user=postgres`, jadi untuk setelan
-lokal di atas tidak perlu disetel apa pun.
-
-> Di server, keduanya dijalankan otomatis oleh service `skema` saat
-> `docker compose up`. Lihat `docs/DEPLOY.md` §3.
-
-### Isi tabel master
-
-```bash
-python migrate_master.py tarik    # StarRocks -> parquet   (venv data-matching)
-python migrate_master.py muat     # parquet -> PostgreSQL  (venv ber-duckdb)
-```
-
-Dua langkah karena extension `mysql` DuckDB membungkus query katalognya dalam
-transaksi eksplisit yang ditolak StarRocks.
-
-### Pindahkan parquet ke SeaweedFS
-
-```bash
+python migrate_master.py muat     # Muat data master ke PostgreSQL / Parquet
 python salin_dari_minio.py curated/20260908_100247_825fc484_data_dukcapil_gradeD.parquet
 ```
 
-DuckDB menyambung ke MinIO dan SeaweedFS sekaligus lewat secret ber-`SCOPE`, jadi
-penyalinannya satu statement tanpa file perantara.
+---
 
-Untuk data uji buatan:
+## 3. Modul AI Reasoning (FastAPI Microservice & Embeddable Package)
+
+Modul AI Reasoning berada di direktori mandiri [`reasoning/`](reasoning/). Modul ini memberikan narasi cerdas berbasis LLM (**Gemma 3:12B**) untuk baris `MANUAL_REVIEW` tanpa membebani memori dan tanpa pemanggilan LLM yang redundan.
+
+### A. Cara Menjalankan Sebagai Standalone Microservice
+
+Jalankan server REST API menggunakan Uvicorn:
 
 ```bash
-python buat_data_uji.py 1000
+# Menjalankan server AI Reasoning mandiri di port 8000:
+./.venv/bin/uvicorn reasoning.app:app --host 0.0.0.0 --port 8000 --workers 2
 ```
+Buka Swagger UI di: `http://localhost:8000/docs`
+
+### B. Cara "Menjahit" (*Embed*) ke Backend FastAPI Lain
+
+Jika Anda memiliki backend FastAPI yang sudah ada (misalnya monolith backend Synchrono):
+
+```python
+from fastapi import FastAPI
+from reasoning import reasoning_router
+
+app = FastAPI(title="Synchrono Unified Backend")
+
+# Cukup 1 baris untuk menjahit seluruh kapabilitas reasoning:
+app.include_router(reasoning_router)
+```
+
+### C. Ringkasan Endpoint AI Reasoning
+
+| Method | Endpoint | Deskripsi |
+| :--- | :--- | :--- |
+| `POST` | `/v1/reasoning/trigger/{file_id:path}` | Trigger job asinkron via URL path (mendukung slash seperti `uploads/2026/09/dukcapil.csv`). Mengembalikan `202 Accepted`. |
+| `POST` | `/v1/reasoning/dispatch` | Trigger job asinkron via JSON request body standar. |
+| `GET` | `/v1/reasoning/status/{file_id:path}` | Polling status job, stage pengerjaan, metrik cache hits, dan durasi. |
+| `POST` | `/v1/reasoning/clear-cache` | Menghapus seluruh pola di `reasoning_patterns` untuk pengujian ulang. |
+| `POST` | `/v1/reasoning/run-sync/{file_id:path}` | Eksekusi reasoning secara langsung (blocking/synchronous). |
+| `GET` | `/v1/reasoning/health` | Health check koneksi PostgreSQL dan konfigurasi S3/LLM. |
+
+*Contoh cURL Trigger:*
+```bash
+curl -X POST "http://localhost:8000/v1/reasoning/trigger/uploads/2026/09/batch_01.csv"
+```
+
+*Contoh cURL Cek Status:*
+```bash
+curl "http://localhost:8000/v1/reasoning/status/uploads/2026/09/batch_01.csv"
+```
+
+> 💡 **Rincian lengkap:** Baca [Spesifikasi Arsitektur AI Reasoning](reasoning/ARCHITECTURE.md) dan [Panduan Pengembang Reasoning](reasoning/README.md).
 
 ---
 
-## 3. Uji tanpa Langflow (lakukan ini dulu)
+## 4. Pasang Matching di Langflow
 
-Buktikan logikanya lebih dulu di sini. Kalau gagal di tahap ini, mencari
-penyebabnya di kanvas visual jauh lebih sulit.
-
-Skrip ini ada di **akar repo**, bukan di `infra/` — kembali dulu ke atas
-(`cd ..`) kalau masih berada di sana dari langkah 2.
-
-```bash
-python run_local.py \
-    --file-id 825fc484 \
-    --parquet s3://synchrono/curated/20260908_100247_825fc484_data_dukcapil_gradeD.parquet \
-    --grade 4
-```
-
-Default **dry run** — tidak menulis ke PostgreSQL. Tambahkan `--write` untuk menulis.
-
-> Berbeda dari sistem lama, menjalankan `--write` berkali-kali **aman**:
-> penulisannya upsert, bukan append.
-
----
-
-## 4. Pasang di Langflow
-
-### ⚠ Di mesin Windows ini, Langflow harus lewat Docker
-
-Venv Langflow di `D:\ISGS\PROJECT\subsynchrono\langflow` **tidak bisa dijalankan**:
-
-```
-import xxhash   -> DLL load failed: An Application Control policy has blocked this file
-import langflow -> GAGAL (xxhash dependency langsungnya)
-langflow.exe    -> GAGAL
-```
-
-Ini kebijakan keamanan Windows, bukan masalah kode. Container tidak tersentuh
-kebijakan itu, jadi jalur Docker sekaligus menyelesaikannya.
-
-### Jalankan
+### Menjalankan Kontainer Langflow
 
 ```bash
 cd infra
 docker compose up -d --build langflow
 ```
 
-Build pertama ~6 menit. Setelah itu buka `http://localhost:7860`, login
-`admin` / `synchrono123`. Ketujuh node ada di sidebar, grup **matching**.
+Buka `http://localhost:7860`, login dengan `admin` / `synchrono123`. Node matching tersedia di sidebar grup **matching**.
 
-`Dockerfile.langflow` hanya menambahkan `duckdb` ke image resmi, plus mengunduh
-extension `httpfs` dan `postgres` di build time supaya eksekusi flow pertama tidak
-tertunda.
+### Rangkai Flow Matching
 
-### Empat hal yang bikin gagal, dan sudah diberesi di compose
-
-Keempatnya ditemukan saat benar-benar menjalankannya. Tidak satu pun terdokumentasi
-dengan jelas di dokumentasi Langflow, jadi dicatat di sini.
-
-**1. Kredensial superuser wajib.** Tanpa ini container gagal start:
-
-```
-ValueError: Username and password must be set
-```
-
-Langflow 1.12.x menuntut `LANGFLOW_SUPERUSER` + `LANGFLOW_SUPERUSER_PASSWORD`, dan
-password default lama ditolak. Yang dipakai sekarang kredensial **development** —
-ganti sebelum keluar dari mesin lokal.
-
-**2. `LANGFLOW_HOST` tidak dihormati.** Gejalanya `ERR_EMPTY_RESPONSE` di browser,
-padahal dari dalam container `/health_check` balas 200. Langflow mengikat ke
-`127.0.0.1`, sehingga port mapping Docker tidak bisa menjangkaunya. Harus lewat
-argumen CLI, bukan env:
-
-```yaml
-command: ["langflow", "run", "--host", "0.0.0.0", "--port", "7860"]
-```
-
-**3. File helper tidak boleh ada di folder komponen.** Bukan karena Langflow
-menolaknya — berkas tanpa subclass `Component` justru **diabaikan diam-diam** —
-melainkan karena berkas di `LANGFLOW_COMPONENTS_PATH` **tidak bisa saling
-mengimpor**. Langflow memuat tiap berkas sebagai *bundle module* terisolasi dan
-folder itu tidak pernah masuk `sys.path`, jadi `from _shared import ...` gagal
-walau berkasnya ada di folder yang sama persis:
-
-```
-Extension load error: error[module-import-failed]: Failed to import bundle module
-/components/grading/z_uji_import.py: ModuleNotFoundError: No module named '_uji_helper'
-```
-
-Satu-satunya jalan agar modul bersama bisa diimpor adalah lewat `PYTHONPATH`,
-sehingga ia harus berada di **luar** folder komponen. Subfolder `matching/`
-sekaligus menjadi nama grup di sidebar:
-
-```
-components/matching/   → node saja   → /components   (LANGFLOW_COMPONENTS_PATH)
-lib/_shared.py         → helper      → /synchrono/lib (PYTHONPATH)
-```
-
-**4. Nama input dan output tidak boleh sama.** Ini yang paling halus: node tetap
-termuat tanpa error mencolok, hanya **hilang diam-diam** dari sidebar. Semula hanya
-2 dari 7 node yang muncul, dan penyebabnya cuma terlihat sebagai `warning` di log:
-
-```
-Could not build template for PrepareIncoming in bundle 'matching' (skipped):
-Inputs and outputs have overlapping names: {'session'}
-```
-
-Node 2–6 punya input `session` dan output `session` sekaligus. Node 1 dan 7 lolos
-karena namanya kebetulan sudah berbeda. Penamaan sekarang ada di §5.
-
-> Kalau suatu saat ada node yang tidak muncul di sidebar, **cek `docker compose logs
-> langflow | grep -i "could not build template"`** lebih dulu — kegagalannya tidak
-> memunculkan error, hanya warning.
-
-### Env yang diatur di compose
-
-| Variabel | Nilai | Kenapa |
-|---|---|---|
-| `LANGFLOW_COMPONENTS_PATH` | `/components` | tempat Langflow menemukan node |
-| `PYTHONPATH` | `/synchrono/lib` | agar `from _shared import …` bisa diselesaikan |
-| `LANGFLOW_SUPERUSER(_PASSWORD)` | `admin` / `synchrono123` | wajib, lihat poin 1 |
-| `LANGFLOW_CONFIG_DIR` | `/app/langflow-data` | flow tersimpan di volume, tahan rebuild |
-| `PG_DSN` | `host=host.docker.internal …` | PostgreSQL ada di host, bukan Docker |
-| `S3_ENDPOINT` | `seaweedfs:8333` | satu jaringan compose, cukup nama service |
-
-### ⚠ Jangan uji dengan `curl` dari Git Bash
-
-Di mesin ini `curl` Git Bash selalu mengembalikan `000` untuk `localhost:7860`,
-padahal layanannya sehat — kemungkinan terkena Application Control yang sama seperti
-`_xxhash`. Sempat membuat Langflow terlihat mati padahal tidak.
-
-Pakai PowerShell atau browser:
-
-```powershell
-Invoke-RestMethod -Uri "http://localhost:7860/health_check"
-# {"status":"ok","chat":"ok","db":"ok"}
-```
-
-### Kalau kebijakan Windows sudah dilonggarkan
-
-Jalur venv host tetap tersedia:
-
-```powershell
-$akar = "D:\ISGS\PROJECT\synchrono\langflow-synchrono"
-$env:LANGFLOW_COMPONENTS_PATH   = "$akar\components"
-$env:PYTHONPATH                 = "$akar\lib"
-$env:LANGFLOW_SUPERUSER         = "admin"
-$env:LANGFLOW_SUPERUSER_PASSWORD= "synchrono123"
-$env:PG_DSN      = "host=127.0.0.1 port=5432 dbname=synchrono user=postgres"
-$env:S3_ENDPOINT = "localhost:8333"
-
-cd D:\ISGS\PROJECT\subsynchrono\langflow
-venv\Scripts\python.exe -m pip install duckdb==1.5.5   # belum ada di venv itu
-venv\Scripts\langflow.exe run --host 0.0.0.0 --port 7860
-```
-
-Perhatikan `--host 0.0.0.0` tetap diperlukan, dan `PYTHONPATH` harus menunjuk
-`lib/` — dua hal yang sama seperti di Docker.
-
-Verifikasi API component sudah dilakukan terhadap **Langflow 1.12.1** — keenam
-simbol yang dipakai (`Component`, `MessageTextInput`, `HandleInput`, `IntInput`,
-`Output`, `Data`) tersedia, dan pola node hulu→hilir lewat `Data` sudah diuji jalan.
-
----
-
-## 5. Rangkai flow
-
-Alurnya **linear** — tiap node menerima sesi dan meneruskannya. Tidak ada
-percabangan, jadi tidak ada yang perlu ditebak.
+Alurnya linear — tiap node menerima `Session` DuckDB dan meneruskannya:
 
 ```
 [1 Open Session] ──session──► [2 Prepare Incoming] ──incoming_ready──►
@@ -366,9 +192,7 @@ percabangan, jadi tidak ada yang perlu ditebak.
 [7 Persist Results] ──summary──► ringkasan JSON
 ```
 
-Nama port tiap node — output sengaja **tidak** boleh sama dengan input (lihat §4
-poin 4):
-
+Port I/O Tiap Node:
 | Node | Input | Output |
 |---|---|---|
 | 1 `OpenMatchingSession` | `file_id`, `parquet_path`, `grade` | `session` |
@@ -379,32 +203,18 @@ poin 4):
 | 6 `ScoreAndClassify` | `session` | `scored` |
 | 7 `PersistResults` | `session` | `summary` |
 
-Node 1 punya tiga input yang menjadi payload API: `file_id`, `parquet_path`, `grade`.
-
-Simpan, lalu catat `flow_id` dari URL.
-
-### Kenapa node mengoper "Session", bukan data
-
-`Session` membawa **objek koneksi DuckDB**, bukan isi tabel. Tiap node membuat
-view/tabel di dalam DuckDB dan node berikutnya merujuknya lewat nama — jadi data
-tidak pernah diserialisasi antar node. Inilah yang membuat pemecahan jadi node
-tidak menambah biaya apa pun.
-
 ---
 
-## 6. Panggil lewat API
-
-API-nya butuh token — `LANGFLOW_AUTO_LOGIN` sengaja `false`. Tanpa login,
-setiap endpoint membalas **403 Forbidden**.
+## 5. Panggil Matching lewat API
 
 ```powershell
-# 1. login
+# 1. Login memperoleh token
 $login = Invoke-RestMethod -Uri "http://localhost:7860/api/v1/login" -Method Post `
     -Body @{ username = "admin"; password = "synchrono123" } `
     -ContentType "application/x-www-form-urlencoded"
 $hdr = @{ Authorization = "Bearer $($login.access_token)" }
 
-# 2. jalankan flow
+# 2. Jalankan flow matching
 $payload = @{
     tweaks = @{
         OpenMatchingSession = @{
@@ -419,15 +229,7 @@ Invoke-RestMethod -Uri "http://localhost:7860/api/v1/run/<FLOW_ID>?stream=false"
     -Method Post -Headers $hdr -Body $payload -ContentType "application/json"
 ```
 
-Untuk memastikan ketujuh node terbaca Langflow:
-
-```powershell
-$all = Invoke-RestMethod -Uri "http://localhost:7860/api/v1/all" -Headers $hdr
-$all.matching.PSObject.Properties.Name    # harus 7 entri
-```
-
-Balasannya kecil:
-
+Response JSON:
 ```json
 {
   "message": "Grade 4 matching completed",
@@ -441,137 +243,71 @@ Balasannya kecil:
 }
 ```
 
-> Bentuk payload `tweaks` berbeda antar versi Langflow. Cek `http://localhost:7860/docs`
-> di instance-mu untuk bentuk yang pasti.
-
-### Kontrak
-
-**Masuk** — backend mengirim semuanya, service tidak menuntut skema apa pun di sisi backend:
-
-| Field | Contoh |
-|---|---|
-| `file_id` | `825fc484` |
-| `parquet_path` | `s3://synchrono/curated/xxx.parquet` |
-| `grade` | `1`–`5` |
-
-**Keluar** — ringkasan di atas. Service **tidak** mengelola status alur
-(`sync_status` di tabel, pemicu reasoning/export, audit). Itu urusan pemanggil.
-
 ---
 
-## 7. Daftar node
+## 6. Daftar Node Matching
 
-| # | Node | Yang dikerjakan |
+| # | Node | Tanggung Jawab Utama |
 |---|---|---|
-| 1 | `OpenMatchingSession` | buka koneksi DuckDB, pasang extension, sambungkan SeaweedFS + PostgreSQL |
-| 2 | `PrepareIncoming` | `CREATE VIEW incoming_df` atas `read_parquet('s3://…')` + normalisasi |
-| 3 | `PrepareMaster` | `CREATE VIEW master_df` atas tabel master PostgreSQL + normalisasi |
-| 4 | `LoadMatchingConfig` | ambil `matching_query` + `grade_rules` dari PostgreSQL |
-| 5 | `RunMatchingJoin` | eksekusi SQL blocking join per grade |
-| 6 | `ScoreAndClassify` | Jaro-Winkler berbobot + ambang → `match_result`, satu statement SQL |
-| 7 | `PersistResults` | upsert `institution` + `manual_matches` |
-
-Nama view `incoming_df` dan `master_df` **tidak boleh diubah** — kelima SQL di tabel
-`matching_queries` merujuk nama itu, dan disalin apa adanya dari sistem yang sudah berjalan.
-
-### Normalisasi (node 2 & 3)
-
-Menentukan hasil matching, jadi harus sama persis dengan sistem lama:
-
-- semua kolom teks → `lower(trim(...))`
-- `tanggal_lahir` → 6 format dicoba berurutan; tahun < 1900 dibuang jadi NULL
-- `jenis_kelamin` → whitelist → `l` / `p`
-- `status_kematian` → whitelist → `h` / `m`
-
-Macro `j(a, b)` menirukan `safe_jaro()` Python: mengembalikan 0 kalau salah satu
-sisi NULL atau string kosong.
+| 1 | `OpenMatchingSession` | Buka koneksi DuckDB, pasang ekstensi `httpfs` & `postgres`, hubungkan SeaweedFS + PostgreSQL. |
+| 2 | `PrepareIncoming` | Buat view `incoming_df` atas Parquet incoming di S3 + normalisasi kolom & teks. |
+| 3 | `PrepareMaster` | Buat view `master_df` atas tabel master PostgreSQL / Parquet + normalisasi. |
+| 4 | `LoadMatchingConfig` | Ambil query matching dan aturan ambang skor grade dari basis data. |
+| 5 | `RunMatchingJoin` | Eksekusi SQL blocking join per grade. |
+| 6 | `ScoreAndClassify` | Hitung Jaro-Winkler berbobot dan klasifikasikan `AUTO_MATCH`, `MANUAL_REVIEW`, `AUTO_UNMATCH`. |
+| 7 | `PersistResults` | Upsert hasil ke tabel `institution` dan `manual_matches`. |
 
 ---
 
-## 8. Perbaikan dari sistem lama
+## 7. Keunggulan dari Sistem Lama
 
-### Duplikasi hilang di level skema
-
-```sql
-PRIMARY KEY (file_id, id_incoming)
-```
-
-StarRocks tidak bisa menegakkan ini, sehingga matching ulang selalu **menambah**
-baris: tabel `institution` di sana berisi 22,9 juta baris untuk 14,2 juta record
-unik — 34% duplikat, satu file mencapai rasio 15×, dan semua `COUNT` menggelembung.
-
-Di sini penulisannya `ON CONFLICT DO UPDATE`. Dijalankan dua kali, hasilnya sama persis.
-
-### Kolom jebakan tidak dibawa
-
-`nik_incoming` (90% NULL) dan `area_incoming` (100% NULL) sengaja tidak ada di skema
-baru. Keduanya selalu diisi NULL oleh kode matching, dan keberadaannya menggoda orang
-menulis `JOIN master ON manual_matches.nik_incoming = master.nik` yang hampir selalu
-mengembalikan kosong.
-
-### Master tidak lagi ditarik ke memori
-
-Dulu 299.088 baris di-load penuh tiap job (84 detik dari laptop, 6 detik di server).
-Sekarang `master_df` hanyalah view ke PostgreSQL; DuckDB mengambil seperlunya saat join.
+1. **Duplikasi Hilang di Level Skema:** Penulisan menggunakan `PRIMARY KEY (file_id, id_incoming)` dan klausa `ON CONFLICT DO UPDATE`. Dijalankan berulang kali, hasilnya deterministik dan stabil 1.00× (StarRocks menggelembung 2×).
+2. **Kolom Jebakan Dihilangkan:** Kolom `nik_incoming` dan `area_incoming` yang mayoritas NULL dibuang dari skema baru untuk mencegah misleading query.
+3. **Master Tidak Ditarik ke Memori:** Master 100 juta baris diakses menggunakan predicate pushdown dan parquet row-group skipping, memangkas kebutuhan RAM dari ratusan GB menjadi < 200 MB.
+4. **AI Reasoning Skala Besar:** Narasi penjelasan review tidak lagi memanggil LLM per baris, melainkan menggunakan pengenalan pola diskrit (*signature hashing*) yang memangkas latensi hingga 99%.
 
 ---
 
-## 9. Yang perlu diwaspadai
-
-| Hal | Keterangan |
-|---|---|
-| **DuckDB menulis ke PostgreSQL lewat COPY** | Daftar kolom di `INSERT` **diabaikan** — kolom yang dilewati terkirim sebagai NULL. Karena itu skema sengaja tanpa `bigserial` dan tanpa `DEFAULT`, dan node 7 mengisi semua kolom secara eksplisit dengan urutan sama persis seperti definisi tabel. |
-| **`review_missing_count` adalah kecocokan PERSIS** | Grade 4 hanya masuk manual review bila `missing_count` **tepat 2**, bukan "minimal 2". Ubah sedikit kondisi join dan seluruh jalur manual review bisa mati tanpa error apa pun. |
-| **Tie-break skor** | Versi Python mempertahankan kandidat yang ditemui lebih dulu (urutan iterasi, praktis acak). Di sini `ORDER BY skor DESC, nik_master` — deterministik dan bisa direproduksi. |
-| **Grade 6** | Belum didukung. Butuh pairing kolom dinamis dari `custom_field_mapping`. Node 1 menolaknya secara eksplisit. |
-| **Memori node 5** | Hasil join bisa jauh lebih besar dari jumlah baris incoming — file 200 ribu baris menghasilkan 2,99 juta pasangan kandidat. |
-
----
-
-## 10. Struktur folder
+## 8. Struktur Direktori Proyek
 
 ```
 langflow-synchrono/
-├── README.md
-├── run_local.py                  uji 7 node tanpa Langflow (default dry run)
-├── components/                   → di-mount ke /components
-│   ├── matching/                 nama folder = nama grup di sidebar Langflow
-│   │   ├── n1_open_session.py    HANYA file node boleh ada di sini —
-│   │   ├── n2_prepare_incoming.py  Langflow menuntut tiap .py berisi
-│   │   ├── n3_prepare_master.py    subclass Component (§4 poin 3)
-│   │   ├── n4_load_config.py
-│   │   ├── n5_run_join.py
-│   │   ├── n6_score_classify.py
-│   │   └── n7_persist.py
-│   ├── grading/                  G1-G6 + dua node API (dispatch, status)
-│   └── config/                   baca & ubah aturan grade
-├── lib/                          → di-mount ke /synchrono/lib, masuk PYTHONPATH
-│   ├── _shared.py                koneksi, SQL normalisasi, rumus skor
-│   ├── _kolam.py                 kolam koneksi DuckDB
-│   ├── _grading.py               pipeline grading G1-G6
-│   ├── _normalisasi.py           lima lapis pengenalan kolom
-│   ├── _wilayah.py               rujukan kecamatan untuk pemeriksaan NIK
-│   ├── _config.py                baca & ubah aturan grade
-│   ├── _jobs.py                  tabel grading_jobs
-│   ├── _worker.py                pekerja latar untuk grading asinkron
-│   ├── _llm.py                   klien LLM, lapis terakhir pengenalan kolom
-│   └── _nama.py                  pembersihan nama
-└── infra/
-    ├── docker-compose.yml        SeaweedFS + Langflow (lokal)
-    ├── docker-compose.server.yml engine di server
-    ├── docker-compose.infra.yml  PostgreSQL + SeaweedFS di server
-    ├── Dockerfile.langflow       image Langflow + duckdb
-    ├── s3-config.json            kredensial S3
-    ├── db/migrasi/*.sql          bentuk basis data, dicatat di schema_migrations
-    ├── db/seeder/*               data awal, ON CONFLICT DO NOTHING
-    ├── migrate.py                terapkan migrasi
-    ├── seed.py                   isi data awal
-    ├── flow_util.py              fondasi pembangun flow (node id tetap)
-    ├── buat_flow.py              flow matching
-    ├── buat_flow_grading.py      tiga flow grading
-    ├── buat_flow_config.py       dua flow config
-    ├── matching_queries.json     ekspor SQL join dari StarRocks
-    ├── migrate_master.py         isi tabel master
-    ├── salin_dari_minio.py       MinIO → SeaweedFS
-    └── buat_data_uji.py          bangkitkan parquet uji
+├── README.md                     # Dokumentasi arsitektur utama (file ini)
+├── run_local.py                  # Skrip runner 7 node matching lokal (dry run / write)
+├── services.sh                   # Manajemen lifecycle service (start/stop/restart)
+├── reasoning/                    # MODUL AI REASONING (FastAPI & Modular Core)
+│   ├── __init__.py               # Package facade (ekspor app, router, core)
+│   ├── app.py                    # Standalone FastAPI service + CORS + harvester
+│   ├── router.py                 # Endpoint /trigger/{file_id:path}, /dispatch, /status
+│   ├── schemas.py                # Schema validasi Pydantic v2
+│   ├── core.py                   # Engine DuckDB Pushdown 100M + Pattern Hashing + Ollama
+│   ├── jobs.py                   # State machine antrean job PostgreSQL
+│   ├── worker.py                 # Thread pool background dispatcher
+│   ├── db.py                     # DuckDB connection pool & PostgreSQL connector
+│   ├── config.py                 # Konfigurasi environment dinamis (.env)
+│   ├── README.md                 # Panduan pengembang reasoning
+│   └── ARCHITECTURE.md           # Spesifikasi arsitektur standar industri
+├── components/                   # Custom node Langflow (dimount ke /components)
+│   ├── matching/                 # Node pipeline matching (n1_open_session … n7_persist)
+│   ├── grading/                  # Node pipeline grading (G1 … G6 + API dispatch/status)
+│   └── config/                   # Node pembacaan & modifikasi aturan grade
+├── lib/                          # Pustaka internal (dimount ke /synchrono/lib)
+│   ├── _shared.py                # Helper koneksi & rumus skor Jaro-Winkler
+│   ├── _kolam.py                 # Pool koneksi DuckDB bersama
+│   ├── _grading.py               # Pipeline grading data
+│   ├── _normalisasi.py           # Normalisasi multi-lapis
+│   ├── _jobs.py                  # State machine antrean grading
+│   ├── _worker.py                # Worker latar grading
+│   └── _reasoning*.py            # Backward-compatibility proxies ke reasoning/
+├── infra/                        # Konfigurasi container, migrasi, dan seeder
+│   ├── docker-compose.yml        # Docker compose lokal (SeaweedFS + Langflow)
+│   ├── docker-compose.server.yml # Compose server produksi
+│   ├── Dockerfile.langflow       # Build image Langflow + duckdb
+│   ├── db/migrasi/*.sql          # Berkas migrasi DDL PostgreSQL
+│   ├── db/seeder/*               # Berkas data awal (seed)
+│   ├── migrate.py                # Runner migrasi basis data
+│   └── seed.py                   # Runner seeder data awal
+└── tests/                        # Test suite otomatis (pytest)
+    ├── test_fastapi_reasoning.py # 5 pengujian integrasi FastAPI & embedding router
+    └── test_reasoning.py         # 8 pengujian core reasoning, hashing & 100M parquet
 ```

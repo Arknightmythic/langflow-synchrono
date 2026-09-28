@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 _DISINI = Path(__file__).resolve().parent
+sys.path.insert(0, str(_DISINI.parent))
 for _kandidat in (_DISINI.parent / "lib", _DISINI / "lib", Path("/synchrono/lib")):
     if _kandidat.is_dir():
         sys.path.insert(0, str(_kandidat))

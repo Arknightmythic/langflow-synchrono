@@ -8,8 +8,8 @@ into PostgreSQL `institution` and `manual_matches` (PENDING) tables.
 Usage:
     python3 run_matching_csv_to_db.py \
         --file-id test_grade_b_01 \
-        --csv /mnt/c/Users/ISGS/Downloads/Data_Test_Syncrono/uji_gradeB.csv \
-        --master-parquet /mnt/c/Users/ISGS/Downloads/Data_Test_Syncrono/uji-master-100juta.parquet
+        --csv path/to/uji_gradeB.csv \
+        --master-parquet path/to/master.parquet (or s3://...)
 """
 
 import argparse
@@ -208,8 +208,8 @@ def main():
     parser = argparse.ArgumentParser(description="Standalone Matching & Manual Review Flagger")
     parser.add_argument("--file-id", required=True, help="Batch or File Identifier")
     parser.add_argument("--csv", required=True, help="Path to incoming CSV file")
-    parser.add_argument("--master-parquet", default="/mnt/c/Users/ISGS/Downloads/Data_Test_Syncrono/uji-master-100juta.parquet",
-                        help="Path to 100M master Parquet file")
+    parser.add_argument("--master-parquet", default=os.getenv("MASTER_PARQUET_PATH", ""),
+                        help="Path to 100M master Parquet file (local or s3://, defaults to MASTER_PARQUET_PATH env)")
     parser.add_argument("--grade", type=int, default=2, help="Grade code (default: 2)")
 
     args = parser.parse_args()

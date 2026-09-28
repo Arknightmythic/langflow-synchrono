@@ -9,12 +9,14 @@ Verifies:
   5. End-to-end reasoning execution.
 """
 
+import os
 import sys
 import uuid
 from pathlib import Path
 
 import pytest
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "lib"))
 
 from _reasoning import (
@@ -302,7 +304,7 @@ def test_validate_onprem_endpoint_rejects_public_commercial_ai():
 
 def test_full_reasoning_flow_on_parquet_master(db_connection, tmp_path):
     """Test reasoning execution reading directly from Master Parquet file."""
-    real_100m_path = Path("/mnt/c/Users/ISGS/Downloads/Data_Test_Syncrono/uji-master-100juta.parquet")
+    real_100m_path = Path(os.getenv("TEST_MASTER_PARQUET_PATH", "/mnt/c/Users/ISGS/Downloads/Data_Test_Syncrono/uji-master-100juta.parquet"))
     if real_100m_path.exists():
         parquet_path = str(real_100m_path)
         nik_1 = "3512080609630065"  # Daliono Darijan Saragih
