@@ -23,6 +23,7 @@ Platform pemrosesan data kependudukan skala besar yang **berdiri sendiri**, terp
 **Karakteristik Utama Arsitektur:**
 - **Matching & Grading:** Didorong oleh 7 custom node Langflow dan DuckDB. Tidak ada ketergantungan pada Polars, rapidfuzz, maupun pymysql — DuckDB menangani parquet di S3, koneksi PostgreSQL, dan `jaro_winkler_similarity` sekaligus.
 - **AI Reasoning (FastAPI & Modular Core):** Berdiri sendiri di direktori `reasoning/`. Menggunakan *Two-Phase Semi-Join Pushdown* langsung ke master Parquet 100 juta baris di S3, *Pattern Caching & Signature Hashing* (menghemat beban LLM hingga 99%), dan model lokal **Gemma 3:12B** (Ollama). Dapat dijalankan sebagai microservice independen atau "dijahit" (*embedded*) ke dalam aplikasi FastAPI lain dengan 2 baris kode.
+- **Manajemen Dependensi Modern:** Menggunakan `uv` (`pyproject.toml` dan `uv.lock`) untuk manajemen dependensi yang deterministik, cepat, dan terdokumentasi rapi.
 
 ---
 
@@ -70,14 +71,40 @@ Yang **sudah** terbukti:
 
 ---
 
-## 1. Prasyarat
+## 1. Prasyarat & Manajemen Dependensi (`uv`)
 
 | Komponen | Kegunaan |
 |---|---|
-| Docker | Untuk SeaweedFS dan Langflow |
-| PostgreSQL | `localhost:5432` (port standar), database `synchrono` |
-| Python 3.12+ | Untuk CLI tools, skrip infrastruktur, dan modul AI Reasoning |
-| Ollama | Penyedia model LLM lokal on-premise (`gemma3:12b`) |
+| **Python 3.12+** | Runtime utama service dan modul reasoning |
+| **`uv` (Astral)** | *Package & Project Manager* modern, mengelola `pyproject.toml` dan `uv.lock` |
+| **Docker** | Menjalankan kontainer SeaweedFS (S3) dan Langflow |
+| **PostgreSQL** | `localhost:5432`, database `synchrono` |
+| **Ollama** | Penyedia model LLM lokal on-premise (`gemma3:12b`) |
+
+### Instalasi & Menjalankan dengan `uv` (Direkomendasikan)
+Proyek ini dikelola menggunakan [**`uv`**](https://github.com/astral-sh/uv) untuk instalasi deterministik, isolasi virtual environment, dan eksekusi secepat kilat:
+
+```bash
+# 1. Pasang uv (bila belum terpasang):
+curl -LsSf https://astral.sh/uv/install.sh | sh          # Linux / WSL / macOS
+# atau di Windows:
+# powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# 2. Sinkronkan seluruh dependency sesuai uv.lock:
+uv sync
+
+# 3. Jalankan test suite otomatis (13/13 tests passed):
+uv run pytest tests/ -v
+
+# 4. Jalankan AI Reasoning FastAPI microservice:
+uv run uvicorn reasoning.app:app --host 0.0.0.0 --port 8000 --workers 2
+```
+
+> **Alternatif Pip (Legacy):**  
+> File `requirements.txt` juga disediakan untuk server atau lingkungan yang belum menginstal `uv`:
+> ```bash
+> pip install -r requirements.txt
+> ```
 
 ---
 
@@ -123,11 +150,11 @@ Modul AI Reasoning berada di direktori mandiri [`reasoning/`](reasoning/). Modul
 
 ### A. Cara Menjalankan Sebagai Standalone Microservice
 
-Jalankan server REST API menggunakan Uvicorn:
+Jalankan server REST API menggunakan `uv`:
 
 ```bash
 # Menjalankan server AI Reasoning mandiri di port 8000:
-./.venv/bin/uvicorn reasoning.app:app --host 0.0.0.0 --port 8000 --workers 2
+uv run uvicorn reasoning.app:app --host 0.0.0.0 --port 8000 --workers 2
 ```
 Buka Swagger UI di: `http://localhost:8000/docs`
 
@@ -265,6 +292,7 @@ Response JSON:
 2. **Kolom Jebakan Dihilangkan:** Kolom `nik_incoming` dan `area_incoming` yang mayoritas NULL dibuang dari skema baru untuk mencegah misleading query.
 3. **Master Tidak Ditarik ke Memori:** Master 100 juta baris diakses menggunakan predicate pushdown dan parquet row-group skipping, memangkas kebutuhan RAM dari ratusan GB menjadi < 200 MB.
 4. **AI Reasoning Skala Besar:** Narasi penjelasan review tidak lagi memanggil LLM per baris, melainkan menggunakan pengenalan pola diskrit (*signature hashing*) yang memangkas latensi hingga 99%.
+5. **Modern Dependency Management:** Dilengkapi `pyproject.toml` dan `uv.lock` untuk reproduktibilitas lingkungan komputasi 100%.
 
 ---
 
@@ -272,6 +300,10 @@ Response JSON:
 
 ```
 langflow-synchrono/
+├── pyproject.toml                # Definisi proyek & dependensi uv (PEP 621)
+├── uv.lock                       # Lockfile deterministik dependensi uv
+├── requirements.txt              # Ekspor dependensi standar pip
+├── .python-version               # Versi Python yang ditentukan (3.12)
 ├── README.md                     # Dokumentasi arsitektur utama (file ini)
 ├── run_local.py                  # Skrip runner 7 node matching lokal (dry run / write)
 ├── services.sh                   # Manajemen lifecycle service (start/stop/restart)

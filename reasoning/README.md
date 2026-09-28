@@ -12,6 +12,7 @@ Modul **AI Reasoning** mandiri (*standalone microservice*) yang dirancang modula
 - **DuckDB-Native Pushdown (100M Parquet di S3):** Melakukan pencocokan 5-kolom (*nama, tempat lahir, tanggal lahir, jenis kelamin, nama ibu*) langsung ke data master 100 juta baris di Parquet (S3/SeaweedFS atau PostgreSQL `master`) dengan penggunaan memori RAM konstan < 200 MB.
 - **Pattern Caching & Signature Hashing:** Mengelompokkan variasi selisih data ke *signature* unik berbasis SHA-256. Pemanggilan LLM on-premise (**Gemma 3:12B**) hanya terjadi 1x per pola baru; ribuan baris data lainnya otomatis mengisi template via SQL vectorized string replacement (efisiensi token & komputasi hingga 99%).
 - **FastAPI Endpoints Fleksibel:** Mendukung pemicu asinkron (*background worker* 202 Accepted), pemantauan status real-time, pembersihan cache, serta eksekusi langsung via path URL yang mendukung karakter slash (`/trigger/{file_id:path}`).
+- **Manajemen Dependency Modern (`uv`):** Dikelola penuh dengan `uv` (`pyproject.toml` dan `uv.lock`), memastikan instalasi deterministik kilat dan kompatibilitas lintas environment.
 - **Zero Hardcoded Paths:** Seluruh koneksi database, endpoint S3/SeaweedFS, dan model AI dikendalikan secara dinamis melalui file `.env`.
 - **Dual Operational Modes:** Dapat berjalan sebagai microservice API mandiri via Uvicorn, atau diimpor langsung sebagai sub-router ke backend FastAPI lain (`app.include_router(reasoning_router)`).
 
@@ -38,13 +39,18 @@ reasoning/
 
 ## 3. Cara Menjalankan Secara Mandiri (Standalone Microservice)
 
-### Menjalankan Server API:
+### Menggunakan `uv` (Direkomendasikan):
 ```bash
-# Menggunakan Uvicorn langsung:
-uvicorn reasoning.app:app --host 0.0.0.0 --port 8000 --workers 2
+# Sinkronisasi environment (otomatis membuat venv & menginstal library):
+uv sync
 
-# Atau menggunakan virtualenv proyek:
-./.venv/bin/uvicorn reasoning.app:app --host 0.0.0.0 --port 8000
+# Menjalankan server API:
+uv run uvicorn reasoning.app:app --host 0.0.0.0 --port 8000 --workers 2
+```
+
+### Menggunakan Python Virtualenv Biasa:
+```bash
+./.venv/bin/uvicorn reasoning.app:app --host 0.0.0.0 --port 8000 --workers 2
 ```
 
 Setelah server aktif, dokumentasi interaktif Swagger UI dapat diakses di:
@@ -132,8 +138,8 @@ curl "http://localhost:8000/v1/reasoning/status/uploads/2026/09/batch_01.csv"
 
 ## 7. Pengujian (Testing)
 
-Jalankan test suite menggunakan pytest di dalam virtualenv:
+Jalankan test suite menggunakan `uv`:
 ```bash
-./.venv/bin/pytest tests/test_fastapi_reasoning.py tests/test_reasoning.py -v
+uv run pytest tests/ -v
 ```
 Seluruh 13 skenario uji (FastAPI endpoints, slash-path handling, caching pattern deduplication, fallback generator, dan live Parquet 100M pushdown) diverifikasi lolos 100%.
