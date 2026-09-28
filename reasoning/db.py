@@ -20,7 +20,7 @@ CREATE OR REPLACE MACRO j(a, b) AS
 """
 
 
-def buka_koneksi() -> duckdb.DuckDBPyConnection:
+def get_duckdb_connection() -> duckdb.DuckDBPyConnection:
     """Connect to in-memory DuckDB with httpfs, S3, and PostgreSQL attached."""
     con = duckdb.connect()
 
@@ -50,15 +50,35 @@ def buka_koneksi() -> duckdb.DuckDBPyConnection:
 
 
 @contextmanager
-def pinjam_koneksi():
-    """Borrow a connection (using pool if available in environment, or standalone)."""
+def get_db_connection():
+    """Borrow a DuckDB connection (using pool if available in environment, or standalone)."""
     try:
         from _kolam import pinjam
         with pinjam() as con:
             yield con
     except (ImportError, ModuleNotFoundError):
-        con = buka_koneksi()
+        con = get_duckdb_connection()
         try:
             yield con
         finally:
             con.close()
+
+
+@contextmanager
+def get_pg_connection():
+    """Borrow a direct native PostgreSQL connection for atomic locks and state machines."""
+    import psycopg2
+    conn = psycopg2.connect(PG_DSN)
+    conn.autocommit = True
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+# Backwards compatibility aliases
+buka_koneksi = get_duckdb_connection
+pinjam_koneksi = get_db_connection
+pinjam_pg = get_pg_connection
+
+

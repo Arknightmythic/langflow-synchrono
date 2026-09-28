@@ -20,6 +20,9 @@ import urllib.request
 
 from reasoning.config import (
     MASTER_PARQUET_PATH,
+    PATTERN_LOCK_MAX_WAIT,
+    PATTERN_LOCK_POLL_INTERVAL,
+    PATTERN_LOCK_TIMEOUT_SECONDS,
     REASONING_AI_API_KEY,
     REASONING_AI_BASE_URL,
     REASONING_AI_MODEL,
@@ -27,7 +30,7 @@ from reasoning.config import (
     REASONING_AI_RETRY_DELAY,
     REASONING_AI_TIMEOUT,
 )
-from reasoning.db import buka_koneksi
+from reasoning.db import get_duckdb_connection, get_pg_connection
 from reasoning.jobs import clear_pattern_cache, execute_pg, heartbeat, q
 
 DEFAULT_PARQUET_PATH = MASTER_PARQUET_PATH
@@ -583,11 +586,16 @@ def resolve_unresolved_patterns(
     model: str | None = None,
     limit: int | None = None,
     allow_fallback: bool = True,
+    job_id: str | None = None,
 ) -> dict:
     """
     Detect uncached patterns, generate explanations via LLM or deterministic fallback,
     and persist templates into PostgreSQL reasoning_patterns.
+    Uses distributed pattern-claim locking state machine (status: 'RESOLVING' | 'COMPLETED')
+    to prevent thundering-herd duplicate LLM invocations across concurrent batches.
     """
+    lock_owner = job_id or f"proc-{os.getpid()}-{int(time.time()*1000)}"
+
     query = """
         SELECT
             pattern_signature,
@@ -595,24 +603,70 @@ def resolve_unresolved_patterns(
             MIN(id_incoming) AS sample_id,
             COUNT(*) AS pattern_count
         FROM reasoning_verdict
-        WHERE pattern_hash NOT IN (SELECT pattern_hash FROM pg.public.reasoning_patterns)
         GROUP BY pattern_signature, pattern_hash
         ORDER BY pattern_count DESC
     """
     if limit:
         query += f" LIMIT {int(limit)}"
 
-    unresolved = con.execute(query).fetchall()
+    batch_patterns = con.execute(query).fetchall()
     results = {
-        "unresolved_count": len(unresolved),
+        "unresolved_count": len(batch_patterns),
         "patterns_generated": 0,
         "llm_calls": 0,
         "fallback_calls": 0,
     }
 
+    if not batch_patterns:
+        return results
+
+    hashes = [p[1] for p in batch_patterns]
+    claim_winners = []
+    waiting_hashes = set()
     new_hashes = []
     llm_sample_ids = []
-    for signature, p_hash, sample_id, _ in unresolved:
+
+    with get_pg_connection() as pg_conn:
+        with pg_conn.cursor() as cur:
+            cur.execute("""
+                SELECT pattern_hash, status, locked_by, locked_at
+                FROM reasoning_patterns
+                WHERE pattern_hash = ANY(%s)
+            """, (hashes,))
+            existing_rows = cur.fetchall()
+            existing_map = {r[0]: {"status": r[1], "locked_by": r[2], "locked_at": r[3]} for r in existing_rows}
+
+            for signature, p_hash, sample_id, _ in batch_patterns:
+                pattern_name = derive_pattern_name(signature, p_hash)
+                meta = existing_map.get(p_hash)
+
+                if meta and meta["status"] == "COMPLETED":
+                    continue
+
+                cur.execute(f"""
+                    INSERT INTO reasoning_patterns (
+                        pattern_hash, pattern_name, pattern_signature, status, locked_by, locked_at, sample_id, hit_count, created_at, updated_at
+                    )
+                    VALUES (
+                        %s, %s, %s, 'RESOLVING', %s, now(), %s, 0, now(), now()
+                    )
+                    ON CONFLICT (pattern_hash) DO UPDATE
+                    SET status = 'RESOLVING',
+                        locked_by = EXCLUDED.locked_by,
+                        locked_at = now()
+                    WHERE reasoning_patterns.status = 'FAILED'
+                       OR (reasoning_patterns.status = 'RESOLVING' AND reasoning_patterns.locked_at < now() - INTERVAL '{PATTERN_LOCK_TIMEOUT_SECONDS} seconds')
+                    RETURNING pattern_hash, status, locked_by;
+                """, (p_hash, pattern_name, signature, lock_owner, sample_id))
+                claimed = cur.fetchone()
+
+                if claimed and claimed[2] == lock_owner:
+                    claim_winners.append((signature, p_hash, sample_id, pattern_name))
+                else:
+                    waiting_hashes.add(p_hash)
+
+    # 3. Resolve all patterns we won the claim for
+    for signature, p_hash, sample_id, pattern_name in claim_winners:
         new_hashes.append(p_hash)
         sample_query = f"""
             SELECT * FROM reasoning_verdict
@@ -655,6 +709,9 @@ FIELD COMPARISON:
                 results["llm_calls"] += 1
             except Exception as err:
                 if not allow_fallback:
+                    with get_pg_connection() as pg_conn:
+                        with pg_conn.cursor() as cur:
+                            cur.execute("UPDATE reasoning_patterns SET status = 'FAILED' WHERE pattern_hash = %s", (p_hash,))
                     raise
                 print(f"[REASONING] LLM error for pattern {p_hash[:8]}: {err}. Falling back to rule generator.")
 
@@ -668,23 +725,57 @@ FIELD COMPARISON:
             llm_sample_ids.append(sample_id)
 
         template = convert_explanation_to_template(explanation, sample_row)
-        pattern_name = derive_pattern_name(signature, p_hash)
 
-        execute_pg(
-            con,
-            f"""
-            INSERT INTO reasoning_patterns (
-                pattern_hash, pattern_name, pattern_signature, reason_template,
-                sample_id, hit_count, created_at, updated_at
-            )
-            VALUES (
-                {q(p_hash)}, {q(pattern_name)}, {q(signature)}, {q(template)},
-                {q(sample_id)}, 1, now(), now()
-            )
-            ON CONFLICT (pattern_hash) DO NOTHING
-            """,
-        )
+        with get_pg_connection() as pg_conn:
+            with pg_conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE reasoning_patterns
+                    SET reason_template = %s,
+                        status = 'COMPLETED',
+                        updated_at = now()
+                    WHERE pattern_hash = %s;
+                """, (template, p_hash))
         results["patterns_generated"] += 1
+
+    # 4. Active Await for Waiters (Anti-Thundering-Herd)
+    if waiting_hashes:
+        wait_start = time.perf_counter()
+        while waiting_hashes and (time.perf_counter() - wait_start < PATTERN_LOCK_MAX_WAIT):
+            time.sleep(PATTERN_LOCK_POLL_INTERVAL)
+            with get_pg_connection() as pg_conn:
+                with pg_conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT pattern_hash, status, reason_template FROM reasoning_patterns WHERE pattern_hash = ANY(%s)",
+                        (list(waiting_hashes),),
+                    )
+                    poll_rows = cur.fetchall()
+
+            for p_h, st, tpl in poll_rows:
+                if st == "COMPLETED" and tpl:
+                    waiting_hashes.discard(p_h)
+                elif st == "FAILED":
+                    waiting_hashes.discard(p_h)
+
+        # Stale lock recovery / fallback if still waiting
+        for st_hash in list(waiting_hashes):
+            sample_query = f"SELECT * FROM reasoning_verdict WHERE pattern_hash = {q(st_hash)} LIMIT 1"
+            c = con.execute(sample_query)
+            if c:
+                cols = [d[0] for d in c.description]
+                r_vals = c.fetchone()
+                if r_vals:
+                    s_r = dict(zip(cols, r_vals))
+                    fallback_exp = sanitize_explanation(construct_deterministic_fallback(s_r))
+                    fb_template = convert_explanation_to_template(fallback_exp, s_r)
+                    with get_pg_connection() as pg_conn:
+                        with pg_conn.cursor() as cur:
+                            cur.execute("""
+                                UPDATE reasoning_patterns
+                                SET reason_template = %s,
+                                    status = 'COMPLETED',
+                                    updated_at = now()
+                                WHERE pattern_hash = %s;
+                            """, (fb_template, st_hash))
 
     results["new_hashes"] = new_hashes
     results["llm_sample_ids"] = llm_sample_ids
@@ -759,7 +850,7 @@ def apply_reasoning_templates(
               ),
               chr(34)), chr(39)) AS reason
         FROM reasoning_verdict rv
-        JOIN pg.public.reasoning_patterns rp ON rp.pattern_hash = rv.pattern_hash;
+        JOIN pg.public.reasoning_patterns rp ON rp.pattern_hash = rv.pattern_hash AND rp.status = 'COMPLETED';
     """)
 
     counts = con.execute("""
@@ -791,16 +882,16 @@ def apply_reasoning_templates(
         pattern_counts = con.execute(
             "SELECT pattern_hash, COUNT(*) FROM reasoning_verdict GROUP BY pattern_hash"
         ).fetchall()
-        for p_hash, cnt in pattern_counts:
-            execute_pg(
-                con,
-                f"""
-                UPDATE reasoning_patterns
-                SET hit_count = hit_count + {cnt},
-                    updated_at = now()
-                WHERE pattern_hash = {q(p_hash)}
-                """,
-            )
+        if pattern_counts:
+            with get_pg_connection() as pg_conn:
+                with pg_conn.cursor() as cur:
+                    for p_hash, cnt in pattern_counts:
+                        cur.execute("""
+                            UPDATE reasoning_patterns
+                            SET hit_count = hit_count + %s,
+                                updated_at = now()
+                            WHERE pattern_hash = %s
+                        """, (cnt, p_hash))
 
     return {
         "updated_rows": total_rows,
@@ -821,7 +912,7 @@ def execute_reasoning(job: dict, dry_run: bool = False, limit: int | None = None
     master_parquet_path = job.get("master_parquet_path") or job.get("masterParquetPath") or MASTER_PARQUET_PATH
 
     start_time = time.perf_counter()
-    con = buka_koneksi()
+    con = get_duckdb_connection()
     try:
         if job.get("clear_cache"):
             deleted_patterns = clear_pattern_cache(con)
@@ -846,7 +937,7 @@ def execute_reasoning(job: dict, dry_run: bool = False, limit: int | None = None
         if job_id:
             heartbeat(con, job_id, stage="RESOLVING_PATTERNS")
 
-        resolution = resolve_unresolved_patterns(con, model=llm_model, limit=limit)
+        resolution = resolve_unresolved_patterns(con, model=llm_model, limit=limit, job_id=job_id)
 
         if job_id:
             heartbeat(con, job_id, stage="APPLYING_TEMPLATES")

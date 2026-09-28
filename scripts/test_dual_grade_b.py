@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from reasoning import app as standalone_app, reasoning_router
-from reasoning.db import pinjam_koneksi
+from reasoning.db import get_db_connection
 from reasoning.jobs import execute_pg, q
 from scripts.run_matching_csv_to_db import run_standalone_matching
 
@@ -50,7 +50,7 @@ def main():
     # LANGKAH 1: Bersihkan DB & Hapus Seluruh Cache Pola
     # ─────────────────────────────────────────────────────────────────────────────
     print_banner("LANGKAH 1: PEMBERSIHAN BASIS DATA & CACHE POLA")
-    with pinjam_koneksi() as con:
+    with get_db_connection() as con:
         # Hapus data uji lama
         execute_pg(con, f"DELETE FROM manual_matches WHERE file_id IN ({q(ID_TEST_1)}, {q(ID_TEST_2)});")
         execute_pg(con, f"DELETE FROM institution WHERE file_id IN ({q(ID_TEST_1)}, {q(ID_TEST_2)});")
@@ -154,7 +154,7 @@ def main():
     # LANGKAH 5: Tampilkan Contoh Narasi Hasil Penalaran AI & Verifikasi di DB
     # ─────────────────────────────────────────────────────────────────────────────
     print_banner("LANGKAH 5: SAMPEL HASIL PENALARAN AI DI DATABASE (manual_matches)")
-    with pinjam_koneksi() as con:
+    with get_db_connection() as con:
         rows_v1 = con.execute(f"""
             SELECT id_incoming, nama_incoming, reason, pattern_name, reasoning_source
             FROM pg.public.manual_matches

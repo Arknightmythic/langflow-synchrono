@@ -34,3 +34,7 @@ infra/cadangan/
 # Direktori data uji & skrip pengujian lokal
 test_data/
 
+
+# Agent skills and tool artifacts
+.agents/
+

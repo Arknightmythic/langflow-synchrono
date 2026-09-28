@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from reasoning import app, reasoning_router
-from reasoning.db import pinjam_koneksi
+from reasoning.db import get_db_connection
 from reasoning.jobs import execute_pg
 
 
@@ -39,7 +39,7 @@ def test_health_check_endpoint(client):
 
 def test_clear_cache_endpoint(client):
     # Insert dummy pattern to ensure there's something to clear
-    with pinjam_koneksi() as con:
+    with get_db_connection() as con:
         execute_pg(
             con,
             """
@@ -56,7 +56,7 @@ def test_clear_cache_endpoint(client):
     assert data["deleted_patterns"] >= 1
 
     # Verify cache is actually empty now
-    with pinjam_koneksi() as con:
+    with get_db_connection() as con:
         count = con.execute("SELECT count(*) FROM pg.public.reasoning_patterns").fetchone()[0]
         assert count == 0
 

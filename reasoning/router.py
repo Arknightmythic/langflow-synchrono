@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from reasoning.config import MASTER_PARQUET_PATH, REASONING_AI_MODEL
 from reasoning.core import execute_reasoning
-from reasoning.db import buka_koneksi, pinjam_koneksi
+from reasoning.db import get_db_connection
 from reasoning.jobs import (
     build_job_payload,
     clear_pattern_cache,
@@ -32,7 +32,7 @@ reasoning_router = APIRouter(prefix="/v1/reasoning", tags=["AI Reasoning"])
 )
 def clear_cache():
     try:
-        with pinjam_koneksi() as con:
+        with get_db_connection() as con:
             deleted = clear_pattern_cache(con)
         return ClearCacheResponse(
             status="SUCCESS",
@@ -56,7 +56,7 @@ def dispatch_reasoning(request: DispatchRequest):
     payload = request.model_dump(by_alias=True)
     job = build_job_payload(payload)
 
-    with pinjam_koneksi() as con:
+    with get_db_connection() as con:
         harvest_stale_jobs(con)
         record_job(con, job)
 
@@ -95,7 +95,7 @@ def trigger_reasoning_by_path(
     }
     job = build_job_payload(payload)
 
-    with pinjam_koneksi() as con:
+    with get_db_connection() as con:
         harvest_stale_jobs(con)
         record_job(con, job)
 
@@ -119,7 +119,7 @@ def check_status(
     job_id: Optional[str] = Query(None, alias="jobId")
 ):
     clean_file_id = file_id.strip() if file_id else None
-    with pinjam_koneksi() as con:
+    with get_db_connection() as con:
         harvest_stale_jobs(con)
         job = get_job(con, file_id=clean_file_id, job_id=job_id)
 
@@ -198,7 +198,7 @@ def run_reasoning_sync(
 def health_check():
     db_status = "UNKNOWN"
     try:
-        with pinjam_koneksi() as con:
+        with get_db_connection() as con:
             con.execute("SELECT 1 FROM pg.public.reasoning_jobs LIMIT 1")
             db_status = "CONNECTED"
     except Exception as e:

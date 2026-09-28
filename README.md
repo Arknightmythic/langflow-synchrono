@@ -12,17 +12,29 @@ Platform pemrosesan data kependudukan skala besar yang **berdiri sendiri**, terp
                        │ Langflow Matching &    │  │ FastAPI AI Reasoning   │
                        │ Grading Flows          │  │ Service (`reasoning/`) │
                        └────────────┬───────────┘  └────────────┬───────────┘
+                                    │                           │ Dispatches Tasks
+                                    │                           ▼
+                                    │              ┌────────────────────────┐
+                                    │              │ Redis / Celery Queue   │
+                                    │              └────────────┬───────────┘
+                                    │                           ▼
+                                    │              ┌────────────────────────┐
+                                    │              │ Celery Worker Pool     │
+                                    │              │ (Anti-Thundering Herd) │
+                                    │              └────────────┬───────────┘
                                     │                           │
                    ┌────────────────┼───────────────────────────┤
                    ▼                ▼                           ▼
             SeaweedFS (S3)     PostgreSQL                    DuckDB
-            Parquet incoming   Master kependudukan,          Mesin hitung analitik,
-            & Master 100M      jobs, patterns & hasil        join & vectorized SQL
+            Parquet incoming   Master, jobs, status locks    Mesin hitung analitik,
+            & Master 100M      & reasoning_patterns          join & vectorized SQL
 ```
 
 **Karakteristik Utama Arsitektur:**
-- **Matching & Grading:** Didorong oleh 7 custom node Langflow dan DuckDB. Tidak ada ketergantungan pada Polars, rapidfuzz, maupun pymysql — DuckDB menangani parquet di S3, koneksi PostgreSQL, dan `jaro_winkler_similarity` sekaligus.
-- **AI Reasoning (FastAPI & Modular Core):** Berdiri sendiri di direktori `reasoning/`. Menggunakan *Two-Phase Semi-Join Pushdown* langsung ke master Parquet 100 juta baris di S3, *Pattern Caching & Signature Hashing* (menghemat beban LLM hingga 99%), dan model lokal **Gemma 3:12B** (Ollama). Dapat dijalankan sebagai microservice independen atau "dijahit" (*embedded*) ke dalam aplikasi FastAPI lain dengan 2 baris kode.
+- **Matching & Grading:** Didorong oleh 7 custom node Langflow dan DuckDB. Tidak ada ketergantungan pada Polars, rapidfuzz, maupun pymysql: DuckDB menangani parquet di S3, koneksi PostgreSQL, dan `jaro_winkler_similarity` sekaligus.
+- **AI Reasoning (FastAPI & Event-Driven Celery):** Berdiri sendiri di direktori `reasoning/`. Menggunakan *Two-Phase Semi-Join Pushdown* langsung ke master Parquet 100 juta baris di S3, *Pattern Caching & Signature Hashing* (menghemat beban LLM hingga 99%), dan model lokal **Gemma 3:12B** (Ollama).
+- **Anti-Thundering-Herd Idempotency:** Penguncian status pola atomik di PostgreSQL (`RESOLVING` -> `COMPLETED`) mencegah duplikasi panggilan LLM saat banyak batch diproses secara serentak.
+- **LLM-as-a-Judge Framework:** Evaluasi kualitas otomatis di direktori `evals/` mengukur factuality, format template, dan keringkasan reviewer sesuai standar evaluasi modern.
 - **Manajemen Dependensi Modern:** Menggunakan `uv` (`pyproject.toml` dan `uv.lock`) untuk manajemen dependensi yang deterministik, cepat, dan terdokumentasi rapi.
 
 ---
@@ -34,7 +46,8 @@ Seluruh dokumentasi teknis, kontrak API, dan spesifikasi arsitektur terbagi rapi
 | Dokumen | Topik & Cakupan Utama |
 | :--- | :--- |
 | [`reasoning/ARCHITECTURE.md`](reasoning/ARCHITECTURE.md) | **Spesifikasi Arsitektur AI Reasoning (Standar Industri):** Zero-OOM Two-Phase Semi-Join 100M baris, Pattern Signature Hashing, State Machine PostgreSQL, dan Anti-Double-Hit Cache. |
-| [`reasoning/README.md`](reasoning/README.md) | **Panduan Pengembang AI Reasoning:** Quickstart FastAPI microservice, playbook integrasi (*embedding/jahit*), dan contoh API cURL. |
+| [`reasoning/README.md`](reasoning/README.md) | **Panduan Pengembang AI Reasoning:** Quickstart FastAPI microservice, playbook integrasi (*embedding/jahit*), Celery worker, dan contoh API cURL. |
+| [`evals/rubric.md`](evals/rubric.md) | **Rubrik Evaluasi LLM-as-a-Judge:** Kriteria Factuality Fidelity, Template Consistency, dan Conciseness Readability. |
 | [`docs/PARQUET_MATCHING_REASONING.md`](docs/PARQUET_MATCHING_REASONING.md) | Penjelasan alur matching CSV, integrasi master Parquet 100M, dan narasi cerdas AI untuk manual review. |
 | [`docs/PLUGGABLE_REASONING_ARCHITECTURE.md`](docs/PLUGGABLE_REASONING_ARCHITECTURE.md) | Cetak Biru Modularitas: Panduan fleksibilitas sumber data (Parquet / PostgreSQL Master / S3) dan decoupling API. |
 | [`docs/LARGE_SCALE_EVENT_DRIVEN_REASONING.md`](docs/LARGE_SCALE_EVENT_DRIVEN_REASONING.md) | Panduan stress-testing data jutaan baris & arsitektur event-driven paralel anti double-hit LLM. |
@@ -64,10 +77,13 @@ Backend lama butuh ~51 detik di server.
 Yang **sudah** terbukti:
 - Hasil matching identik dengan produksi (grade 1 & 4)
 - `jaro_winkler_similarity` DuckDB identik bit-per-bit dengan rapidfuzz, termasuk rumus grade 5 yang memakai rata-rata wilayah bersyarat (selisih `0.00e+00`)
-- Upsert mencegah duplikasi — dijalankan 2× tetap 1,00× (StarRocks langsung 2,00×)
+- Upsert mencegah duplikasi: dijalankan 2x tetap 1,00x (StarRocks langsung 2,00x)
 - SeaweedFS baca-tulis parquet, PostgreSQL baca-tulis
 - Langflow 1.12.1 di Docker berjalan dan **ketujuh node terdaftar** di kategori `matching`
-- **AI Reasoning FastAPI:** 13/13 unit & integration test lulus 100%, mendukung trigger path ber-slash (`/trigger/{file_id:path}`), pattern caching instan (0 LLM call pada warm cache), serta integrasi *embed/jahit* ke aplikasi eksternal.
+- **AI Reasoning Unit Test Suite:** 15/15 test lulus 100% (`tests/test_celery_concurrency.py`, `tests/test_fastapi_reasoning.py`, `tests/test_reasoning.py`).
+- **Idempotensi 4 Batch Konkuren:** 308 baris Grade B diproses serentak dengan **0 duplikasi panggilan LLM** (hanya 3 panggilan LLM untuk 3 pola unik di seluruh sistem, sisanya 100% cache hit terhidrasi dalam 18.11s).
+- **Senior QA Endurance Benchmark:** Cold cache (9.44s) vs Warm cache (3.24s dengan 100% cache hit ratio) serta matriks edge cases anomali tervalidasi.
+- **Evaluasi LLM-as-a-Judge:** 100% lulus pada seluruh sampel uji untuk 3 kriteria (Faktual, Format Template, Keterbacaan) dengan kalibrasi Cohen's Kappa = 1.000.
 
 ---
 
@@ -193,7 +209,42 @@ curl -X POST "http://localhost:8000/v1/reasoning/trigger/uploads/2026/09/batch_0
 curl "http://localhost:8000/v1/reasoning/status/uploads/2026/09/batch_01.csv"
 ```
 
-> 💡 **Rincian lengkap:** Baca [Spesifikasi Arsitektur AI Reasoning](reasoning/ARCHITECTURE.md) dan [Panduan Pengembang Reasoning](reasoning/README.md).
+### D. Menjalankan Event-Driven Celery Worker (Redis Broker)
+
+Untuk lingkungan produksi dengan volume konkurensi tinggi, jalankan worker Celery:
+
+```bash
+# Menjalankan worker Celery (concurrency 4):
+uv run celery -A reasoning.celery_app worker --loglevel=info --concurrency=4
+```
+*Sistem dilengkapi mekanisme failover otomatis: jika Celery broker tidak tersedia, API akan otomatis melakukan fallback ke thread latar belakang in-process.*
+
+### E. Menjalankan Evaluasi LLM-as-a-Judge (`evals/`)
+
+Framework evaluasi otomatis untuk memverifikasi kualitas narasi AI reasoning berdasarkan rubrik operasional:
+
+```bash
+# 1. Jalankan harness evaluasi terhadap sampel data:
+uv run python evals/run_eval.py --limit 20
+
+# 2. Kalibrasi skor hakim terhadap ground-truth manusia (Cohen's Kappa):
+uv run python evals/calibrate.py --human evals/sample_human_labels.csv --judge evals/results.json
+```
+
+### F. Rangkaian Uji Senior QA & Ketahanan Konkurensi
+
+```bash
+# 1. Uji ketahanan konkurensi 4 batch simultan (verifikasi anti-thundering-herd):
+uv run python scripts/test_concurrent_4_batches.py
+
+# 2. Uji ketahanan multi-grade, cold vs warm cache, dan edge cases:
+uv run python scripts/senior_qa_endurance_test.py
+
+# 3. Jalankan seluruh unit test suite:
+uv run pytest tests/ -v
+```
+
+> 💡 **Rincian lengkap:** Baca [Spesifikasi Arsitektur AI Reasoning](reasoning/ARCHITECTURE.md), [Rubrik LLM-Judge](evals/rubric.md), dan [Panduan Pengembang Reasoning](reasoning/README.md).
 
 ---
 

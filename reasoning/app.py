@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from reasoning.db import pinjam_koneksi
+from reasoning.db import get_db_connection
 from reasoning.jobs import harvest_stale_jobs
 from reasoning.router import reasoning_router
 
@@ -10,7 +10,7 @@ from reasoning.router import reasoning_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
-        with pinjam_koneksi() as con:
+        with get_db_connection() as con:
             harvested = harvest_stale_jobs(con)
             if harvested:
                 print(f"[FASTAPI REASONING] Harvested {harvested} stale jobs at startup")

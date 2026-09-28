@@ -67,3 +67,26 @@ S3_USE_SSL = os.getenv("S3_USE_SSL", "false").strip().lower() in ("1", "true", "
 # DuckDB limits
 DUCKDB_MEMORY_LIMIT = os.getenv("DUCKDB_MEMORY_LIMIT", "3GB").strip()
 DUCKDB_TEMP_DIR = os.getenv("DUCKDB_TEMP_DIR", "/tmp/duckdb_spill").strip()
+
+# Redis & Celery Event-Driven Settings
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost").strip()
+REDIS_PORT = os.getenv("REDIS_PORT", "6379").strip()
+REDIS_DB = os.getenv("REDIS_DB", "0").strip()
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "").strip()
+
+REDIS_URL = (
+    os.getenv("REDIS_URL", "").strip()
+    or (f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}" if REDIS_PASSWORD
+        else f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}")
+)
+
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "").strip() or REDIS_URL
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "").strip() or REDIS_URL
+CELERY_CONCURRENCY = int(os.getenv("CELERY_CONCURRENCY", "4"))
+USE_CELERY = os.getenv("USE_CELERY", "true").lower() in ("true", "1", "yes")
+
+# Distributed Pattern Lock & Anti-Thundering-Herd
+PATTERN_LOCK_TIMEOUT_SECONDS = int(os.getenv("PATTERN_LOCK_TIMEOUT_SECONDS", "45"))
+PATTERN_LOCK_POLL_INTERVAL = float(os.getenv("PATTERN_LOCK_POLL_INTERVAL", "0.3"))
+PATTERN_LOCK_MAX_WAIT = int(os.getenv("PATTERN_LOCK_MAX_WAIT", "30"))
+
