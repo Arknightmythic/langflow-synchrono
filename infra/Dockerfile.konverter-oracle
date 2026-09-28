@@ -1,0 +1,63 @@
+# Layanan konversi jalur B untuk `.dmp` — Oracle sekali pakai + DuckDB.
+#
+# Yang paling berat dari ketiganya, dan itu memang sifat Oracle: image-nya
+# terbesar dan waktu nyalanya terlama. Justru karena itu keputusan "satu
+# container berumur panjang" paling terasa di sini — waktu nyala yang bisa
+# menit dibayar sekali saat container naik, bukan tiap job.
+#
+# `gvenzl/oracle-free` dipakai, bukan image resmi Oracle, karena yang resmi
+# menuntut penerimaan lisensi lewat login registry — dan itu membuat build
+# tidak bisa diulang tanpa campur tangan manusia. Yang ini membungkus Oracle
+# Database Free, edisi gratis Oracle sendiri.
+#
+# CATATAN LISENSI: Oracle Database Free punya batas data (beberapa puluh GB)
+# dan syarat pemakaiannya sendiri. Sebelum dipakai di produksi, batas itu perlu
+# dipastikan cukup dan lisensinya dibaca — ini bukan hal yang bisa diputuskan
+# dari sisi kode.
+FROM gvenzl/oracle-free:23-slim
+
+USER root
+
+# python3.11, BUKAN `python3`. Base image Oracle Linux membawa Python 3.6
+# (pip 9.0.3), dan DuckDB 1.5.5 tidak punya wheel untuk versi setua itu — pip
+# di sana menawarkan duckdb 0.8.1 sebagai yang terbaru, lalu build gagal dengan
+# "No matching distribution found". Ditemukan dengan menjalankannya.
+RUN microdnf install -y python3.11 python3.11-pip \
+ && microdnf clean all
+
+RUN python3.11 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# `oracledb` mode THIN: Python murni, tanpa Instant Client, tanpa
+# LD_LIBRARY_PATH yang harus benar. Itu yang menjaga image ini sesederhana dua
+# konverter lainnya — DuckDB tidak punya extension Oracle, dan jalur ODBC akan
+# menyeret Instant Client beserta seluruh urusannya.
+RUN pip install --no-cache-dir duckdb==1.5.5 python-dotenv==1.2.3 oracledb==3.4.0
+
+# Hanya httpfs: parquet ditulis ke S3 dari DuckDB, dan datanya diambil lewat
+# `oracledb`, bukan lewat ATTACH.
+#
+# HOME-nya `/opt/oracle`, bukan `/home/oracle` — itu rumah user `oracle` di
+# image ini, dan `/home/oracle` memang tidak ada. DuckDB mencari extension di
+# `$HOME/.duckdb`, jadi salah menebak rumahnya berarti gagal dengan
+# "Can't find the home directory".
+ENV HOME=/opt/oracle
+RUN python -c "import duckdb; c=duckdb.connect(); c.execute('INSTALL httpfs')" \
+ && chown -R oracle /opt/oracle/.duckdb
+
+# Folder yang akan didaftarkan sebagai DIRECTORY object. Data Pump berjalan DI
+# DALAM server, jadi berkas .dmp harus terjangkau oleh proses Oracle — bukan
+# oleh klien yang memanggilnya.
+RUN mkdir -p /opt/oracle/dmp && chown -R oracle /opt/oracle/dmp
+
+COPY konverter/ /konverter/
+ENV PYTHONPATH=/konverter:/synchrono/lib \
+    PYTHONUNBUFFERED=1 \
+    KONV_MESIN=oracle
+
+COPY infra/konverter-oracle-nyalakan.sh /usr/local/bin/konverter-nyalakan.sh
+RUN chmod +x /usr/local/bin/konverter-nyalakan.sh
+
+EXPOSE 8392
+USER oracle
+ENTRYPOINT ["/usr/local/bin/konverter-nyalakan.sh"]

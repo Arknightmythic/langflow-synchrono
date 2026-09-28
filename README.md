@@ -47,6 +47,7 @@ Langflow** — portal pindah tanpa mengubah setelan kuncinya sekalipun.
 | Grading tujuh format lewat `grading-dispatch` | `csv`, `xlsx`, `parquet`, `sql`, `mdf`, `dmp` COMPLETED dengan **result identik**; `xls` ditolak dengan pesan yang sama |
 | Matching grade D & B lewat simulasi portal (`matching-dispatch`) | 400.040 baris: keputusan, snapshot, dan **reasoning identik**; cache reasoning dipakai bersama (22/22 dan 32/32 pola dari cache, nol panggilan LLM); callback HTTP 200 |
 | `infra/uji_asap.py` (endpoint REST + pembanding 62 field) | 21/21 |
+| `.sql` MySQL/MariaDB lewat `grading-dispatch` — tanpa dan dengan `sqlDialect` | COMPLETED; result **identik di setiap field** dengan `.csv` dan `.sql` PostgreSQL (grade A, 3.000 trusted, 0 anomali). Tanpa `sqlDialect`, konverter PostgreSQL hanya mengintip kepalanya lalu engine membelokkannya ke `konverter-mysql` |
 
 ---
 
@@ -65,16 +66,26 @@ format yang ditambahkan 24 Sep — `.xls` diterima lalu gagal di pekerja,
 alih-alih ditolak seketika. Service ini selalu memuat berkas komponen terkini;
 cukup restart container.
 
+**Satu pengecualian: konverter jalur B DISALIN.** Keputusan 28 Sep 2026 —
+konverter `.sql`/`.mdf`/`.dmp` (`konverter/`, `infra/Dockerfile.konverter*`)
+ada di kedua branch, dan service membangun miliknya sendiri. Rute konversinya
+(`lib/_konversi.py`) tetap dimuat dari `lib/` bersama. Dua salinan harus
+sejalan — periksa sebelum deploy:
+
+```powershell
+python infra\cek_konverter.py      # 16/16 sama, atau daftar yang berbeda
+```
+
 ---
 
 ## Menjalankan di mesin ini
 
 Service ini menumpang jaringan dan penyimpanan stack Langflow — SeaweedFS
-lokal, PostgreSQL di host, dan konverter jalur B — jadi stack itu harus hidup
-lebih dulu:
+lokal, penerus S3, dan PostgreSQL di host — jadi stack itu harus hidup lebih
+dulu. Konverter jalur B-nya milik service sendiri (`service-konverter*`):
 
 ```powershell
-cd ..\langflow-synchrono\infra ; docker compose up -d
+cd ..\langflow-synchrono\infra ; docker compose up -d seaweedfs s3-relay
 cd ..\..\synchrono-service      ; docker compose up -d --build
 ```
 
@@ -82,6 +93,14 @@ cd ..\..\synchrono-service      ; docker compose up -d --build
 - Kunci tetap untuk skrip & benchmark: `synchrono-bench-key`.
 - Dokumentasi API otomatis: <http://localhost:8000/docs>.
 - Perubahan di `lib/`, `components/`, atau `app/`: **`docker restart synchrono-service`**.
+- Dump `.sql` MySQL/MariaDB, `.mdf`, `.dmp` butuh konverternya sendiri, di balik
+  profil: `docker compose --profile mysql up -d --build service-konverter-mysql`
+  (atau `mssql` / `oracle`). Tanpa itu unggahan format tersebut gagal dengan
+  pesan yang menyebut profilnya.
+- Perubahan di `konverter/`: **`docker restart synchrono-service-konverter`**
+  (dan `-mysql` dst. yang hidup) — kodenya di-mount, dimuat sekali saat menyala.
+  Kalau `infra/Dockerfile.konverter*` yang berubah: `docker compose up -d --build
+  service-konverter`.
 
 Koleksi Postman: **`infra/postman_synchrono_service.json`** — auth, enam flow,
 contoh galat, kesehatan, dan REST. Jalankan 0a → 0b dulu (atau isi `api_key`);
@@ -145,6 +164,11 @@ infra/
   uji_kompat.py      Langflow vs service, permintaan yang sama
   uji_asap.py        uji REST + pembanding hasil grading
   siapkan_seaweed.py isi SeaweedFS lokal dengan tata letak server
+  cek_konverter.py   salinan konverter di sini vs langflow-synchrono
+  Dockerfile.konverter*, konverter*-nyalakan.sh, konverter-mysql.cnf
+                     image konverter jalur B (PostgreSQL 18, SQL Server,
+                     Oracle, MariaDB) — SALINAN dari langflow-synchrono
+konverter/           layanan konversi jalur B — SALINAN dari langflow-synchrono
 beban/               benchmark k6, Prometheus, Grafana
 docker-compose.yml         lokal, berdampingan dengan stack Langflow
 docker-compose.server.yml  server — dipakai BERSAMA compose server Langflow
@@ -153,5 +177,6 @@ compose.langflow-lokal.yml override Langflow lokal: rujukan wilayah dari Seaweed
 
 > **Branch terpisah, dua checkout.** Service ini di-push sebagai branch
 > tersendiri di repo inocts, terpisah dari branch Langflow, dan tidak mengubah
-> satu pun berkas di sana. Tapi saat jalan ia tetap memuat `lib/` dan
-> `components/` dari checkout `langflow-synchrono` di sebelahnya — lihat DEPLOY.md.
+> satu pun berkas di sana demi service. Saat jalan ia tetap memuat `lib/` dan
+> `components/` dari checkout `langflow-synchrono` di sebelahnya — lihat
+> DEPLOY.md. Konverter jalur B satu-satunya yang disalin (lihat di atas).

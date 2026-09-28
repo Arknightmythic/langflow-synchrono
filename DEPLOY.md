@@ -6,8 +6,9 @@ kontrak API yang sama persis (lihat README.md).
 Service ini ada di **branch tersendiri** repo inocts, terpisah dari branch
 Langflow — tapi TIDAK berdiri sendiri saat jalan. Logikanya adalah `lib/` dan
 `components/` milik `langflow-synchrono` (dimuat langsung, tidak disalin), dan
-migrasi, `.env`, serta konverter jalur B-nya juga dari sana. Jadi di server ada
-DUA checkout dari repo yang sama, bersebelahan:
+migrasi serta `.env`-nya juga dari sana. Konverter jalur B-nya milik branch ini
+sendiri (`konverter/`, `infra/Dockerfile.konverter*` — salinan yang dijaga
+sejalan). Jadi di server ada DUA checkout dari repo yang sama, bersebelahan:
 
 ```
 /opt/synchrono/langflow-synchrono/     branch Langflow — sudah ada, `git pull` seperti biasa
@@ -140,6 +141,25 @@ docker compose -f docker-compose.server.yml \
 `lib/` dan `components/` di-mount dari checkout itu — **restart cukup**, dan
 **tidak ada flow yang perlu dibangun ulang** (beda dengan Langflow).
 
+Kalau yang berubah konverter jalur B (`konverter/` atau
+`infra/Dockerfile.konverter*`) — di branch INI, karena konverter dibangun dari
+sini — **restart service tidak menyentuhnya**; konverter container sendiri.
+Periksa kesejalanannya dengan salinan Langflow, lalu build ulang konverternya:
+
+```bash
+cd /opt/synchrono/synchrono-service && git pull
+python3 infra/cek_konverter.py        # harus "N/N sama"
+cd /opt/synchrono/langflow-synchrono/infra
+docker compose -f docker-compose.server.yml \
+               -f ../../synchrono-service/docker-compose.server.yml \
+               --env-file .env up -d --build konverter
+```
+
+`up -d --build` membuat ulang container hanya kalau image-nya berubah. Kalau
+yang berubah hanya berkas `.py` di `konverter/`, tambahkan
+`restart konverter` sesudahnya — kodenya di-mount dan dimuat sekali saat
+menyala, sama seperti `lib/` di service ini.
+
 Kalau branch service ikut berubah (`app/`, Dockerfile), build ulang:
 
 ```bash
@@ -210,15 +230,56 @@ Sama dengan server lama langkah 4, 5, dan 6.
 
 ---
 
-## Unggahan `.mdf` dan `.dmp`
+## Unggahan `.sql`
 
-Konverternya sama dengan milik Langflow, dan menyalakannya pun sama
-(langflow-synchrono/DEPLOY.md §0C):
+Konverter `.sql` ikut naik bersama service ini (`depends_on`), dan dibangun dari
+branch INI (`konverter/`, `infra/Dockerfile.konverter*`) — blok `konverter*` di
+`docker-compose.server.yml` menimpa definisi milik Langflow. Yang diterima:
+
+- **dump PostgreSQL teks** (pg_dump biasa atau `--inserts`, SQL generik) —
+  konverter `konverter`, selalu hidup;
+- **dump MySQL/MariaDB** (mysqldump 5.7/8.x, mariadb-dump) — konverter
+  `konverter-mysql`, di balik profil `mysql` (lihat bawah). Dump yang dikirim
+  tanpa `sqlDialect` dikenali konverter PostgreSQL dari kepalanya lalu
+  dibelokkan ke sana.
+
+SQL Server, Oracle, dan SQLite dalam bentuk `.sql` belum; format custom
+`pg_dump -Fc` juga belum. Rinciannya di langflow-synchrono/UNGGAHAN.md.
+
+**Sejak 28 Sep 2026 konverter memakai PostgreSQL 18**, bukan 16. Alasannya ada dua:
+
+- dump pg_dump 17/18 bisa dipulihkan;
+- perintah klien psql di dalam dump (`\!` dan sejenisnya) ditolak lewat `\restrict`.
+
+Setelah `git pull` di KEDUA checkout, jalankan perintah build konverter di §6.
+Datanya pindah ke volume baru `konverter-pg18`. Volume lama hanya berisi klaster
+kosong dan boleh dibuang:
 
 ```bash
-docker compose -f docker-compose.server.yml --env-file .env \
-  --profile mssql --profile oracle up -d konverter-mssql konverter-oracle
+docker exec synchrono-konverter psql --version    # -> psql (PostgreSQL) 18.x
+docker volume ls | grep konverter-data
+docker volume rm <nama-volume-itu>
 ```
+
+## Unggahan `.mdf`, `.dmp`, dan `.sql` MySQL
+
+Dibangun dari branch ini juga, di balik profil yang sama dengan milik Langflow
+(langflow-synchrono/DEPLOY.md §0C) — nyalakan yang dibutuhkan saja:
+
+```bash
+docker compose -f docker-compose.server.yml \
+               -f ../../synchrono-service/docker-compose.server.yml --env-file .env \
+  --profile mssql --profile oracle --profile mysql \
+  up -d --build konverter-mssql konverter-oracle konverter-mysql
+```
+
+Kalau profilnya tidak dinyalakan, unggahan format itu gagal dengan pesan yang
+menyebut perintah menyalakannya — bukan gagal diam-diam.
+
+**Dua salinan, satu kebenaran.** Konverter ada di branch ini DAN di branch
+Langflow. Sebelum deploy, `python3 infra/cek_konverter.py` harus melaporkan
+semuanya sama; kalau ada yang berbeda, samakan dulu (perbaikan di satu branch
+disalin ke yang lain), jangan dideploy setengah.
 
 ## Yang perlu diingat
 

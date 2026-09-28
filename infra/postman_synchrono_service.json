@@ -310,7 +310,7 @@
           ]
         },
         {
-          "name": "1c. Dispatch — .sql (jalur B, konverter)",
+          "name": "1c. Dispatch — .sql PostgreSQL (jalur B, konverter)",
           "request": {
             "method": "POST",
             "header": [
@@ -341,10 +341,77 @@
                 }
               ]
             },
-            "description": "Dipulihkan di container konverter lebih dulu. `.mdf`/`.dmp` sama bentuknya (butuh konverter-mssql / konverter-oracle hidup).\n\nNode id `GradingDispatch-a3967` — sama dengan Langflow.",
+            "description": "Dipulihkan di container konverter lebih dulu. Dump PostgreSQL teks (pg_dump biasa/`--inserts`, sampai versi 18). SQL Server/Oracle dalam .sql dan `pg_dump -Fc` gagal di tahap konversi. Perintah klien psql (`\\!`, `\\connect`, ...) di dalam dump membuatnya ditolak. `.mdf`/`.dmp` sama bentuknya (butuh konverter-mssql / konverter-oracle hidup).\n\nNode id `GradingDispatch-a3967` — sama dengan Langflow.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"GradingDispatch-a3967\": {\n      \"payload\": \"{\\\"fileId\\\": \\\"postman-sql\\\", \\\"filename\\\": \\\"data.sql\\\", \\\"s3Bucket\\\": \\\"bucket-test\\\", \\\"s3Endpoint\\\": \\\"\\\", \\\"rawSourceKey\\\": \\\"uploads/fmt-sql/raw/data.sql\\\", \\\"parquetKey\\\": \\\"uploads/postman-sql/enriched.parquet\\\", \\\"enrichedParquetKey\\\": \\\"uploads/postman-sql/enriched.parquet\\\", \\\"institution\\\": {\\\"id\\\": \\\"inst-001\\\", \\\"name\\\": \\\"Kementerian Sosial\\\"}, \\\"callback\\\": {\\\"url\\\": \\\"\\\", \\\"secretToken\\\": \\\"\\\"}}\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "var r = pm.response.json();",
+                  "if (r.outputs) {",
+                  "  var hasil = JSON.parse(r.outputs[0].outputs[0].results.message.text);",
+                  "  console.log(hasil);",
+                  "  pm.test('isi text: ' + JSON.stringify(hasil).slice(0, 180), function () {});",
+                  "} else {",
+                  "  // Galat komponen: `detail` berisi STRING JSON, persis Langflow.",
+                  "  try { console.log(JSON.parse(r.detail).message); } catch (e) { console.log(r.detail); }",
+                  "}",
+                  "if (r.outputs) {",
+                  "  if (hasil.jobId) pm.collectionVariables.set('grading_job_id', hasil.jobId);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "1c-2. Dispatch — .sql MySQL/MariaDB (konverter-mysql)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/run/grading-dispatch?stream=false",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "run",
+                "grading-dispatch"
+              ],
+              "query": [
+                {
+                  "key": "stream",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Dump mysqldump/mariadb-dump, dipulihkan di MariaDB sekali pakai (butuh konverter-mysql hidup: profil compose `mysql`). `sqlDialect: \"mysql\"` mengirimnya langsung ke sana; tanpa itu konverter PostgreSQL mengenalinya dari 64 KB pertama lalu engine membelokkannya — hasilnya sama. Perintah klien (`\\!`, `source`, `LOAD DATA LOCAL INFILE`) di dalam dump membuatnya ditolak.\n\nNode id `GradingDispatch-a3967` — sama dengan Langflow.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"GradingDispatch-a3967\": {\n      \"payload\": \"{\\\"sqlDialect\\\": \\\"mysql\\\", \\\"fileId\\\": \\\"postman-mysql\\\", \\\"filename\\\": \\\"data.sql\\\", \\\"s3Bucket\\\": \\\"bucket-test\\\", \\\"s3Endpoint\\\": \\\"\\\", \\\"rawSourceKey\\\": \\\"uploads/fmt-mysql/raw/data.sql\\\", \\\"parquetKey\\\": \\\"uploads/postman-mysql/enriched.parquet\\\", \\\"enrichedParquetKey\\\": \\\"uploads/postman-mysql/enriched.parquet\\\", \\\"institution\\\": {\\\"id\\\": \\\"inst-001\\\", \\\"name\\\": \\\"Kementerian Sosial\\\"}, \\\"callback\\\": {\\\"url\\\": \\\"\\\", \\\"secretToken\\\": \\\"\\\"}}\"\n    }\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"

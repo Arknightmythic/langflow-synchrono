@@ -12,12 +12,14 @@
 #
 #   * `.env` yang SAMA dengan Langflow — PG_HOST/PG_PASSWORD, S3_ENDPOINT,
 #     PORTAL_PG_DSN, REASONING_AI_* — tidak ditulis dua kali.
-#   * `s3-relay` dan `konverter` milik berkas pertama dipakai apa adanya, dan
-#     migrasi/seed memakai migrate.py & seed.py yang sama (`skema-service` di
-#     bawah). `depends_on` membuat perintah di atas ikut menaikkan semuanya,
-#     tapi TIDAK menaikkan — maupun membangun — Langflow.
-#   * Satu proyek compose (`infra`) — kalau Langflow juga jalan di server yang
-#     sama, keduanya berbagi konverter & penerus S3, bukan saling bentrok nama.
+#   * `s3-relay` milik berkas pertama dipakai apa adanya, dan migrasi/seed
+#     memakai migrate.py & seed.py yang sama (`skema-service` di bawah).
+#     `depends_on` membuat perintah di atas ikut menaikkan semuanya, tapi TIDAK
+#     menaikkan — maupun membangun — Langflow.
+#   * KONVERTER jalur B dibangun dari branch INI (`konverter/`, `infra/Dockerfile.
+#     konverter*`), bukan dari checkout Langflow — lihat blok konverter di bawah.
+#   * Satu proyek compose — kalau Langflow juga jalan di server yang sama,
+#     keduanya berbagi konverter & penerus S3, bukan saling bentrok nama.
 #
 # SEMUA PATH DI SINI RELATIF TERHADAP FOLDER BERKAS PERTAMA
 # (langflow-synchrono/infra), bukan folder berkas ini — aturan compose untuk
@@ -167,3 +169,131 @@ services:
       retries: 5
       start_period: 20s
     restart: unless-stopped
+
+  # ── Konverter jalur B — DIBANGUN DARI BRANCH INI ─────────────────────────
+  #
+  # Nama service SAMA dengan di berkas pertama, jadi definisi di sini MENIMPA
+  # yang di sana: compose menggabungkan berkas `-f`, dan `build`, `environment`,
+  # serta volume dengan tujuan yang sama diambil dari berkas terakhir. Hasilnya
+  # tetap SATU set container — tidak ada nama yang bentrok — tapi kodenya milik
+  # synchrono-service.
+  #
+  # Salinan `konverter/` di sini dan di langflow-synchrono harus SEJALAN.
+  # Periksa dengan `python infra/cek_konverter.py` (dari folder service).
+  konverter:
+    build:
+      context: ../../synchrono-service
+      dockerfile: infra/Dockerfile.konverter
+    container_name: synchrono-konverter
+    environment:
+      # Superuser hanya untuk CREATE/DROP DATABASE. Dumpnya dipulihkan sebagai
+      # peran `pemulih` yang BUKAN superuser — lihat konverter/_pulih.py.
+      POSTGRES_PASSWORD: "${KONV_PG_PASSWORD:-konversi_lokal}"
+      POSTGRES_DB: postgres
+      KONV_PG_HOST: 127.0.0.1
+      KONV_PG_PORT: "5432"
+      KONV_PORT: "8390"
+      KONV_MAX_CONCURRENT: "${KONV_MAX_CONCURRENT:-1}"
+      KONV_BATAS_DETIK: "${KONV_BATAS_DETIK:-1800}"
+      KONV_BATAS_MB: "${KONV_BATAS_MB:-4096}"
+      LIB_SYNCHRONO: /synchrono/lib
+      S3_ENDPOINT: "s3-relay:8333"
+      S3_ACCESS_KEY: "${S3_ACCESS_KEY:-ADMIN}"
+      S3_SECRET_KEY: "${S3_SECRET_KEY:-Password1234}"
+      S3_USE_SSL: "false"
+    volumes:
+      # lib/ tetap dari checkout Langflow — `_umum.py` memakai pengenal kolom
+      # yang sama dengan grading, satu mesin, bukan dua.
+      - ../lib:/synchrono/lib:ro
+      - ../../synchrono-service/konverter:/konverter:ro
+      - konverter-pg18:/var/lib/postgresql
+    networks: [dalam]
+    restart: unless-stopped
+
+  konverter-mssql:
+    profiles: [mssql]
+    build:
+      context: ../../synchrono-service
+      dockerfile: infra/Dockerfile.konverter-mssql
+    container_name: synchrono-konverter-mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: "${KONV_MSSQL_PASSWORD:-Konversi_Lokal_12345!}"
+      KONV_MESIN: sqlserver
+      KONV_PORT: "8391"
+      KONV_MAX_CONCURRENT: "1"
+      KONV_BATAS_MB: "${KONV_BATAS_MB:-4096}"
+      KONV_DUCKDB_HOME: /var/opt/mssql
+      KONV_KERJA_UNDUH: /var/opt/mssql/data/unduh
+      KONV_MSSQL_KERJA: /var/opt/mssql/data/uji
+      LIB_SYNCHRONO: /synchrono/lib
+      S3_ENDPOINT: "s3-relay:8333"
+      S3_ACCESS_KEY: "${S3_ACCESS_KEY:-ADMIN}"
+      S3_SECRET_KEY: "${S3_SECRET_KEY:-Password1234}"
+      S3_USE_SSL: "false"
+    volumes:
+      - ../lib:/synchrono/lib:ro
+      - ../../synchrono-service/konverter:/konverter:ro
+      - konverter-mssql-data:/var/opt/mssql/data
+    networks: [dalam]
+    restart: unless-stopped
+
+  konverter-oracle:
+    profiles: [oracle]
+    build:
+      context: ../../synchrono-service
+      dockerfile: infra/Dockerfile.konverter-oracle
+    container_name: synchrono-konverter-oracle
+    environment:
+      ORACLE_PASSWORD: "${KONV_ORACLE_PASSWORD:-Konversi_Lokal_12345}"
+      KONV_MESIN: oracle
+      KONV_PORT: "8392"
+      KONV_MAX_CONCURRENT: "1"
+      KONV_BATAS_MB: "${KONV_BATAS_MB:-4096}"
+      KONV_ORA_DSN: "localhost:1521/FREEPDB1"
+      KONV_ORA_KERJA: /opt/oracle/dmp
+      KONV_ORA_DIRNAME: KONVERSI_DIR
+      KONV_KERJA_UNDUH: /opt/oracle/dmp/unduh
+      LIB_SYNCHRONO: /synchrono/lib
+      S3_ENDPOINT: "s3-relay:8333"
+      S3_ACCESS_KEY: "${S3_ACCESS_KEY:-ADMIN}"
+      S3_SECRET_KEY: "${S3_SECRET_KEY:-Password1234}"
+      S3_USE_SSL: "false"
+    volumes:
+      - ../lib:/synchrono/lib:ro
+      - ../../synchrono-service/konverter:/konverter:ro
+      - konverter-oracle-data:/opt/oracle/oradata
+    networks: [dalam]
+    restart: unless-stopped
+
+  konverter-mysql:
+    profiles: [mysql]
+    build:
+      context: ../../synchrono-service
+      dockerfile: infra/Dockerfile.konverter-mysql
+    container_name: synchrono-konverter-mysql
+    environment:
+      MARIADB_ROOT_PASSWORD: "${KONV_MYSQL_PASSWORD:-Konversi_Lokal_12345}"
+      KONV_MESIN: mysql
+      KONV_PORT: "8393"
+      KONV_MAX_CONCURRENT: "${KONV_MAX_CONCURRENT:-1}"
+      KONV_BATAS_DETIK: "${KONV_BATAS_DETIK:-1800}"
+      KONV_BATAS_MB: "${KONV_BATAS_MB:-4096}"
+      LIB_SYNCHRONO: /synchrono/lib
+      S3_ENDPOINT: "s3-relay:8333"
+      S3_ACCESS_KEY: "${S3_ACCESS_KEY:-ADMIN}"
+      S3_SECRET_KEY: "${S3_SECRET_KEY:-Password1234}"
+      S3_USE_SSL: "false"
+    volumes:
+      - ../lib:/synchrono/lib:ro
+      - ../../synchrono-service/konverter:/konverter:ro
+      - konverter-mysql-data:/var/lib/mysql
+    networks: [dalam]
+    restart: unless-stopped
+
+volumes:
+  konverter-pg18:
+  konverter-mssql-data:
+  konverter-oracle-data:
+  konverter-mysql-data:

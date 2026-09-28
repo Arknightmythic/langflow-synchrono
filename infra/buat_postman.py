@@ -127,11 +127,13 @@ def run(nama, endpoint, tweaks: dict, deskripsi, *, input_type="text",
 
 # ── Muatan contoh — menunjuk berkas uji yang ADA di SeaweedFS lokal ─────────
 
-def muatan_grading(file_id: str, sumber: str, berkas: str) -> str:
+def muatan_grading(file_id: str, sumber: str, berkas: str, **tambahan) -> str:
     # Persis bentuk portal: `parquetKey` SAMA dengan `enrichedParquetKey` (nama
     # tujuan), dan berkas masukannya di `rawSourceKey`. Engine mengenali
     # kesamaan itu lalu membaca rawSourceKey (lib/_grading._pilih_sumber).
+    # `tambahan` untuk field opsional portal, misalnya `sqlDialect`.
     return json.dumps({
+        **tambahan,
         "fileId": file_id,
         "filename": berkas,
         "s3Bucket": "bucket-test",
@@ -202,10 +204,23 @@ def koleksi() -> dict:
         run("1b. Dispatch — .xlsx", "grading-dispatch",
             {"payload": muatan_grading("postman-xlsx", "uploads/fmt-xlsx/raw/data.xlsx", "data.xlsx")},
             "Jalur A, dibaca langsung.", tes=skrip_simpan("grading_job_id")),
-        run("1c. Dispatch — .sql (jalur B, konverter)", "grading-dispatch",
+        run("1c. Dispatch — .sql PostgreSQL (jalur B, konverter)", "grading-dispatch",
             {"payload": muatan_grading("postman-sql", "uploads/fmt-sql/raw/data.sql", "data.sql")},
-            "Dipulihkan di container konverter lebih dulu. `.mdf`/`.dmp` sama bentuknya "
-            "(butuh konverter-mssql / konverter-oracle hidup).",
+            "Dipulihkan di container konverter lebih dulu. Dump PostgreSQL teks "
+            "(pg_dump biasa/`--inserts`, sampai versi 18). SQL Server/Oracle dalam .sql "
+            "dan `pg_dump -Fc` gagal di tahap konversi. Perintah klien psql (`\\!`, "
+            "`\\connect`, ...) di dalam dump membuatnya ditolak. `.mdf`/`.dmp` sama "
+            "bentuknya (butuh konverter-mssql / konverter-oracle hidup).",
+            tes=skrip_simpan("grading_job_id")),
+        run("1c-2. Dispatch — .sql MySQL/MariaDB (konverter-mysql)", "grading-dispatch",
+            {"payload": muatan_grading("postman-mysql", "uploads/fmt-mysql/raw/data.sql",
+                                       "data.sql", sqlDialect="mysql")},
+            "Dump mysqldump/mariadb-dump, dipulihkan di MariaDB sekali pakai (butuh "
+            "konverter-mysql hidup: profil compose `mysql`). `sqlDialect: \"mysql\"` "
+            "mengirimnya langsung ke sana; tanpa itu konverter PostgreSQL mengenalinya "
+            "dari 64 KB pertama lalu engine membelokkannya — hasilnya sama. Perintah "
+            "klien (`\\!`, `source`, `LOAD DATA LOCAL INFILE`) di dalam dump membuatnya "
+            "ditolak.",
             tes=skrip_simpan("grading_job_id")),
         run("1d. Status — job terakhir (job_id)", "grading-status",
             {"job_id": "{{grading_job_id}}"},

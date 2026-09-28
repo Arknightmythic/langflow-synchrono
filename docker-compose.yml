@@ -4,13 +4,18 @@
 #
 # MENUMPANG JARINGAN STACK LANGFLOW, TIDAK MEMBUAT SENDIRI
 #
-# SeaweedFS, PostgreSQL, dan konverter jalur B yang dipakai HARUS yang sama
-# dengan yang dipakai Langflow — satu penyimpanan, satu data, dua pintu API.
-# Jadi dua jaringan milik stack Langflow dipakai apa adanya:
+# SeaweedFS dan PostgreSQL yang dipakai HARUS yang sama dengan yang dipakai
+# Langflow — satu penyimpanan, satu data, dua pintu API. Jadi dua jaringan
+# milik stack Langflow dipakai apa adanya:
 #
 #     infra_luar    SeaweedFS lokal, dan PostgreSQL di host (DBngin)
 #     infra_dalam   konverter .sql/.mdf/.dmp dan penerus S3-nya — jaringan
 #                   `internal: true`, tanpa jalan keluar
+#
+# KONVERTER jalur B milik service ini sendiri (`konverter/`, dibangun dari
+# folder ini) — `service-konverter*` di bawah. Namanya SENGAJA beda dari
+# `konverter*` milik Langflow: keduanya tinggal di `infra_dalam`, dan dua
+# container beralias sama di satu jaringan membuat DNS menjawab acak.
 #
 # Stack itu HARUS SUDAH JALAN lebih dulu:
 #
@@ -67,6 +72,12 @@ services:
       DUCKDB_MEMORY_LIMIT: "3GB"
       DUCKDB_TEMP_DIR: "/tmp/duckdb_spill"
 
+      # ── Konverter jalur B milik service ini (lihat bawah) ──────────────
+      KONVERTER_URL: "http://service-konverter:8390"
+      KONVERTER_MSSQL_URL: "http://service-konverter-mssql:8391"
+      KONVERTER_ORACLE_URL: "http://service-konverter-oracle:8392"
+      KONVERTER_MYSQL_URL: "http://service-konverter-mysql:8393"
+
       # ── Grading ─────────────────────────────────────────────────────────
       GRADING_MAX_CONCURRENT: "2"
       GRADING_STALE_MINUTES: "15"
@@ -99,6 +110,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks: [luar, dalam]
+    depends_on:
+      - service-konverter
     healthcheck:
       # /health tidak menyentuh PostgreSQL — container yang sehat tapi basis
       # datanya sedang mati tidak boleh ikut di-restart berulang-ulang.
@@ -109,6 +122,129 @@ services:
       retries: 5
       start_period: 15s
     restart: unless-stopped
+
+  # ── Konverter jalur B, dibangun dari folder ini ──────────────────────────
+  #
+  # Kode dan Dockerfile-nya SALINAN dari langflow-synchrono; keduanya harus
+  # sejalan (`python infra\cek_konverter.py`). Hanya di jaringan `dalam`, tanpa
+  # `ports:` — alasannya di compose Langflow. S3 lewat `s3-relay` milik stack
+  # Langflow, satu-satunya jembatan dari jaringan itu.
+  #
+  # PostgreSQL selalu naik; yang lain di balik profil:
+  #     docker compose --profile mysql up -d service-konverter-mysql
+  service-konverter:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.konverter
+    container_name: synchrono-service-konverter
+    environment:
+      POSTGRES_PASSWORD: konversi_lokal
+      POSTGRES_DB: postgres
+      KONV_PG_HOST: 127.0.0.1
+      KONV_PG_PORT: "5432"
+      KONV_PORT: "8390"
+      KONV_MAX_CONCURRENT: "1"
+      KONV_BATAS_DETIK: "1800"
+      KONV_BATAS_MB: "4096"
+      LIB_SYNCHRONO: /synchrono/lib
+      S3_ENDPOINT: "s3-relay:8333"
+      S3_ACCESS_KEY: synchrono
+      S3_SECRET_KEY: synchrono123
+      S3_USE_SSL: "false"
+    volumes:
+      - ../langflow-synchrono/lib:/synchrono/lib:ro
+      - ./konverter:/konverter:ro
+      - konverter-pg18:/var/lib/postgresql
+    networks: [dalam]
+    restart: unless-stopped
+
+  service-konverter-mysql:
+    profiles: [mysql]
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.konverter-mysql
+    container_name: synchrono-service-konverter-mysql
+    environment:
+      MARIADB_ROOT_PASSWORD: Konversi_Lokal_12345
+      KONV_MESIN: mysql
+      KONV_PORT: "8393"
+      KONV_MAX_CONCURRENT: "1"
+      KONV_BATAS_DETIK: "1800"
+      KONV_BATAS_MB: "4096"
+      LIB_SYNCHRONO: /synchrono/lib
+      S3_ENDPOINT: "s3-relay:8333"
+      S3_ACCESS_KEY: synchrono
+      S3_SECRET_KEY: synchrono123
+      S3_USE_SSL: "false"
+    volumes:
+      - ../langflow-synchrono/lib:/synchrono/lib:ro
+      - ./konverter:/konverter:ro
+      - konverter-mysql-data:/var/lib/mysql
+    networks: [dalam]
+    restart: unless-stopped
+
+  service-konverter-mssql:
+    profiles: [mssql]
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.konverter-mssql
+    container_name: synchrono-service-konverter-mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: Konversi_Lokal_12345!
+      KONV_MESIN: sqlserver
+      KONV_PORT: "8391"
+      KONV_MAX_CONCURRENT: "1"
+      KONV_BATAS_MB: "4096"
+      KONV_DUCKDB_HOME: /var/opt/mssql
+      KONV_KERJA_UNDUH: /var/opt/mssql/data/unduh
+      KONV_MSSQL_KERJA: /var/opt/mssql/data/uji
+      LIB_SYNCHRONO: /synchrono/lib
+      S3_ENDPOINT: "s3-relay:8333"
+      S3_ACCESS_KEY: synchrono
+      S3_SECRET_KEY: synchrono123
+      S3_USE_SSL: "false"
+    volumes:
+      - ../langflow-synchrono/lib:/synchrono/lib:ro
+      - ./konverter:/konverter:ro
+      - konverter-mssql-data:/var/opt/mssql/data
+    networks: [dalam]
+    restart: unless-stopped
+
+  service-konverter-oracle:
+    profiles: [oracle]
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.konverter-oracle
+    container_name: synchrono-service-konverter-oracle
+    environment:
+      ORACLE_PASSWORD: Konversi_Lokal_12345
+      KONV_MESIN: oracle
+      KONV_PORT: "8392"
+      KONV_MAX_CONCURRENT: "1"
+      KONV_BATAS_MB: "4096"
+      KONV_ORA_DSN: "localhost:1521/FREEPDB1"
+      KONV_ORA_KERJA: /opt/oracle/dmp
+      KONV_ORA_DIRNAME: KONVERSI_DIR
+      KONV_KERJA_UNDUH: /opt/oracle/dmp/unduh
+      LIB_SYNCHRONO: /synchrono/lib
+      S3_ENDPOINT: "s3-relay:8333"
+      S3_ACCESS_KEY: synchrono
+      S3_SECRET_KEY: synchrono123
+      S3_USE_SSL: "false"
+    volumes:
+      - ../langflow-synchrono/lib:/synchrono/lib:ro
+      - ./konverter:/konverter:ro
+      - konverter-oracle-data:/opt/oracle/oradata
+    networks: [dalam]
+    restart: unless-stopped
+
+volumes:
+  konverter-pg18:
+  konverter-mysql-data:
+  konverter-mssql-data:
+  konverter-oracle-data:
 
 networks:
   luar:
