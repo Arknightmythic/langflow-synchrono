@@ -52,6 +52,7 @@ Seluruh dokumentasi teknis, kontrak API, dan spesifikasi arsitektur terbagi rapi
 | [`docs/PLUGGABLE_REASONING_ARCHITECTURE.md`](docs/PLUGGABLE_REASONING_ARCHITECTURE.md) | Cetak Biru Modularitas: Panduan fleksibilitas sumber data (Parquet / PostgreSQL Master / S3) dan decoupling API. |
 | [`docs/LARGE_SCALE_EVENT_DRIVEN_REASONING.md`](docs/LARGE_SCALE_EVENT_DRIVEN_REASONING.md) | Panduan stress-testing data jutaan baris & arsitektur event-driven paralel anti double-hit LLM. |
 | [`docs/SCALABILITY_AND_ROBUST_ARCHITECTURE_300M.md`](docs/SCALABILITY_AND_ROBUST_ARCHITECTURE_300M.md) | **Audit Skalabilitas & Arsitektur Robust Master 300JT:** Evaluasi ketahanan Zero-OOM, hardening data kependudukan, hasil Senior QA, dan cetak biru high-throughput. |
+| [`docs/END_TO_END_AI_REASONING.md`](docs/END_TO_END_AI_REASONING.md) | **Panduan Pipeline End-to-End AI Reasoning:** Diagram arsitektur lengkap, alur sekuensial, Two-Phase Semi-Join, perbandingan 5 kolom, dan bulk persistensi ke PostgreSQL. |
 | [`docs/API.md`](docs/API.md) | Daftar endpoint REST API Langflow, format payload, otentikasi API key, dan koleksi Postman. |
 | [`docs/GRADING.md`](docs/GRADING.md) | Layanan grading kualitas data asinkron (5 lapis penilaian aturan). |
 | [`docs/NORMALISASI.md`](docs/NORMALISASI.md) | Normalisasi kolom dan format tanggal bercampur menggunakan DuckDB/AI. |
