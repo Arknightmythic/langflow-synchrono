@@ -31,9 +31,11 @@ from reasoning.schemas import (
     JobStatusResponse,
     RunSyncResponse,
 )
+from reasoning.prompt import SYSTEM_PROMPT
 from reasoning.worker import dispatch_worker
 
 __all__ = [
+    "SYSTEM_PROMPT",
     "app",
     "reasoning_router",
     "execute_reasoning",
