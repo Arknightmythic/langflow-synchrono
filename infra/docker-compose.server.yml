@@ -312,7 +312,9 @@ services:
     volumes:
       - ../lib:/synchrono/lib:ro
       - ../konverter:/konverter:ro
-      - konverter-data:/var/lib/postgresql/data
+      # PostgreSQL 18: data di /var/lib/postgresql/18/docker. Volume baru — isi
+      # `konverter-data` lama (klaster 16) tidak bisa dibuka 18 dan tidak perlu.
+      - konverter-pg18:/var/lib/postgresql
     networks: [dalam]
     restart: unless-stopped
 
@@ -373,6 +375,33 @@ services:
     networks: [dalam]
     restart: unless-stopped
 
+  # `.sql` berdialek MySQL/MariaDB. Dump tanpa `sqlDialect` dikenali konverter
+  # PostgreSQL dari kepalanya lalu dibelokkan ke sini — lihat lib/_konversi.py.
+  konverter-mysql:
+    profiles: [mysql]
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.konverter-mysql
+    container_name: synchrono-konverter-mysql
+    environment:
+      MARIADB_ROOT_PASSWORD: "${KONV_MYSQL_PASSWORD:-Konversi_Lokal_12345}"
+      KONV_MESIN: mysql
+      KONV_PORT: "8393"
+      KONV_MAX_CONCURRENT: "${KONV_MAX_CONCURRENT:-1}"
+      KONV_BATAS_DETIK: "${KONV_BATAS_DETIK:-1800}"
+      KONV_BATAS_MB: "${KONV_BATAS_MB:-4096}"
+      LIB_SYNCHRONO: /synchrono/lib
+      S3_ENDPOINT: "s3-relay:8333"
+      S3_ACCESS_KEY: "${S3_ACCESS_KEY:-ADMIN}"
+      S3_SECRET_KEY: "${S3_SECRET_KEY:-Password1234}"
+      S3_USE_SSL: "false"
+    volumes:
+      - ../lib:/synchrono/lib:ro
+      - ../konverter:/konverter:ro
+      - konverter-mysql-data:/var/lib/mysql
+    networks: [dalam]
+    restart: unless-stopped
+
 networks:
   # `luar` — bridge biasa. Yang di sini bisa menjangkau host, jadi inilah yang
   # dipakai untuk PostgreSQL dan SeaweedFS backend.
@@ -386,6 +415,7 @@ networks:
 
 volumes:
   langflow-data:
-  konverter-data:
+  konverter-pg18:
   konverter-mssql-data:
   konverter-oracle-data:
+  konverter-mysql-data:

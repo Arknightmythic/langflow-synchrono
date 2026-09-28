@@ -1,0 +1,45 @@
+# Layanan konversi jalur B untuk `.sql` berdialek MySQL/MariaDB — MariaDB
+# sekali pakai + DuckDB.
+#
+# Berdiri TERPISAH dari konverter PostgreSQL, alasan yang sama dengan SQL Server
+# dan Oracle: tiap mesin basis data datang dengan image dan cara inisialisasinya
+# sendiri, dan satu container yang gagal tidak boleh menghentikan format lain.
+#
+# MariaDB, bukan MySQL: satu mesin membaca dump kedua keluarga, dan kliennya
+# punya `--sandbox`. Alasan lengkapnya di konverter/_pulih_mysql.py.
+FROM mariadb:11.8
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 python3-venv \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Versi dipatok sama dengan engine grading, alasan yang sama: parquet yang
+# ditulis di sini harus bisa dibaca di sana tanpa kejutan versi format.
+RUN pip install --no-cache-dir duckdb==1.5.5 python-dotenv==1.2.3
+
+# Extension diunduh saat build; container ini berjalan tanpa akses internet.
+#
+#   httpfs  mengambil dump dari S3, menulis parquet ke S3
+#   mysql   ATTACH ke basis data sekali pakai untuk memilih tabel & ekspor
+RUN python -c "import duckdb; c=duckdb.connect(); [c.execute(f'INSTALL {e}') for e in ('httpfs','mysql')]"
+
+# Pengaturan server yang menutup jalur berkas: LOCAL INFILE mati, INTO OUTFILE
+# hanya boleh ke folder kosong (dan penggunanya pun tanpa hak FILE), hanya
+# mendengarkan di loopback. Lihat berkasnya.
+COPY infra/konverter-mysql.cnf /etc/mysql/conf.d/zz-konverter.cnf
+RUN mkdir -p /var/lib/mysql-files && chown mysql:mysql /var/lib/mysql-files \
+ && chmod 700 /var/lib/mysql-files
+
+COPY konverter/ /konverter/
+ENV PYTHONPATH=/konverter:/synchrono/lib \
+    PYTHONUNBUFFERED=1 \
+    KONV_MESIN=mysql
+
+COPY infra/konverter-mysql-nyalakan.sh /usr/local/bin/konverter-nyalakan.sh
+RUN chmod +x /usr/local/bin/konverter-nyalakan.sh
+
+EXPOSE 8393
+ENTRYPOINT ["/usr/local/bin/konverter-nyalakan.sh"]

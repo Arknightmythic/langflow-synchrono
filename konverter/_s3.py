@@ -70,7 +70,7 @@ def _wewenang(metode: str, host: str, jalur: str, kunci: str, rahasia: str,
 
 def unduh(endpoint: str, bucket: str, kunci_objek: str, tujuan: str,
           akses: str, rahasia: str, ssl: bool = False,
-          batas_bita: int | None = None) -> int:
+          batas_bita: int | None = None, awal_saja: int | None = None) -> int:
     """
     Ambil satu objek ke berkas lokal. Kembalikan ukurannya.
 
@@ -78,6 +78,10 @@ def unduh(endpoint: str, bucket: str, kunci_objek: str, tujuan: str,
     `Content-Length` supaya berkas kebesaran ditolak sebelum satu bita pun
     diunduh, sekali lagi selagi mengalir supaya server yang tidak melaporkan
     panjangnya — atau melaporkannya keliru — tetap tidak bisa memenuhi disk.
+
+    `awal_saja` mengambil hanya N bita pertama (header `Range`) — cukup untuk
+    mengenali dialek dump tanpa mengunduh gigabitanya. Server yang mengabaikan
+    `Range` tetap tidak membuat kita mengunduh semuanya: alirannya diputus di N.
     """
     host = endpoint.replace("http://", "").replace("https://", "").rstrip("/")
     jalur = "/" + bucket.strip("/") + "/" + urllib.parse.quote(
@@ -86,19 +90,31 @@ def unduh(endpoint: str, bucket: str, kunci_objek: str, tujuan: str,
     t = datetime.datetime.now(datetime.timezone.utc)
     amz, tgl = t.strftime("%Y%m%dT%H%M%SZ"), t.strftime("%Y%m%d")
 
+    kepala = {
+        "Host": host,
+        "x-amz-date": amz,
+        "x-amz-content-sha256": KOSONG,
+        "Authorization": _wewenang("GET", host, jalur, akses, rahasia,
+                                   amz, tgl),
+    }
+    if awal_saja:
+        # Tidak ikut ditandatangani — SigV4 hanya menandatangani header yang
+        # disebut di SignedHeaders, dan server menerima header lain apa adanya.
+        kepala["Range"] = f"bytes=0-{awal_saja - 1}"
     permintaan = urllib.request.Request(
         f"{'https' if ssl else 'http'}://{host}{jalur}", method="GET",
-        headers={
-            "Host": host,
-            "x-amz-date": amz,
-            "x-amz-content-sha256": KOSONG,
-            "Authorization": _wewenang("GET", host, jalur, akses, rahasia,
-                                       amz, tgl),
-        })
+        headers=kepala)
 
     jumlah = 0
     with urllib.request.urlopen(permintaan, timeout=120) as balasan:
         panjang = balasan.headers.get("Content-Length")
+        if awal_saja:
+            with open(tujuan, "wb") as keluar:
+                while jumlah < awal_saja and (
+                        potongan := balasan.read(min(POTONG, awal_saja - jumlah))):
+                    jumlah += len(potongan)
+                    keluar.write(potongan)
+            return jumlah
         if batas_bita and panjang and int(panjang) > batas_bita:
             raise ValueError(
                 f"Berkas {int(panjang) / 2**20:.0f} MB melewati batas "

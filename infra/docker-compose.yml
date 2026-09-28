@@ -351,7 +351,11 @@ services:
       # mesin pengenalan, bukan dua yang bisa berbeda pendapat.
       - ../lib:/synchrono/lib:ro
       - ../konverter:/konverter:ro
-      - konverter-data:/var/lib/postgresql/data
+      # Image PostgreSQL 18 menyimpan data di /var/lib/postgresql/18/docker.
+      # Volume baru, bukan `konverter-data` lama: isinya klaster 16 yang tidak
+      # bisa dibuka 18, dan memang tidak ada yang perlu dibawa — tiap job
+      # membuang database-nya sendiri.
+      - konverter-pg18:/var/lib/postgresql
     networks:
       # HANYA jaringan internal. `internal: true` berarti container ini tidak
       # punya rute ke luar sama sekali — bukan aturan firewall yang bisa keliru
@@ -446,6 +450,41 @@ services:
       - seaweedfs
     restart: unless-stopped
 
+  # Jalur B untuk `.sql` berdialek MySQL/MariaDB — MariaDB sekali pakai.
+  #
+  # `.sql` dipakai bersama PostgreSQL dan MySQL. Dump yang dikirim dengan
+  # `sqlDialect: mysql|mariadb` langsung ke sini; tanpa itu ia sampai ke
+  # konverter PostgreSQL dulu, dikenali dari 64 KB pertamanya, lalu dibelokkan
+  # engine ke sini. Nyalakan dengan:
+  #     docker compose --profile mysql up -d konverter-mysql
+  konverter-mysql:
+    profiles: [mysql]
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.konverter-mysql
+    container_name: synchrono-konverter-mysql
+    environment:
+      MARIADB_ROOT_PASSWORD: Konversi_Lokal_12345
+      KONV_MESIN: mysql
+      KONV_PORT: "8393"
+      KONV_MAX_CONCURRENT: "1"
+      KONV_BATAS_DETIK: "1800"
+      KONV_BATAS_MB: "4096"
+      LIB_SYNCHRONO: /synchrono/lib
+      S3_ENDPOINT: "s3-relay:8333"
+      S3_ACCESS_KEY: synchrono
+      S3_SECRET_KEY: synchrono123
+      S3_USE_SSL: "false"
+    volumes:
+      - ../lib:/synchrono/lib:ro
+      - ../konverter:/konverter:ro
+      - konverter-mysql-data:/var/lib/mysql
+    networks:
+      - dalam
+    depends_on:
+      - seaweedfs
+    restart: unless-stopped
+
   # ── Penerus S3 untuk konverter ────────────────────────────────────────────
   #
   # Konverter berada di jaringan `internal`, yang TIDAK punya rute ke mana pun
@@ -489,6 +528,7 @@ networks:
 volumes:
   seaweed-data:
   langflow-data:
-  konverter-data:
+  konverter-pg18:
   konverter-mssql-data:
   konverter-oracle-data:
+  konverter-mysql-data:

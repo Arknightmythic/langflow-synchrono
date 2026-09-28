@@ -342,7 +342,7 @@ sistem yang ada, bukan satu jalur pemrosesan kedua **di dalamnya**.
 
 | Format | Mesin yang dibutuhkan | Catatan |
 |---|---|---|
-| `.sql` | sesuai dialeknya | PostgreSQL **sudah ada**; dialek lain butuh mesinnya sendiri |
+| `.sql` | sesuai dialeknya | PostgreSQL dan MySQL/MariaDB **sudah ada** (§7); Oracle, SQL Server, SQLite belum |
 | `.mdf` | SQL Server | image 0,58 GB unduhan / **2,34 GB di disk**; `.ldf` kadang wajib (lihat bawah); versi harus cocok |
 | `.dmp` | Oracle Database | beberapa GB; batas data edisi Free & lisensinya perlu dipastikan sendiri |
 
@@ -625,6 +625,34 @@ Dump jahat yang menyisipkan `COPY ... FROM PROGRAM 'cat /etc/passwd'` **gagal
 tepat di situ** — *permission denied to COPY to or from an external program* —
 dan karena `--single-transaction`, tidak ada yang tertinggal.
 
+**Tapi peran non-superuser hanya menahan yang dijalankan SERVER.** Ditemukan
+28 Sep 2026: baris `\! sh -c '...'` di dalam dump dijalankan oleh **psql**, di
+container konverter — sebagai root, dengan kredensial S3 terbaca — dan
+konversinya tetap dilaporkan berhasil. Hal yang sama berlaku untuk `\copy ... to
+program`, `\o |perintah`, dan `\i berkas`. Lapisan 1 tidak pernah melihatnya,
+karena perintah itu tidak pernah sampai ke basis data.
+
+Perbaikannya mekanisme yang sama dengan yang dipasang pg_dump sejak Agustus
+2025: `siapkan_dump()` menaruh `\restrict <kunci acak per job>` di baris pertama.
+Sesudahnya psql menolak **semua** perintah klien kecuali `\unrestrict` dengan
+kunci itu, yang tidak pernah ada di tangan pembuat dump. Dump data biasa tidak
+kehilangan apa pun — `COPY ... FROM stdin` dan penutup `\.` adalah aliran data,
+bukan perintah klien. `\restrict` bawaan dump dibuang lebih dulu, karena
+`\restrict` kedua di tengah mode terbatas ikut ditolak.
+
+Diuji lewat `konversi()` di konverter PostgreSQL 18: dump pg_dump **16.15, 17.11,
+dan 18.6** asli — biasa, `--inserts`, `--statistics`, dan yang diawali BOM —
+pulih utuh, termasuk `NULL`, tab, `É`, dan teks `\N`. Dump berisi `\!` ditolak
+dengan pesan yang menyebut sebabnya, dan berkas buktinya tidak tercipta.
+`pg_dump -C` gagal di `CREATE DATABASE` (seperti sebelumnya), dan format custom
+`-Fc` ditolak di depan dengan pesan yang menyebut jalan keluarnya.
+
+**Versi PostgreSQL konverter mengikuti pg_dump terbaru, bukan PostgreSQL
+engine.** Dump teks hanya bisa dipulihkan ke server yang sama atau lebih baru:
+di PostgreSQL 16, dump pg_dump 17 berhenti di baris kepala
+`SET transaction_timeout = 0;`. Konverter karena itu memakai PostgreSQL 18, yang
+sekaligus menjamin psql mengenal `\restrict`.
+
 #### Dua hal yang hanya muncul karena dijalankan
 
 **1. `OWNER TO` menggagalkan hampir setiap dump, dan perbaikan yang paling
@@ -843,6 +871,77 @@ docker compose --profile oracle up -d konverter-oracle
 **Catatan lisensi:** Oracle Database Free punya batas data dan syarat pemakaian
 sendiri. Sebelum dipakai di produksi, keduanya perlu dipastikan — itu bukan hal
 yang bisa diputuskan dari sisi kode.
+
+### Jalur B `.sql` MySQL/MariaDB — SUDAH JALAN DAN DIUJI (28 Sep 2026)
+
+`konverter/_pulih_mysql.py`, container `konverter-mysql` (MariaDB 11.8, port
+8393, profil `mysql`). Polanya sama dengan PostgreSQL: satu server berumur
+panjang, satu database + satu pengguna per job, keduanya dibuang setelahnya.
+
+Ujung ke ujung lewat `grading-dispatch`: `uji_format_mysql.sql` (dibuat dengan
+`mariadb-dump --databases`, 3.000 baris + tabel umpan) — tanpa `sqlDialect`
+maupun dengan — menghasilkan result **identik di setiap field** dengan `.csv`
+dan `.sql` PostgreSQL: grade A, 3.000 trusted, 0 anomali. Lihat
+`test-data-csv/uji-ae/UJI_FORMAT.md`.
+
+#### Satu ekstensi, dua mesin — rutenya
+
+`.sql` dipakai bersama PostgreSQL dan MySQL, jadi ekstensi saja tidak cukup:
+
+| Muatan portal | Rute |
+|---|---|
+| `sqlDialect: "mysql"` / `"mariadb"` | langsung ke `konverter-mysql` |
+| tanpa `sqlDialect` | ke konverter PostgreSQL, yang mengunduh **64 KB pertama saja** (header `Range`), mengenali dialeknya, lalu membalas `422 {dialek: "mysql"}`; engine membelokkannya ke `konverter-mysql` |
+
+Terukur dengan S3 palsu: dump MySQL 5,6 MB tanpa `sqlDialect` diunduh **65.536
+bita** oleh konverter PostgreSQL sebelum dibelokkan; dengan `sqlDialect`,
+**nol**. Dump bergigabita tidak diunduh dua kali dan tidak memegang antrean
+PostgreSQL. Penanda MySQL kini juga mengenali kepala `mariadb-dump` (`/*M!`) dan
+dump data saja bertanda petik terbalik.
+
+#### MariaDB untuk dump MySQL sekalipun
+
+Satu mesin membaca kedua keluarga: diuji dump `mariadb-dump` 11.8 asli dan dump
+berformat mysqldump 8.0 — kolasi `utf8mb4_0900_ai_ci`, `GTID_PURGED`
+berbaris-baris, `/*!80016 DEFAULT ENCRYPTION */`. Arah sebaliknya lebih rapuh:
+dump MariaDB 11 memakai kolasi `uca1400` yang tidak dikenal MySQL. Dan kliennya
+punya `--sandbox`.
+
+#### Pelajaran dari PostgreSQL dipasang dari awal
+
+Celah `\!` di jalur PostgreSQL (§4) punya padanan di sini — klien `mariadb`
+juga punya perintah sendiri (`\!`, `system`, `source`, `pager`, `tee`), plus
+`LOAD DATA LOCAL INFILE` yang membuat KLIEN membaca berkas lokal lalu
+mengirimnya sebagai isi tabel yang kita ekspor. Semuanya ditutup, dan diuji:
+
+| Dump jahat (setelah tabel sah) | Hasil |
+|---|---|
+| `\! sh -c '...'`, `\. /etc/passwd` | ditolak klien — *Unknown command* (`--binary-mode`) |
+| `system ...`, `source ...`, `pager ...`, `tee ...` | tidak diurai klien, jadi galat sintaks di server |
+| `LOAD DATA LOCAL INFILE '/proc/self/environ'` | *ERROR 4166 ... disabled the local infile capability* |
+| `LOAD DATA INFILE`, `SELECT ... INTO OUTFILE` | ditolak — tanpa hak FILE |
+| `CREATE USER`, `GRANT ALL`, `SET GLOBAL` | ditolak — tanpa CREATE USER / GRANT / SUPER |
+| `SELECT ... FROM mysql.user`, `CREATE TABLE mysql.x` | ditolak — hak hanya pada database job |
+
+Tidak satu pun berkas bukti tercipta. Sesudah 19 job — sukses maupun gagal —
+tidak ada pengguna, database, atau baris hak yang tertinggal: hak MySQL pada
+database yang sudah dibuang TIDAK ikut hilang, jadi penggunanya dibuang juga.
+
+#### Yang dibuang dari dump, dan kenapa itu aman
+
+`CREATE/DROP DATABASE` dan `USE` (semua masuk database job), `DEFINER=...`,
+`SET @@SESSION.SQL_LOG_BIN`, `SET @@GLOBAL.GTID_PURGED`, `CHANGE MASTER` —
+padanan `OWNER TO` di PostgreSQL: pernyataan yang menuntut hak yang sengaja
+tidak diberikan dan tidak ada gunanya untuk membaca enam kolom. Baris data
+(`INSERT`) tidak disentuh. Diproses sebagai bita — dump latin1 tetap benar
+(`ANDRÉ BRÚ`).
+
+#### Yang tetap gagal, dengan sebab yang jelas
+
+Dump **data saja** (`--no-create-info`) tidak bisa dipulihkan di mana pun karena
+tabelnya tidak ada — *Table 'job_...penduduk' doesn't exist*. Dump beberapa
+database masuk ke SATU database job; kalau ada nama tabel kembar, sebutkan
+`sourceTable`.
 
 ### Bentuk konverternya — SUDAH DIPUTUSKAN
 

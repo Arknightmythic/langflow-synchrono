@@ -44,7 +44,7 @@ memeriksa ekstensi `rawSourceKey` dan menentukan sisanya.
 | `.parquet` | diterima | tercepat, tetap yang dianjurkan |
 | `.csv` `.tsv` `.txt` | diterima | seperti sebelumnya |
 | `.xlsx` | **baru** | diuji 200.000 baris, hasilnya identik dengan CSV |
-| `.sql` | **baru** | dialek PostgreSQL; dikonversi dulu, otomatis |
+| `.sql` | **baru** | dialek PostgreSQL atau MySQL/MariaDB; dikonversi dulu, otomatis. Kirim `sqlDialect` kalau tahu — lihat §6.3 |
 | `.mdf` | **baru** | SQL Server; `.ldf` pendamping opsional — lihat §6.2 |
 | `.xls` | **ditolak** | lihat §3 |
 | `.dmp` | **baru** | Oracle Data Pump (`expdp`). Format `exp` lama ditolak — lihat §3b |
@@ -208,7 +208,7 @@ Engine bisa menebak keduanya, tapi keterangan selalu lebih baik daripada tebakan
 
 | Field | Gunanya kalau dikirim |
 |---|---|
-| `sqlDialect` | `"postgresql"`, `"mysql"`, `"oracle"`, `"sqlserver"`. Tanpa ini engine menebak dari kepala berkas, dan dump yang tidak lazim bisa meleset **tanpa memberi tanda**. |
+| `sqlDialect` | `"postgresql"`, `"mysql"`, `"mariadb"`, `"oracle"`, `"sqlserver"`. Yang dipulihkan: `postgresql` dan `mysql`/`mariadb` (mesin terpisah — `sqlDialect` menentukan ke mana dump dikirim). Tanpa ini engine menebak dari kepala berkas, dan dump yang tidak lazim bisa meleset **tanpa memberi tanda**. |
 | `sourceTable` | Nama tabel yang berisi data kependudukan. Tanpa ini engine memilih sendiri dari nama kolomnya. Untuk `.mdf`, sertakan skemanya: `dbo.penduduk`. |
 
 Untuk `sourceTable`: pemilihan otomatis sudah bekerja baik pada dump uji (tabel

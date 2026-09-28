@@ -4,6 +4,10 @@ Layanan konversi jalur B — HTTP tipis di depan `_pulih.py`.
     POST /konversi   { jobId, s3Bucket, sourceKey, targetKey, ... }  -> { ok, rowCount, ... }
     GET  /sehat                                                      -> { ok, antre }
 
+Gagal dibalas 422 `{ ok: false, error, dialek }`. `dialek` terisi hanya kalau
+dump-nya milik konverter lain (MySQL yang sampai ke konverter PostgreSQL) —
+pemanggil lalu mengirim ulang ke sana.
+
 KENAPA HTTP, DAN KENAPA SESEDERHANA INI
 
 Pemanggilnya cuma satu: pekerja grading di Langflow. Tidak ada pemakai luar,
@@ -55,8 +59,13 @@ if MESIN == "sqlserver":
     from _pulih_mssql import konversi
 elif MESIN == "oracle":
     from _pulih_oracle import konversi
+elif MESIN == "mysql":
+    from _pulih_mysql import konversi
 else:
-    from _pulih import konversi
+    from _pulih import DIALEK_PINDAH, DialekLain, deteksi_dialek, konversi
+
+# Cukup untuk mengenali dialek dump — sama dengan yang dibaca `deteksi_dialek()`.
+KEPALA_BITA = 64 * 1024
 
 PORT = int(os.getenv("KONV_PORT", "8390"))
 BATAS_PARALEL = int(os.getenv("KONV_MAX_CONCURRENT", "1"))
@@ -126,6 +135,19 @@ def _kerjakan(m: dict) -> dict:
     parquet = kerja / "hasil.parquet"
     lapor = lambda t: print(f"[K] {m['jobId']} {t}", flush=True)  # noqa: E731
     try:
+        # Dump MySQL yang dikirim tanpa `sqlDialect` sampai ke konverter
+        # PostgreSQL dulu. Kepalanya saja yang diunduh untuk mengenalinya, lalu
+        # pemanggil membelokkannya — dump bergigabita tidak diunduh dua kali,
+        # dan tidak memegang antrean PostgreSQL selama itu.
+        if MESIN == "postgresql":
+            dialek = str(m.get("dialect") or "").strip().lower()
+            if not dialek:
+                unduh(S3_ENDPOINT, bucket, m["sourceKey"], str(lokal),
+                      S3_KEY, S3_SECRET, ssl=S3_SSL, awal_saja=KEPALA_BITA)
+                dialek = deteksi_dialek(str(lokal))
+            if dialek in DIALEK_PINDAH:
+                raise DialekLain(dialek)
+
         # MENGALIR ke disk, bukan lewat memori. `read_blob()` DuckDB akan
         # mengembalikan satu objek bytes utuh, dan itu membuat batas ukuran
         # berkas ditentukan RAM (3,5 GB tersedia) alih-alih disk (900 GB
@@ -228,8 +250,14 @@ class Penangan(BaseHTTPRequestHandler):
             hasil = _kerjakan(m)
             self._balas(200, {"ok": True, **hasil})
         except Exception as e:  # noqa: BLE001
-            print("[K] GAGAL:", traceback.format_exc(), flush=True)
-            self._balas(422, {"ok": False, "error": str(e)})
+            dialek = getattr(e, "dialek", None)
+            if dialek:
+                # Bukan kegagalan — dump milik konverter lain. Tanpa traceback.
+                print(f"[K] {m.get('jobId')} berdialek {dialek}: dikembalikan "
+                      f"ke pemanggil untuk dibelokkan", flush=True)
+            else:
+                print("[K] GAGAL:", traceback.format_exc(), flush=True)
+            self._balas(422, {"ok": False, "error": str(e), "dialek": dialek})
         finally:
             _slot.release()
 

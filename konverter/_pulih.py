@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 import subprocess
 import sys
 import time
@@ -62,13 +63,41 @@ BATAS_DETIK = int(os.getenv("KONV_BATAS_DETIK", "1800"))
 # `OWNER TO "nama_peran";` — pg_dump hampir selalu memuatnya.
 POLA_PEMILIK = re.compile(r'OWNER\s+TO\s+"?([A-Za-z0-9_$-]+)"?\s*;', re.I)
 
+# `\restrict KUNCI` dan `\unrestrict KUNCI` yang ditulis pg_dump 16.10, 17.6,
+# 18 dan sesudahnya di awal dan akhir dump. Dibuang; penggantinya dipasang
+# `siapkan_dump()` dengan kunci yang tidak diketahui pembuat dump.
+POLA_RESTRICT = re.compile(r"^\\(un)?restrict\b")
+
 # Penanda dialek di kepala berkas dump.
+#
+# MySQL: selain kepala mysqldump, juga kepala mariadb-dump (`/*M!`), mesin
+# penyimpanan yang hanya ada di keluarga MySQL, dan nama bertanda petik terbalik
+# — yang terakhir menangkap dump data saja (`--no-create-info --compact`) yang
+# tidak membawa kepala apa pun.
 PENANDA = {
     "postgresql": re.compile(r"PostgreSQL database dump|pg_dump|SET search_path", re.I),
-    "mysql":      re.compile(r"MySQL dump|ENGINE=InnoDB|/\*!40101", re.I),
+    "mysql":      re.compile(r"MySQL dump|MariaDB dump|ENGINE=(?:InnoDB|MyISAM|Aria)\b"
+                             r"|/\*!40101|/\*M!"
+                             r"|^\s*(?:INSERT\s+INTO|CREATE\s+TABLE)\s+`", re.I | re.M),
     "sqlserver":  re.compile(r"\bGO\s*$|SET ANSI_NULLS|\[dbo\]\.", re.I | re.M),
     "oracle":     re.compile(r"CREATE OR REPLACE PACKAGE|VARCHAR2\(|/\*\s*Oracle", re.I),
 }
+
+
+# Dialek yang punya konverternya sendiri. Dump seperti ini tidak ditolak di
+# sini, melainkan DIKEMBALIKAN ke pemanggil dengan nama dialeknya supaya ia
+# dibelokkan — lihat `konversi_dulu()` di lib/_konversi.py.
+DIALEK_PINDAH = {"mysql": "mysql", "mariadb": "mysql"}
+
+
+class DialekLain(RuntimeError):
+    """Dump ini milik konverter lain. Membawa nama dialeknya untuk pemanggil."""
+
+    def __init__(self, dialek: str):
+        self.dialek = DIALEK_PINDAH.get(dialek, dialek)
+        super().__init__(
+            f"Dump ini berdialek {dialek}, bukan postgresql. Ia dikerjakan "
+            f"konverter-{self.dialek}; pemanggil membelokkannya ke sana.")
 
 
 def _psql(sql: str, db: str = "postgres", peran: str | None = None) -> str:
@@ -140,11 +169,41 @@ def siapkan_dump(asal: str, tujuan: str) -> set[str]:
 
     Dibaca per baris, bukan sekaligus: dump bisa berukuran gigabita, dan
     `OWNER TO` pada keluaran pg_dump selalu muat dalam satu baris.
+
+    PERINTAH KLIEN psql DIMATIKAN — `\\restrict`
+
+    Peran non-superuser hanya menahan yang dijalankan SERVER. Baris berawalan
+    garis miring terbalik dijalankan psql sendiri, di container ini: `\\! perintah`
+    adalah shell, `\\copy ... to program` juga, `\\i` membaca berkas lokal. Diuji:
+    satu baris `\\! sh -c '...'` di dalam dump berjalan sebagai root, bisa membaca
+    kredensial S3, dan konversinya tetap dilaporkan berhasil.
+
+    Karena itu baris pertama berkas yang dijalankan adalah `\\restrict KUNCI`
+    dengan kunci acak per job. Sesudahnya psql menolak SEMUA perintah klien
+    kecuali `\\unrestrict KUNCI` — dan kunci itu tidak pernah ada di tangan
+    pembuat dump. Ini mekanisme yang sama yang dipasang pg_dump sendiri sejak
+    Agustus 2025 untuk alasan yang persis sama; bedanya, di sini kuncinya milik
+    kita, bukan milik berkas yang tidak dipercaya.
+
+    Tidak ada yang hilang dari dump data biasa: `COPY ... FROM stdin` dan
+    penutupnya `\\.` adalah aliran data, bukan perintah klien, dan tetap jalan.
+    Yang gagal hanya dump yang memang butuh perintah klien — `pg_dump -C` dengan
+    `\\connect` — dan itu sudah gagal sebelumnya di `CREATE DATABASE`.
+
+    `\\restrict`/`\\unrestrict` bawaan dump dibuang: `\\restrict` kedua di tengah
+    mode terbatas akan ditolak, dan membuang baris tidak pernah menambah
+    kemampuan. BOM di awal berkas ikut dibuang karena baris pertama berkas asli
+    kini bukan lagi awal berkas.
     """
     peran: set[str] = set()
     with open(asal, "r", encoding="utf-8", errors="replace", newline="") as masuk:
         with open(tujuan, "w", encoding="utf-8", newline="") as keluar:
-            for baris in masuk:
+            keluar.write(f"\\restrict {secrets.token_hex(32)}\n")
+            for nomor, baris in enumerate(masuk):
+                if nomor == 0:
+                    baris = baris.lstrip("\ufeff")
+                if POLA_RESTRICT.match(baris):
+                    continue
                 cocok = POLA_PEMILIK.search(baris)
                 if cocok:
                     peran.add(cocok.group(1))
@@ -200,6 +259,13 @@ def _pulihkan_sql(jalur: str, db: str) -> None:
         galat = (hasil.stderr or hasil.stdout).strip().splitlines()
         # Baris terakhir psql yang berarti, bukan seluruh banjir keluarannya.
         ringkas = " | ".join(b for b in galat[-4:] if b.strip())[:500]
+        if "backslash commands are restricted" in ringkas:
+            raise RuntimeError(
+                f"Dump ditolak: memuat perintah klien psql (baris berawalan "
+                f"'\\', misalnya '\\!' atau '\\connect'). Perintah seperti itu "
+                f"dijalankan di mesin konverter, bukan di basis data, jadi "
+                f"sengaja dimatikan. Dump data dari pg_dump tidak "
+                f"membutuhkannya. Pesan asli: {ringkas}")
         raise RuntimeError(
             f"Pemulihan dump gagal. Kalau sebabnya hak akses, itu memang "
             f"disengaja: dump dijalankan sebagai peran non-superuser, dan tabel "
@@ -271,12 +337,24 @@ def konversi(jalur_dump: str, job_id: str, tujuan: str,
     mulai = time.perf_counter()
 
     lapor("K1 periksa dump")
-    dialek = dialek or deteksi_dialek(jalur_dump)
+    # Format custom (`pg_dump -Fc`) berkepala biner `PGDMP`. psql tidak bisa
+    # menjalankannya, dan setelah `\restrict` dipasang di depan, psql bahkan
+    # tidak lagi mengenalinya — pesannya jadi "syntax error at or near PGDMP".
+    with open(jalur_dump, "rb") as f:
+        if f.read(5) == b"PGDMP":
+            raise RuntimeError(
+                "Dump ini format custom pg_dump (-Fc), bukan teks. Yang diterima "
+                "dump teks: pg_dump tanpa -Fc (atau --format=plain), atau ekspor "
+                "CSV.")
+    dialek = (dialek or deteksi_dialek(jalur_dump)).strip().lower()
+    if dialek in DIALEK_PINDAH:
+        raise DialekLain(dialek)
     if dialek != "postgresql":
         raise RuntimeError(
-            f"Dialek '{dialek}' belum didukung. Yang sudah: postgresql. "
-            f"Dump MySQL, Oracle, dan SQL Server tidak saling kompatibel, jadi "
-            f"masing-masing butuh mesinnya sendiri.")
+            f"Dialek '{dialek}' belum didukung untuk .sql. Yang sudah: "
+            f"postgresql dan mysql/mariadb. Dump Oracle dan SQL Server tidak "
+            f"kompatibel dengan keduanya; kirim .dmp atau .mdf-nya, atau ekspor "
+            f"CSV.")
     bersih = jalur_dump + ".bersih"
     pemilik = siapkan_dump(jalur_dump, bersih)
 

@@ -1,0 +1,32 @@
+# MariaDB untuk konverter jalur B. Basis datanya sekali pakai dan isinya tidak
+# tepercaya — pengaturan di sini memilih KEAMANAN lalu KECEPATAN, bukan
+# ketahanan data.
+
+[mariadbd]
+# Hanya dari dalam container. Layanan konversi dan DuckDB sama-sama di sini.
+bind-address = 127.0.0.1
+skip-name-resolve
+
+# `LOAD DATA LOCAL INFILE` membuat klien membaca berkas LOKAL lalu mengirimnya
+# sebagai isi tabel — tabel yang kita ekspor. Klien juga dijalankan dengan
+# --local-infile=0; dua-duanya dimatikan supaya satu kelalaian tidak cukup.
+local-infile = 0
+
+# INTO OUTFILE / LOAD DATA INFILE sisi server hanya boleh ke folder kosong ini.
+# Pengguna job memang tidak punya hak FILE; ini lapisan kedua.
+secure-file-priv = /var/lib/mysql-files
+
+# Event di dalam dump tidak pernah berjalan.
+event-scheduler = DISABLED
+
+skip-log-bin
+character-set-server = utf8mb4
+
+# Pernyataan INSERT gabungan mysqldump bisa besar.
+max-allowed-packet = 1G
+
+# Basis datanya dibuang setelah diekspor. Tidak ada yang perlu bertahan dari
+# kerusakan listrik, jadi tidak perlu membayar fsync per transaksi.
+innodb-buffer-pool-size = 256M
+innodb-flush-log-at-trx-commit = 0
+innodb-doublewrite = 0

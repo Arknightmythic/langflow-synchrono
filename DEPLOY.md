@@ -162,25 +162,32 @@ Yang ketiga **harus GAGAL**. Kalau berhasil, jaringannya salah.
 
 ---
 
-## 0C. Menyalakan `.mdf` dan `.dmp` — sama di kedua server
+## 0C. Menyalakan `.mdf`, `.dmp`, dan `.sql` MySQL — sama di kedua server
 
-`.sql` ikut naik dengan perintah biasa. `.mdf` dan `.dmp` **tidak** — keduanya di
-balik profil, karena mesinnya memegang memori sepanjang container hidup, dipakai
-atau tidak.
+`.sql` PostgreSQL ikut naik dengan perintah biasa. `.mdf`, `.dmp`, dan `.sql`
+MySQL/MariaDB **tidak** — ketiganya di balik profil, karena mesinnya memegang
+memori sepanjang container hidup, dipakai atau tidak.
 
-### Ketiganya sekaligus
+### Semuanya sekaligus
 
 ```bash
 cd /opt/synchrono/langflow-synchrono/infra
 
 docker compose -f docker-compose.server.yml --env-file .env \
-  --profile mssql --profile oracle up -d --build
+  --profile mssql --profile oracle --profile mysql up -d --build
 
 docker compose -f docker-compose.server.yml --env-file .env restart langflow
 ```
 
-Profilnya menumpuk, jadi satu perintah menaikkan keenam service: `skema`,
-`langflow`, `s3-relay`, `konverter`, `konverter-mssql`, `konverter-oracle`.
+Profilnya menumpuk, jadi satu perintah menaikkan ketujuh service: `skema`,
+`langflow`, `s3-relay`, `konverter`, `konverter-mssql`, `konverter-oracle`,
+`konverter-mysql`.
+
+MariaDB yang paling ringan dari ketiganya — terukur: image 0,7 GB, siap dalam
+~10 detik, ~115 MB memori saat menganggur (buffer InnoDB dibatasi 256 MB saat
+bekerja). Dump MySQL yang dikirim tanpa `sqlDialect` tetap
+sampai ke sini — konverter PostgreSQL mengenalinya dan engine membelokkannya
+(UNGGAHAN.md §7).
 
 **Siapkan ~7 GB disk dan kesabaran.** Build pertamanya menarik image SQL Server
 (0,58 GB unduhan / 2,34 GB di disk) dan Oracle (2,84 GB), lalu memasang Python
@@ -204,18 +211,23 @@ docker compose -f docker-compose.server.yml --env-file .env \
 # .dmp — Oracle, paling berat
 docker compose -f docker-compose.server.yml --env-file .env \
   --profile oracle up -d --build konverter-oracle
+
+# .sql MySQL/MariaDB
+docker compose -f docker-compose.server.yml --env-file .env \
+  --profile mysql up -d --build konverter-mysql
 ```
 
-### Memastikan ketiganya hidup
+### Memastikan semuanya hidup
 
-Tiap mesin punya nama host DAN port sendiri, jadi ketiganya diperiksa bersama:
+Tiap mesin punya nama host DAN port sendiri, jadi semuanya diperiksa bersama:
 
 ```bash
 docker exec synchrono-langflow python - <<'PY'
 import json, urllib.request
 for nama, alamat in (("sql  ", "http://konverter:8390"),
                      ("mdf  ", "http://konverter-mssql:8391"),
-                     ("dmp  ", "http://konverter-oracle:8392")):
+                     ("dmp  ", "http://konverter-oracle:8392"),
+                     ("mysql", "http://konverter-mysql:8393")):
     try:
         print(nama, json.load(urllib.request.urlopen(alamat + "/sehat", timeout=3)))
     except Exception as e:
@@ -223,8 +235,8 @@ for nama, alamat in (("sql  ", "http://konverter:8390"),
 PY
 ```
 
-Harapannya ketiganya membalas `{'ok': True, 'mesin': ...}` dengan mesin
-`postgresql`, `sqlserver`, dan `oracle` berurutan.
+Harapannya semuanya membalas `{'ok': True, 'mesin': ...}` dengan mesin
+`postgresql`, `sqlserver`, `oracle`, dan `mysql` berurutan.
 
 Kalau salah satu tidak dinyalakan, format itu gagal dengan pesan yang menyebut
 **cara menyalakannya** — bukan gagal diam-diam.
@@ -804,6 +816,23 @@ docker exec synchrono-konverter python -c   "import socket; socket.create_connec
 ```
 
 Pemeriksaan kedua sama pentingnya dengan yang pertama.
+
+### Konverter `.sql` memakai PostgreSQL 18 (sejak 28 Sep 2026)
+
+Supaya dump pg_dump 17 dan 18 bisa dipulihkan, dan psql-nya mengenal
+`\restrict` — alasannya di UNGGAHAN.md §4. REDEPLOY biasa (`build` lalu
+`up -d`) sudah cukup: image dasarnya ditarik ulang, dan datanya pindah ke volume
+baru `konverter-pg18`.
+
+```bash
+docker exec synchrono-konverter psql --version
+# -> psql (PostgreSQL) 18.x
+
+# Volume klaster 16 yang lama tidak dipakai lagi. Isinya hanya klaster kosong
+# (tiap job membuang database-nya), jadi boleh dibuang:
+docker volume ls | grep konverter-data
+docker volume rm <nama-volume-itu>
+```
 
 ### Sesudah mengubah `lib/`
 
