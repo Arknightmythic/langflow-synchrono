@@ -1,0 +1,117 @@
+# Log k6 — mode BERGANTIAN: hanya satu platform hidup saat diukur.
+# Dibangkitkan: ./jalankan.ps1 -Skenario skala_jutaan -Target langflow,service -Bergantian \
+#                 -BerkasBesar besar-1000k -Bucket bucket-test -Bising 2 -BatasMenit 10
+#
+# Urutan: Langflow diukur DULUAN (synchrono-service dimatikan), baru service
+# (synchrono-langflow dimatikan). SeaweedFS dan PostgreSQL tetap hidup untuk
+# keduanya. Bandingkan dengan log-skala-jutaan-k6.txt (kedua container hidup).
+
+------------------------------------------------------------------
+  Memeriksa prasyarat
+------------------------------------------------------------------
+  ok    synchrono-seaweedfs
+  ok    synchrono-langflow
+  ok    synchrono-service
+  ok    bench-prometheus
+  ok    bench-pengukur
+  ok    postgresql :5432
+  ok    image grafana/k6
+
+------------------------------------------------------------------
+  Membuat API key Langflow
+------------------------------------------------------------------
+  ok    kunci dibuat (sk-CJyKFTh2T...)
+
+------------------------------------------------------------------
+  Memanaskan kedua sisi
+------------------------------------------------------------------
+  ok    service
+  ok    langflow
+
+------------------------------------------------------------------
+  Sumber daya saat idle
+------------------------------------------------------------------
+synchrono-service	0.26%	171.7MiB / 5.788GiB
+synchrono-langflow	1.30%	1.284GiB / 5.788GiB
+synchrono-seaweedfs	0.90%	205MiB / 5.788GiB
+
+------------------------------------------------------------------
+  k6 - skala_jutaan terhadap langflow  (20 rps, 60 detik, mode setara)
+------------------------------------------------------------------
+  mematikan synchrono-service (bukan yang diukur)
+synchrono-service
+synchrono-langflow
+  hanya synchrono-langflow yang hidup
+time="2026-09-17T18:39:03Z" level=info msg="[besar] mengirim besar-1000k (bucket bucket-test), bising 2 rps" source=console
+time="2026-09-17T18:39:03Z" level=info msg="[besar] dispatch 866 ms" source=console
+time="2026-09-17T18:39:17Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.6:47894->172.20.0.4:7860: read: connection reset by peer"
+time="2026-09-17T18:39:26Z" level=info msg="[besar] SELESAI status=COMPLETED baris=1000000 grade=B engine=21685 ms tuntas=23407 ms polling=8x" source=console
+
+======  LANGFLOW  ======================================
+  permintaan      : 55 (2.3/detik)
+  latency  avg    : 881.6 ms
+           p95    : 1272.3 ms
+           p99    : 1494.6 ms
+           maks   : 1669.3 ms
+  check           : 108 lulus, 2 GAGAL
+  iterasi dibuang : 0
+======================================================
+time="2026-09-17T18:39:26Z" level=error msg="test aborted: berkas besar selesai at besar (file:///skrip/skala_jutaan.js:126:18(206))"
+
+  menunggu 30 detik supaya pekerjaan latar selesai...
+
+------------------------------------------------------------------
+  k6 - skala_jutaan terhadap service  (20 rps, 60 detik, mode setara)
+------------------------------------------------------------------
+  mematikan synchrono-langflow (bukan yang diukur)
+synchrono-langflow
+synchrono-service
+  hanya synchrono-service yang hidup
+time="2026-09-17T18:40:50Z" level=info msg="[besar] mengirim besar-1000k (bucket bucket-test), bising 2 rps" source=console
+time="2026-09-17T18:40:51Z" level=info msg="[besar] dispatch 85 ms" source=console
+time="2026-09-17T18:41:15Z" level=info msg="[besar] SELESAI status=COMPLETED baris=1000000 grade=B engine=23893 ms tuntas=24704 ms polling=12x" source=console
+
+======  SERVICE  =======================================
+  permintaan      : 63 (2.5/detik)
+  latency  avg    : 51.4 ms
+           p95    : 78.6 ms
+           p99    : 101.6 ms
+           maks   : 128.4 ms
+  check           : 125 lulus, 1 GAGAL
+  iterasi dibuang : 0
+======================================================
+time="2026-09-17T18:41:16Z" level=error msg="test aborted: berkas besar selesai at besar (file:///skrip/skala_jutaan.js:126:18(206))"
+
+------------------------------------------------------------------
+  Hasil
+------------------------------------------------------------------
+
+  LANGFLOW
+    latency p95   :   1.272,3 ms
+    latency p99   :   1.494,6 ms
+    latency avg   :     881,6 ms
+    rps terlayani :       2,3
+    check lulus   :     98,2%
+    synchrono-langflow: CPU puncak  379,5%   memori 1.313GiB
+    synchrono-service : CPU puncak    0,0%   memori 0B
+
+  SERVICE
+    latency p95   :      78,6 ms
+    latency p99   :     101,6 ms
+    latency avg   :      51,4 ms
+    rps terlayani :       2,5
+    check lulus   :     99,2%
+    synchrono-langflow: CPU puncak    0,0%   memori 0B
+    synchrono-service : CPU puncak  381,1%   memori 119.1MiB
+
+  langflow berbanding service: 16,2x pada p95
+
+  menyalakan kembali kedua platform...
+synchrono-langflow
+synchrono-service
+
+  Berkas hasil : D:\ISGS\PROJECT\synchrono\synchrono-service\beban\hasil\
+  Grafana      : http://localhost:3005/d/synchrono-beban
+
+
+[exited with code 0]

@@ -1,0 +1,104 @@
+# Pengamatan: Prometheus + Grafana + cAdvisor.
+#
+#     cd beban && docker compose up -d
+#     Grafana  http://localhost:3005   (admin / admin)
+#
+# Dinaikkan TERPISAH dari service, dan itu disengaja. Kalau digabung, memori
+# dan CPU Grafana ikut terhitung setiap kali orang melihat `docker stats`, dan
+# pertanyaan "lebih enteng mana" jadi lebih sulit dijawab justru oleh alat yang
+# dipakai menjawabnya.
+#
+# TIGA SUMBER ANGKA, DAN MASING-MASING MENJAWAB HAL BERBEDA
+#
+#   k6       -> latency dan throughput, dari sisi PEMANGGIL
+#   cAdvisor -> CPU dan memori per container, dari sisi yang DIPANGGIL
+#   Grafana  -> keduanya pada satu sumbu waktu
+#
+# Sumbu waktu yang sama itulah kuncinya: latency yang memanjang bersamaan
+# dengan memori yang naik menceritakan sesuatu yang tidak bisa diceritakan oleh
+# salah satunya sendirian.
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: bench-prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # WAJIB. k6 mengirim hasilnya lewat remote write, dan tanpa flag ini
+      # Prometheus menolak dengan 404 — k6 tetap jalan sampai selesai dan
+      # tidak satu pun angkanya tersimpan.
+      - --web.enable-remote-write-receiver
+      # Retensi pendek: ini data benchmark, bukan data produksi.
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+
+  # Pengukur CPU & memori per container.
+  #
+  # MENGGANTIKAN cADVISOR, DAN BUKAN KARENA PILIHAN.
+  #
+  # cAdvisor dicoba lebih dulu — itu memang alat bakunya. Di Docker Desktop
+  # mesin ini ia GAGAL mengenumerasi container sama sekali: yang keluar hanya
+  # `container_memory_working_set_bytes{id="/"}`, cgroup akar, tanpa satu pun
+  # container, sementara Prometheus tetap melaporkan targetnya `up`. Sebabnya
+  # ada di lognya — Docker Desktop memakai containerd image store, jadi folder
+  # `/var/lib/docker/image/overlayfs/layerdb` yang dicari cAdvisor tidak ada.
+  # Dicoba juga dengan `/sys/fs/cgroup` di-mount dan tanpa `/var/lib/docker`;
+  # hasilnya sama.
+  #
+  # Penggantinya membaca Docker API langsung, dan mengekspor dengan NAMA METRIK
+  # YANG SAMA PERSIS seperti cAdvisor. Jadi dasbor Grafana-nya tidak berubah,
+  # dan kalau nanti dipasang di server Linux sungguhan, cAdvisor tinggal
+  # menggantikannya tanpa ada panel yang perlu disentuh.
+  pengukur:
+    build: ./pengukur
+    image: synchrono-pengukur:1.0.0
+    container_name: bench-pengukur
+    ports:
+      - "9200:9200"
+    environment:
+      # Container mana yang diukur, dicocokkan ke namanya.
+      POLA_NAMA: "^(synchrono-|bench-)"
+    volumes:
+      # Hanya BACA. Soket ini memberi kendali penuh atas Docker, jadi tidak ada
+      # yang ditulis lewat sini — pengukurnya cuma memanggil dua endpoint GET.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    container_name: bench-grafana
+    ports:
+      # 3005, bukan 3000: port itu sering sudah dipakai portal Synchrono.
+      - "3005:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Dasbor langsung terbuka tanpa login. Ini mesin lokal dan alat ukur;
+      # satu langkah login hanya menghalangi.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+# Satu jaringan dengan service dan Langflow, supaya container k6 bisa memanggil
+# keduanya lewat nama dan Prometheus bisa men-scrape apa pun yang perlu.
+networks:
+  default:
+    name: infra_default
+    external: true

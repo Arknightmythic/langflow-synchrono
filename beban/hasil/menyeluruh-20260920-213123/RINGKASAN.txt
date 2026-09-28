@@ -1,0 +1,25 @@
+﻿PENGUJIAN MENYELURUH - 20260920-213123
+
+Lingkungan:
+synchrono-service  CPU 0.23%  MEM 105.9MiB / 5.788GiB
+synchrono-langflow  CPU 0.48%  MEM 1.291GiB / 5.788GiB
+synchrono-seaweedfs  CPU 5.13%  MEM 133MiB / 5.788GiB
+  langflow workers: 1
+
+========================================================================
+  7-kapasitas-service
+========================================================================
+  durasi 166 detik
+
+  KURVA KAPASITAS - service
+  1      16,32        61,0        77,1
+  4      52,30        76,0        97,0
+  16      69,45       228,9       318,4
+  64      72,48       864,8     1.322,5  <- mentok, throughput berhenti naik
+  141      69,45     1.960,4     2.805,4  <- mentok, throughput berhenti naik
+
+========================================================================
+  SELESAI
+========================================================================
+  Catatan per tahap : D:\ISGS\PROJECT\synchrono\synchrono-service\beban\hasil\menyeluruh-20260920-213123
+  Ringkasan ini     : D:\ISGS\PROJECT\synchrono\synchrono-service\beban\hasil\menyeluruh-20260920-213123\RINGKASAN.txt

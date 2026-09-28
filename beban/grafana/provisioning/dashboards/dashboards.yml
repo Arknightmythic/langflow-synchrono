@@ -1,0 +1,14 @@
+apiVersion: 1
+
+providers:
+  - name: benchmark
+    orgId: 1
+    folder: Synchrono
+    type: file
+    disableDeletion: false
+    # Dasbor disunting di Grafana lalu hilang saat restart adalah kejadian yang
+    # sudah terlalu sering. `allowUiUpdates: true` membuat suntingan bertahan
+    # sampai berkas JSON-nya berubah.
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

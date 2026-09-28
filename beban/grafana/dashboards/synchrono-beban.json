@@ -1,0 +1,569 @@
+{
+  "uid": "synchrono-beban",
+  "title": "Synchrono — Service vs Langflow",
+  "description": "Latency dan konkurensi dari k6, CPU dan memori dari pengukur Docker API, pada satu sumbu waktu.\n\nSATUAN: k6 mengirim durasi ke Prometheus dalam DETIK, bukan milidetik — berbeda dari ringkasan yang dicetak k6 di terminal. Panel latency di sini memakai unit `s`; kalau suatu saat angkanya terbaca seribu kali lebih kecil dari semestinya, unit panel itulah yang salah.",
+  "tags": [
+    "synchrono",
+    "benchmark"
+  ],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "endpoint",
+        "label": "Endpoint",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus-bench"
+        },
+        "query": "label_values(k6_http_req_duration_p95, name)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Ringkasan — jawaban singkatnya ada di baris ini",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "p95 latency",
+      "description": "Sembilan dari sepuluh permintaan selesai lebih cepat dari angka ini. Dipakai, bukan rata-rata: rata-rata menyembunyikan ekor yang justru dirasakan pengguna.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-bench"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 0.2
+              },
+              {
+                "color": "red",
+                "value": 1.0
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (target) (k6_http_req_duration_p95{name=~\"$endpoint\"})",
+          "legendFormat": "{{target}}"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Memori terpakai",
+      "description": "Working set: memori yang benar-benar dipegang container, bukan yang dipesan. Inilah angka yang menentukan berapa banyak yang muat di satu server.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-bench"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 536870912
+              },
+              {
+                "color": "red",
+                "value": 1610612736
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "container_memory_working_set_bytes{name=~\"synchrono-service|synchrono-langflow\"}",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Permintaan per detik",
+      "description": "Yang benar-benar TERLAYANI, bukan yang dikirim k6. Kalau angkanya di bawah laju yang diminta, sisi itu sudah tidak sanggup.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-bench"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (target) (rate(k6_http_reqs_total[30s]))",
+          "legendFormat": "{{target}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Latency — dari sisi pemanggil (k6)",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "p95 per endpoint",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-bench"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "k6_http_req_duration_p95{name=~\"$endpoint\"}",
+          "legendFormat": "{{target}} · {{name}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "p99 per endpoint — ekornya",
+      "description": "Kalau p99 jauh melebihi p95, ada sebagian kecil permintaan yang tertahan. Pada sisi service, curigai kolam koneksi yang habis; pada sisi Langflow, antrean eksekusi flow.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-bench"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "k6_http_req_duration_p99{name=~\"$endpoint\"}",
+          "legendFormat": "{{target}} · {{name}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Konkurensi dan kegagalan",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Laju terlayani vs VU aktif",
+      "description": "VU yang menumpuk sementara laju terlayani datar adalah tanda paling jelas bahwa batasnya sudah tercapai: k6 terus menambah penelepon, tapi tidak ada tambahan yang benar-benar dilayani.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-bench"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 17
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*VU.*"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    8,
+                    4
+                  ],
+                  "fill": "dash"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (target) (rate(k6_http_reqs_total[30s]))",
+          "legendFormat": "{{target}} · rps"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (target) (k6_vus)",
+          "legendFormat": "{{target}} · VU"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Check yang gagal",
+      "description": "Bukan sekadar kode status. Tiap check mengurai badan balasan — perlu, karena Langflow membalas 200 bahkan untuk eksekusi yang gagal, dan tanpa ini kegagalannya akan terbaca sebagai latency yang sangat baik.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-bench"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 17
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1 - k6_checks_rate",
+          "legendFormat": "{{target}} · gagal"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Sumber daya — dari sisi yang dipanggil (cAdvisor)",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Memori (working set)",
+      "description": "Perhatikan nilainya saat IDLE, sebelum k6 dijalankan. Selisih memori diam itu yang paling menentukan berapa banyak service yang muat di satu server — dan ia tidak berubah seberapa pun sepinya lalu lintas.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-bench"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "min",
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "container_memory_working_set_bytes{name=~\"synchrono-service|synchrono-langflow|synchrono-seaweedfs\"}",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU (core terpakai)",
+      "description": "1.0 berarti satu inti penuh. Lonjakan tinggi yang pendek pada keduanya adalah grading yang sedang berjalan di latar — itu DuckDB, bukan lapisan API, dan memang seharusnya sama di kedua sisi.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-bench"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 2,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(container_cpu_usage_seconds_total{name=~\"synchrono-service|synchrono-langflow|synchrono-seaweedfs\"}[30s])",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    }
+  ]
+}

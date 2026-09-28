@@ -1,0 +1,36 @@
+﻿PENGUJIAN MENYELURUH - 20260918-102650
+
+Lingkungan:
+synchrono-service  CPU 4.70%  MEM 117.2MiB / 5.788GiB
+synchrono-langflow  CPU 0.30%  MEM 1.483GiB / 5.788GiB
+synchrono-seaweedfs  CPU 0.85%  MEM 129.3MiB / 5.788GiB
+  langflow workers: 1
+
+========================================================================
+  2-status-2rps
+========================================================================
+  durasi 147 detik
+
+  LANGFLOW
+  latency p95   :   1.353,5 ms
+  latency p99   :   1.700,3 ms
+  latency avg   :     957,9 ms
+  rps terlayani :       2,0
+  check lulus   :    100,0%
+  synchrono-langflow: CPU puncak  314,1%   memori 1.551GiB
+  synchrono-service : CPU puncak    0,0%   memori 0B
+  SERVICE
+  latency p95   :      92,2 ms
+  latency p99   :     166,6 ms
+  latency avg   :      64,8 ms
+  rps terlayani :       2,0
+  check lulus   :    100,0%
+  synchrono-langflow: CPU puncak    0,0%   memori 0B
+  synchrono-service : CPU puncak   50,2%   memori 61.34MiB
+  langflow berbanding service: 14,7x pada p95
+
+========================================================================
+  SELESAI
+========================================================================
+  Catatan per tahap : D:\ISGS\PROJECT\synchrono\synchrono-service\beban\hasil\menyeluruh-20260918-102650
+  Ringkasan ini     : D:\ISGS\PROJECT\synchrono\synchrono-service\beban\hasil\menyeluruh-20260918-102650\RINGKASAN.txt

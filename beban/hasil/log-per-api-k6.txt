@@ -1,0 +1,113 @@
+# Log k6 - pengujian PER API grading, Langflow lawan Service.
+# ./jalankan.ps1 -Skenario per_api -Target langflow,service -Bergantian -Detik 25
+#
+# Lima endpoint diukur BERURUTAN, bukan bersamaan, masing-masing 25 detik pada
+# 2 permintaan/detik (endpoint `grading` sinkron: 1 tiap 2 detik).
+# Kedua sisi melayani seluruh permintaan, jadi yang terbaca ongkos endpointnya
+# sendiri - bukan panjang antrean.
+
+------------------------------------------------------------------
+  Memeriksa prasyarat
+------------------------------------------------------------------
+  ok    synchrono-seaweedfs
+  ok    synchrono-langflow
+  ok    synchrono-service
+  ok    bench-prometheus
+  ok    bench-pengukur
+  ok    postgresql :5432
+  ok    image grafana/k6
+
+------------------------------------------------------------------
+  Membuat API key Langflow
+------------------------------------------------------------------
+  ok    kunci dibuat (sk-U_dU_bH51...)
+
+------------------------------------------------------------------
+  Memanaskan kedua sisi
+------------------------------------------------------------------
+  ok    service
+  ok    langflow
+
+------------------------------------------------------------------
+  Sumber daya saat idle
+------------------------------------------------------------------
+synchrono-service	0.31%	54.3MiB / 5.788GiB
+synchrono-langflow	1.25%	1.227GiB / 5.788GiB
+synchrono-seaweedfs	1.12%	294.5MiB / 5.788GiB
+
+------------------------------------------------------------------
+  k6 - per_api terhadap langflow  (20 rps, 25 detik, mode setara)
+------------------------------------------------------------------
+  mematikan synchrono-service (bukan yang diukur)
+synchrono-service
+synchrono-langflow
+  hanya synchrono-langflow yang hidup
+time="2026-09-18T06:25:01Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/config-rules-update?stream=false\": EOF"
+
+======  PER API — LANGFLOW  ======================
+  endpoint                 n      avg       p95       p99      maks
+  ----------------------------------------------------------------
+  config-rules             51    519.5     614.1     700.4     756.8
+  config-rules-update      50    533.6     705.4     828.4     904.7
+  grading-status           51    527.8     641.3     713.0     724.4
+  grading-dispatch         50   1304.7    1590.5    1837.5    1911.9
+  grading (sinkron)        13    914.9     956.7     965.0     967.0
+  ----------------------------------------------------------------
+  satuan ms  |  gagal: 1  |  check: 366 lulus, 1 GAGAL
+  check yang gagal:
+    update dijawab                     1 gagal / 50
+======================================================
+
+  menunggu 30 detik supaya pekerjaan latar selesai...
+
+------------------------------------------------------------------
+  k6 - per_api terhadap service  (20 rps, 25 detik, mode setara)
+------------------------------------------------------------------
+  mematikan synchrono-langflow (bukan yang diukur)
+synchrono-langflow
+synchrono-service
+  hanya synchrono-service yang hidup
+
+======  PER API — SERVICE  =======================
+  endpoint                 n      avg       p95       p99      maks
+  ----------------------------------------------------------------
+  config-rules             51     51.0      76.3      79.3      79.9
+  config-rules-update      51     70.7      90.7      99.6      99.7
+  grading-status           51     88.6     118.9     125.0     126.8
+  grading-dispatch         50     62.2     110.8     116.5     117.7
+  grading (sinkron)        13    720.9     765.8     778.8     782.1
+  ----------------------------------------------------------------
+  satuan ms  |  gagal: 0  |  check: 368 lulus, 0 GAGAL
+======================================================
+
+  menyalakan kembali kedua platform...
+synchrono-langflow
+synchrono-service
+
+------------------------------------------------------------------
+  Hasil
+------------------------------------------------------------------
+
+  LANGFLOW
+    latency p95   :   1.434,6 ms
+    latency p99   :   1.614,7 ms
+    latency avg   :     731,2 ms
+    rps terlayani :       1,0
+    check lulus   :     99,7%
+    synchrono-langflow: CPU puncak  156,6%   memori 1.234GiB
+    synchrono-service : CPU puncak    0,0%   memori 0B
+
+  SERVICE
+    latency p95   :     694,6 ms
+    latency p99   :     740,1 ms
+    latency avg   :     107,5 ms
+    rps terlayani :       1,1
+    check lulus   :    100,0%
+    synchrono-langflow: CPU puncak    0,0%   memori 0B
+    synchrono-service : CPU puncak   40,6%   memori 55.51MiB
+
+  langflow berbanding service: 2,1x pada p95
+
+  Berkas hasil : D:\ISGS\PROJECT\synchrono\synchrono-service\beban\hasil\
+  Grafana      : http://localhost:3005/d/synchrono-beban
+

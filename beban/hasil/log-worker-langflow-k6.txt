@@ -1,0 +1,719 @@
+# Log k6 — apakah Langflow membatasi rps, dan bisakah dinaikkan?
+#
+# Empat kurva kapasitas (VU 1..16) dengan knob yang diuji TERPISAH, lalu empat
+# jalan beban sesungguhnya (grading berkas besar sambil dipolling 2 rps).
+#
+#   plafon rps : 1 worker+tracing 4,38 | 1 worker 4,62 | 4 worker 4,84 | 8 worker 4,92
+#   p95 polling saat grading 5 juta  : 1 worker 6.155 ms -> 4 worker 1.528 ms
+#   p95 polling saat grading 10 juta : 1 worker 2.177 ms -> 4 worker 1.224 ms
+#
+# Perintahnya:
+#   ./kapasitas.ps1 -Target langflow -Vu 1,2,4,8,16 -Detik 20
+#   LANGFLOW_WORKERS=<n> docker compose up -d langflow   (dari langflow-synchrono/infra)
+#   ./jalankan.ps1 -Skenario skala_jutaan -Target langflow -Bergantian `
+#     -BerkasBesar besar-10000k -Bucket bucket-test -Bising 2 -BatasMenit 20
+
+
+==============================================================
+  1 worker, tracing NYALA
+==============================================================
+
+============================================================
+  langflow - 1 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 40 (2.0/detik)
+  latency  avg    : 499.8 ms
+           p95    : 588.2 ms
+           p99    : 853.4 ms
+           maks   : 1015.9 ms
+  check           : 80 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  langflow - 2 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 73 (3.6/detik)
+  latency  avg    : 555.6 ms
+           p95    : 666.2 ms
+           p99    : 744.0 ms
+           maks   : 839.8 ms
+  check           : 146 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  langflow - 4 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 83 (4.1/detik)
+  latency  avg    : 974.8 ms
+           p95    : 1155.2 ms
+           p99    : 1362.8 ms
+           maks   : 1374.7 ms
+  check           : 166 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  langflow - 8 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 92 (4.4/detik)
+  latency  avg    : 1789.1 ms
+           p95    : 3162.9 ms
+           p99    : 3855.4 ms
+           maks   : 4201.1 ms
+  check           : 184 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  langflow - 16 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 98 (4.4/detik)
+  latency  avg    : 3511.7 ms
+           p95    : 7026.1 ms
+           p99    : 9829.2 ms
+           maks   : 13947.4 ms
+  check           : 196 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  KURVA KAPASITAS - langflow
+============================================================
+
+   VU        rps      avg ms      p95 ms  
+  ----------------------------------------------------
+    1       2,00       499,8       588,2  
+    2       3,57       555,6       666,2  
+    4       4,06       974,8     1.155,2  <- mentok, throughput berhenti naik
+    8       4,37     1.789,1     3.162,9  <- mentok, throughput berhenti naik
+   16       4,38     3.511,7     7.026,1  <- mentok, throughput berhenti naik
+
+
+
+==============================================================
+  1 worker, tracing MATI
+==============================================================
+
+============================================================
+  langflow - 1 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 44 (2.1/detik)
+  latency  avg    : 465.9 ms
+           p95    : 509.8 ms
+           p99    : 688.3 ms
+           maks   : 692.7 ms
+  check           : 88 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  langflow - 2 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 74 (3.7/detik)
+  latency  avg    : 542.0 ms
+           p95    : 620.0 ms
+           p99    : 803.6 ms
+           maks   : 822.6 ms
+  check           : 148 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  langflow - 4 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 92 (4.5/detik)
+  latency  avg    : 882.3 ms
+           p95    : 1015.0 ms
+           p99    : 1064.6 ms
+           maks   : 1095.7 ms
+  check           : 184 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  langflow - 8 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 97 (4.6/detik)
+  latency  avg    : 1709.5 ms
+           p95    : 2614.0 ms
+           p99    : 2790.9 ms
+           maks   : 3086.5 ms
+  check           : 194 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  langflow - 16 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 102 (4.6/detik)
+  latency  avg    : 3305.5 ms
+           p95    : 5987.9 ms
+           p99    : 7498.8 ms
+           maks   : 10769.9 ms
+  check           : 204 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  KURVA KAPASITAS - langflow
+============================================================
+
+   VU        rps      avg ms      p95 ms  
+  ----------------------------------------------------
+    1       2,14       465,9       509,8  
+    2       3,67       542,0       620,0  
+    4       4,47       882,3     1.015,0  
+    8       4,58     1.709,5     2.614,0  <- mentok, throughput berhenti naik
+   16       4,62     3.305,5     5.987,9  <- mentok, throughput berhenti naik
+
+
+
+==============================================================
+  4 worker
+==============================================================
+
+============================================================
+  langflow - 1 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 44 (2.2/detik)
+  latency  avg    : 462.7 ms
+           p95    : 539.8 ms
+           p99    : 642.7 ms
+           maks   : 673.8 ms
+  check           : 88 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  langflow - 2 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 76 (3.7/detik)
+  latency  avg    : 533.2 ms
+           p95    : 581.1 ms
+           p99    : 653.7 ms
+           maks   : 809.6 ms
+  check           : 152 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  langflow - 4 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 91 (4.4/detik)
+  latency  avg    : 892.1 ms
+           p95    : 1056.9 ms
+           p99    : 1107.0 ms
+           maks   : 1176.4 ms
+  check           : 182 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  langflow - 8 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 100 (4.8/detik)
+  latency  avg    : 1622.6 ms
+           p95    : 2222.3 ms
+           p99    : 2627.4 ms
+           maks   : 2858.9 ms
+  check           : 200 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  langflow - 16 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 106 (4.8/detik)
+  latency  avg    : 3177.5 ms
+           p95    : 6120.7 ms
+           p99    : 8092.7 ms
+           maks   : 8301.5 ms
+  check           : 212 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  KURVA KAPASITAS - langflow
+============================================================
+
+   VU        rps      avg ms      p95 ms  
+  ----------------------------------------------------
+    1       2,16       462,7       539,8  
+    2       3,73       533,2       581,1  
+    4       4,44       892,1     1.056,9  
+    8       4,84     1.622,6     2.222,3  <- mentok, throughput berhenti naik
+   16       4,79     3.177,5     6.120,7  <- mentok, throughput berhenti naik
+
+
+
+==============================================================
+  8 worker
+==============================================================
+
+============================================================
+  langflow - 1 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 42 (2.1/detik)
+  latency  avg    : 486.5 ms
+           p95    : 517.5 ms
+           p99    : 921.1 ms
+           maks   : 1024.9 ms
+  check           : 84 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  langflow - 2 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 74 (3.7/detik)
+  latency  avg    : 545.4 ms
+           p95    : 614.2 ms
+           p99    : 1055.0 ms
+           maks   : 1254.3 ms
+  check           : 148 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  langflow - 4 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 95 (4.7/detik)
+  latency  avg    : 852.2 ms
+           p95    : 1031.3 ms
+           p99    : 1119.1 ms
+           maks   : 1232.2 ms
+  check           : 190 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  langflow - 8 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 95 (4.5/detik)
+  latency  avg    : 1735.4 ms
+           p95    : 2752.2 ms
+           p99    : 2873.6 ms
+           maks   : 2933.6 ms
+  check           : 190 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  langflow - 16 penelepon serentak, 20 detik
+============================================================
+
+======  LANGFLOW  ======================================
+  permintaan      : 107 (4.9/detik)
+  latency  avg    : 3136.7 ms
+           p95    : 5675.2 ms
+           p99    : 7394.5 ms
+           maks   : 7659.4 ms
+  check           : 214 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+
+============================================================
+  KURVA KAPASITAS - langflow
+============================================================
+
+   VU        rps      avg ms      p95 ms  
+  ----------------------------------------------------
+    1       2,05       486,5       517,5  
+    2       3,65       545,4       614,2  
+    4       4,65       852,2     1.031,3  
+    8       4,52     1.735,4     2.752,2  <- mentok, throughput berhenti naik
+   16       4,92     3.136,7     5.675,2  <- mentok, throughput berhenti naik
+
+
+
+==============================================================
+  beban 5 juta, 1 worker
+==============================================================
+
+------------------------------------------------------------------
+  Memeriksa prasyarat
+------------------------------------------------------------------
+  ok    synchrono-seaweedfs
+  ok    synchrono-langflow
+  ok    synchrono-service
+  ok    bench-prometheus
+  ok    bench-pengukur
+  ok    postgresql :5432
+  ok    image grafana/k6
+
+------------------------------------------------------------------
+  Membuat API key Langflow
+------------------------------------------------------------------
+  ok    kunci dibuat (sk-GueA1I6sd...)
+
+------------------------------------------------------------------
+  Memanaskan kedua sisi
+------------------------------------------------------------------
+  ok    service
+  ok    langflow
+
+------------------------------------------------------------------
+  Sumber daya saat idle
+------------------------------------------------------------------
+synchrono-service	0.35%	132.7MiB / 5.788GiB
+synchrono-langflow	1.10%	1.435GiB / 5.788GiB
+synchrono-seaweedfs	1.23%	623.4MiB / 5.788GiB
+
+------------------------------------------------------------------
+  k6 - skala_jutaan terhadap langflow  (20 rps, 60 detik, mode setara)
+------------------------------------------------------------------
+  mematikan synchrono-service (bukan yang diukur)
+synchrono-service
+synchrono-langflow
+  hanya synchrono-langflow yang hidup
+time="2026-09-17T21:00:49Z" level=info msg="[besar] mengirim besar-5000k (bucket bucket-test), bising 2 rps" source=console
+time="2026-09-17T21:00:50Z" level=info msg="[besar] dispatch 653 ms" source=console
+time="2026-09-17T21:01:27Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.3:60298->172.20.0.6:7860: read: connection reset by peer"
+time="2026-09-17T21:01:34Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.3:36310->172.20.0.6:7860: read: connection reset by peer"
+time="2026-09-17T21:01:39Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:01:50Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.3:59462->172.20.0.6:7860: read: connection reset by peer"
+time="2026-09-17T21:01:55Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.3:57774->172.20.0.6:7860: read: connection reset by peer"
+time="2026-09-17T21:02:07Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:03:17Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.3:59884->172.20.0.6:7860: read: connection reset by peer"
+time="2026-09-17T21:03:38Z" level=info msg="[besar] SELESAI status=COMPLETED baris=5000000 grade=B engine=167266 ms tuntas=168723 ms polling=56x" source=console
+
+======  LANGFLOW  ======================================
+  permintaan      : 383 (2.3/detik)
+  latency  avg    : 1423.0 ms
+           p95    : 6154.9 ms
+           p99    : 17583.2 ms
+           maks   : 20029.2 ms
+  check           : 752 lulus, 14 GAGAL
+  iterasi dibuang : 11
+======================================================
+time="2026-09-17T21:03:39Z" level=error msg="test aborted: berkas besar selesai at besar (file:///skrip/skala_jutaan.js:126:18(206))"
+
+  menyalakan kembali kedua platform...
+synchrono-langflow
+synchrono-service
+
+------------------------------------------------------------------
+  Hasil
+------------------------------------------------------------------
+
+  LANGFLOW
+    latency p95   :   6.154,9 ms
+    latency p99   :  17.583,2 ms
+    latency avg   :   1.423,0 ms
+    rps terlayani :       2,3
+    check lulus   :     98,2%
+    synchrono-langflow: CPU puncak  237,1%   memori 1.475GiB
+    synchrono-service : CPU puncak    0,0%   memori 0B
+
+  Berkas hasil : D:\ISGS\PROJECT\synchrono\synchrono-service\beban\hasil\
+  Grafana      : http://localhost:3005/d/synchrono-beban
+
+
+
+==============================================================
+  beban 5 juta, 4 worker
+==============================================================
+
+------------------------------------------------------------------
+  Memeriksa prasyarat
+------------------------------------------------------------------
+  ok    synchrono-seaweedfs
+  ok    synchrono-langflow
+  ok    synchrono-service
+  ok    bench-prometheus
+  ok    bench-pengukur
+  ok    postgresql :5432
+  ok    image grafana/k6
+
+------------------------------------------------------------------
+  Membuat API key Langflow
+------------------------------------------------------------------
+  ok    kunci dibuat (sk-uhWZ3hwhp...)
+
+------------------------------------------------------------------
+  Memanaskan kedua sisi
+------------------------------------------------------------------
+  ok    service
+  ok    langflow
+
+------------------------------------------------------------------
+  Sumber daya saat idle
+------------------------------------------------------------------
+synchrono-service	0.17%	76.55MiB / 5.788GiB
+synchrono-langflow	1.01%	2.791GiB / 5.788GiB
+synchrono-seaweedfs	0.63%	101.4MiB / 5.788GiB
+
+------------------------------------------------------------------
+  k6 - skala_jutaan terhadap langflow  (20 rps, 60 detik, mode setara)
+------------------------------------------------------------------
+  mematikan synchrono-service (bukan yang diukur)
+synchrono-service
+synchrono-langflow
+  hanya synchrono-langflow yang hidup
+time="2026-09-17T20:56:34Z" level=info msg="[besar] mengirim besar-5000k (bucket bucket-test), bising 2 rps" source=console
+time="2026-09-17T20:56:35Z" level=info msg="[besar] dispatch 1035 ms" source=console
+time="2026-09-17T20:56:42Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T20:56:59Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T20:57:30Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.3:53894->172.20.0.6:7860: read: connection reset by peer"
+time="2026-09-17T20:57:37Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T20:58:14Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T20:59:04Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T20:59:22Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T20:59:35Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T20:59:38Z" level=info msg="[besar] SELESAI status=COMPLETED baris=5000000 grade=B engine=179135 ms tuntas=184016 ms polling=67x" source=console
+
+======  LANGFLOW  ======================================
+  permintaan      : 436 (2.4/detik)
+  latency  avg    : 777.9 ms
+           p95    : 1527.5 ms
+           p99    : 1980.7 ms
+           maks   : 2961.5 ms
+  check           : 856 lulus, 16 GAGAL
+  iterasi dibuang : 0
+======================================================
+time="2026-09-17T20:59:38Z" level=error msg="test aborted: berkas besar selesai at besar (file:///skrip/skala_jutaan.js:126:18(206))"
+
+  menyalakan kembali kedua platform...
+synchrono-langflow
+synchrono-service
+
+------------------------------------------------------------------
+  Hasil
+------------------------------------------------------------------
+
+  LANGFLOW
+    latency p95   :   1.527,5 ms
+    latency p99   :   1.980,7 ms
+    latency avg   :     777,9 ms
+    rps terlayani :       2,4
+    check lulus   :     98,2%
+    synchrono-langflow: CPU puncak  221,5%   memori 2.808GiB
+    synchrono-service : CPU puncak    0,0%   memori 0B
+
+  Berkas hasil : D:\ISGS\PROJECT\synchrono\synchrono-service\beban\hasil\
+  Grafana      : http://localhost:3005/d/synchrono-beban
+
+
+
+==============================================================
+  beban 10 juta, 1 worker
+==============================================================
+
+------------------------------------------------------------------
+  Memeriksa prasyarat
+------------------------------------------------------------------
+  ok    synchrono-seaweedfs
+  ok    synchrono-langflow
+  ok    synchrono-service
+  ok    bench-prometheus
+  ok    bench-pengukur
+  ok    postgresql :5432
+  ok    image grafana/k6
+
+------------------------------------------------------------------
+  Membuat API key Langflow
+------------------------------------------------------------------
+  ok    kunci dibuat (sk-8sOjvZE2q...)
+
+------------------------------------------------------------------
+  Memanaskan kedua sisi
+------------------------------------------------------------------
+  ok    service
+  ok    langflow
+
+------------------------------------------------------------------
+  Sumber daya saat idle
+------------------------------------------------------------------
+synchrono-service	31.02%	131.8MiB / 5.788GiB
+synchrono-langflow	1.34%	1.452GiB / 5.788GiB
+synchrono-seaweedfs	0.93%	734.1MiB / 5.788GiB
+
+------------------------------------------------------------------
+  k6 - skala_jutaan terhadap langflow  (20 rps, 60 detik, mode setara)
+------------------------------------------------------------------
+  mematikan synchrono-service (bukan yang diukur)
+synchrono-service
+synchrono-langflow
+  hanya synchrono-langflow yang hidup
+time="2026-09-17T21:11:45Z" level=info msg="[besar] mengirim besar-10000k (bucket bucket-test), bising 2 rps" source=console
+time="2026-09-17T21:11:45Z" level=info msg="[besar] dispatch 718 ms" source=console
+time="2026-09-17T21:11:50Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:12:02Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:12:06Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:12:19Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.3:44040->172.20.0.6:7860: read: connection reset by peer"
+time="2026-09-17T21:12:23Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:12:28Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.3:53544->172.20.0.6:7860: read: connection reset by peer"
+time="2026-09-17T21:12:42Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:12:54Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:12:59Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:13:11Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.3:60038->172.20.0.6:7860: read: connection reset by peer"
+time="2026-09-17T21:13:19Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:13:23Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.3:53996->172.20.0.6:7860: read: connection reset by peer"
+time="2026-09-17T21:14:01Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.3:56158->172.20.0.6:7860: read: connection reset by peer"
+time="2026-09-17T21:14:29Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.3:43988->172.20.0.6:7860: read: connection reset by peer"
+time="2026-09-17T21:14:34Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:15:31Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:15:36Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:15:41Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:16:59Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.3:53058->172.20.0.6:7860: read: connection reset by peer"
+time="2026-09-17T21:17:05Z" level=info msg="[besar] SELESAI status=COMPLETED baris=10000000 grade=B engine=318845 ms tuntas=320015 ms polling=108x" source=console
+
+======  LANGFLOW  ======================================
+  permintaan      : 748 (2.3/detik)
+  latency  avg    : 1031.9 ms
+           p95    : 2177.3 ms
+           p99    : 3246.8 ms
+           maks   : 4999.1 ms
+  check           : 1458 lulus, 38 GAGAL
+  iterasi dibuang : 0
+======================================================
+time="2026-09-17T21:17:05Z" level=error msg="test aborted: berkas besar selesai at besar (file:///skrip/skala_jutaan.js:126:18(206))"
+
+  menyalakan kembali kedua platform...
+synchrono-langflow
+synchrono-service
+
+------------------------------------------------------------------
+  Hasil
+------------------------------------------------------------------
+
+  LANGFLOW
+    latency p95   :   2.177,3 ms
+    latency p99   :   3.246,8 ms
+    latency avg   :   1.031,9 ms
+    rps terlayani :       2,3
+    check lulus   :     97,5%
+    synchrono-langflow: CPU puncak  185,3%   memori 1.48GiB
+    synchrono-service : CPU puncak    0,0%   memori 0B
+
+  Berkas hasil : D:\ISGS\PROJECT\synchrono\synchrono-service\beban\hasil\
+  Grafana      : http://localhost:3005/d/synchrono-beban
+
+
+
+==============================================================
+  beban 10 juta, 4 worker
+==============================================================
+
+------------------------------------------------------------------
+  Memeriksa prasyarat
+------------------------------------------------------------------
+  ok    synchrono-seaweedfs
+  ok    synchrono-langflow
+  ok    synchrono-service
+  ok    bench-prometheus
+  ok    bench-pengukur
+  ok    postgresql :5432
+  ok    image grafana/k6
+
+------------------------------------------------------------------
+  Membuat API key Langflow
+------------------------------------------------------------------
+  ok    kunci dibuat (sk-0HDwGjLfU...)
+
+------------------------------------------------------------------
+  Memanaskan kedua sisi
+------------------------------------------------------------------
+  ok    service
+  ok    langflow
+
+------------------------------------------------------------------
+  Sumber daya saat idle
+------------------------------------------------------------------
+synchrono-service	0.29%	131.3MiB / 5.788GiB
+synchrono-langflow	2.89%	3.06GiB / 5.788GiB
+synchrono-seaweedfs	1.12%	195MiB / 5.788GiB
+
+------------------------------------------------------------------
+  k6 - skala_jutaan terhadap langflow  (20 rps, 60 detik, mode setara)
+------------------------------------------------------------------
+  mematikan synchrono-service (bukan yang diukur)
+synchrono-service
+synchrono-langflow
+  hanya synchrono-langflow yang hidup
+time="2026-09-17T21:05:50Z" level=info msg="[besar] mengirim besar-10000k (bucket bucket-test), bising 2 rps" source=console
+time="2026-09-17T21:05:51Z" level=info msg="[besar] dispatch 539 ms" source=console
+time="2026-09-17T21:05:58Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:06:12Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.3:56716->172.20.0.6:7860: read: connection reset by peer"
+time="2026-09-17T21:06:34Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:06:48Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:06:53Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:07:22Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.3:54406->172.20.0.6:7860: read: connection reset by peer"
+time="2026-09-17T21:08:23Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.3:51818->172.20.0.6:7860: read: connection reset by peer"
+time="2026-09-17T21:09:17Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.3:58876->172.20.0.6:7860: read: connection reset by peer"
+time="2026-09-17T21:09:43Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:09:48Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": EOF"
+time="2026-09-17T21:10:29Z" level=warning msg="Request Failed" error="Post \"http://synchrono-langflow:7860/api/v1/run/grading-status?stream=false\": read tcp 172.20.0.3:46340->172.20.0.6:7860: read: connection reset by peer"
+time="2026-09-17T21:10:32Z" level=info msg="[besar] SELESAI status=COMPLETED baris=10000000 grade=B engine=280513 ms tuntas=281526 ms polling=103x" source=console
+
+======  LANGFLOW  ======================================
+  permintaan      : 666 (2.4/detik)
+  latency  avg    : 926.4 ms
+           p95    : 1224.4 ms
+           p99    : 3601.2 ms
+           maks   : 29686.4 ms
+  check           : 1310 lulus, 22 GAGAL
+  iterasi dibuang : 0
+======================================================
+time="2026-09-17T21:10:33Z" level=error msg="test aborted: berkas besar selesai at besar (file:///skrip/skala_jutaan.js:126:18(206))"
+
+  menyalakan kembali kedua platform...
+synchrono-langflow
+synchrono-service
+
+------------------------------------------------------------------
+  Hasil
+------------------------------------------------------------------
+
+  LANGFLOW
+    latency p95   :   1.224,4 ms
+    latency p99   :   3.601,2 ms
+    latency avg   :     926,4 ms
+    rps terlayani :       2,4
+    check lulus   :     98,3%
+    synchrono-langflow: CPU puncak  204,3%   memori 3.086GiB
+    synchrono-service : CPU puncak    0,0%   memori 0B
+
+  Berkas hasil : D:\ISGS\PROJECT\synchrono\synchrono-service\beban\hasil\
+  Grafana      : http://localhost:3005/d/synchrono-beban
+

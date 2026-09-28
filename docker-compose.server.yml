@@ -1,0 +1,169 @@
+# Synchrono Service — DEPLOY KE SERVER, TANPA LANGFLOW.
+#
+# BUKAN BERKAS YANG BERDIRI SENDIRI. Dipakai BERSAMA docker-compose.server.yml
+# milik langflow-synchrono, sebagai berkas KEDUA:
+#
+#     cd <repo>/langflow-synchrono/infra          # folder yang memuat .env
+#     docker compose -f docker-compose.server.yml \
+#                    -f ../../synchrono-service/docker-compose.server.yml \
+#                    up -d --build synchrono-service
+#
+# Kenapa begitu:
+#
+#   * `.env` yang SAMA dengan Langflow — PG_HOST/PG_PASSWORD, S3_ENDPOINT,
+#     PORTAL_PG_DSN, REASONING_AI_* — tidak ditulis dua kali.
+#   * `s3-relay` dan `konverter` milik berkas pertama dipakai apa adanya, dan
+#     migrasi/seed memakai migrate.py & seed.py yang sama (`skema-service` di
+#     bawah). `depends_on` membuat perintah di atas ikut menaikkan semuanya,
+#     tapi TIDAK menaikkan — maupun membangun — Langflow.
+#   * Satu proyek compose (`infra`) — kalau Langflow juga jalan di server yang
+#     sama, keduanya berbagi konverter & penerus S3, bukan saling bentrok nama.
+#
+# SEMUA PATH DI SINI RELATIF TERHADAP FOLDER BERKAS PERTAMA
+# (langflow-synchrono/infra), bukan folder berkas ini — aturan compose untuk
+# beberapa `-f`. Karena itu `../lib` di bawah berarti langflow-synchrono/lib,
+# dan build context `../../synchrono-service` mengandaikan kedua folder
+# bersebelahan:
+#
+#     <induk>/langflow-synchrono/     (repo git)
+#     <induk>/synchrono-service/      (folder ini)
+#
+# ENV DITULIS EKSPLISIT, bukan `extends: langflow`. `extends` ikut mewarisi port
+# 7860, container_name, dan volume data Langflow; membuangnya butuh tag
+# `!override` yang baru ada di Compose 2.24 — belum tentu tersedia di server.
+# Kalau layanan `langflow` di berkas pertama mendapat variabel baru yang
+# dipakai lib/, tambahkan juga di sini.
+
+services:
+  # ── Migrasi + seeder, dengan image service ─────────────────────────────
+  #
+  # Setara `skema` di berkas pertama — migrate.py dan seed.py yang SAMA, dari
+  # langflow-synchrono/infra — tapi dijalankan dengan image service, bukan
+  # image Langflow. `skema` di berkas pertama memakai Dockerfile.langflow:
+  # bergantung padanya berarti membangun image Langflow (~1,2 GB) hanya untuk
+  # menjalankan dua skrip yang cuma butuh DuckDB. Aman berdampingan dengan
+  # `skema`: migrasi dicatat dan tidak pernah dijalankan dua kali, seeder tidak
+  # pernah menimpa.
+  skema-service:
+    build:
+      context: ../../synchrono-service
+      dockerfile: Dockerfile
+    image: synchrono-service:2.0.0
+    container_name: synchrono-skema-service
+    environment:
+      PG_DSN: "host=${PG_HOST:-172.16.12.98} port=${PG_PORT:-5430} dbname=${PG_DB:-synchrono} user=${PG_USER:-root} password=${PG_PASSWORD:?isi di .env}"
+      SKEMA_PERCOBAAN: "${SKEMA_PERCOBAAN:-12}"
+    networks: [luar]
+    volumes:
+      # `.` = langflow-synchrono/infra (folder berkas pertama).
+      - .:/skema:ro
+    command:
+      - sh
+      - -c
+      - |
+        cd /skema
+        for i in $$(seq 1 "$${SKEMA_PERCOBAAN:-12}"); do
+          if python migrate.py && python seed.py; then
+            echo "[skema] migrasi & seeding selesai."
+            exit 0
+          fi
+          echo "[skema] PostgreSQL belum siap / gagal — percobaan $$i, ulang 5 detik lagi"
+          sleep 5
+        done
+        echo "[skema] GAGAL setelah $${SKEMA_PERCOBAAN:-12} percobaan. Periksa PG_HOST/PG_PORT/PG_PASSWORD di .env."
+        exit 1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: "no"
+
+  synchrono-service:
+    build:
+      context: ../../synchrono-service
+      dockerfile: Dockerfile
+    image: synchrono-service:2.0.0
+    container_name: synchrono-service
+    ports:
+      # 8000 = berdampingan dengan Langflow. Setel SERVICE_PORT=7860 di .env
+      # kalau service ini MENGGANTIKAN Langflow (Langflow harus berhenti dulu):
+      # alamat yang disetel di portal tidak perlu diubah sama sekali.
+      - "${SERVICE_PORT:-8000}:8000"
+    environment:
+      WEB_CONCURRENCY: "${WEB_CONCURRENCY:-1}"
+      ACCESS_LOG: "${ACCESS_LOG:-0}"
+
+      # ── Autentikasi, kontrak Langflow ────────────────────────────────────
+      # Login dengan akun yang sama seperti admin Langflow, kecuali diisi lain.
+      SERVICE_SUPERUSER: "${SERVICE_SUPERUSER:-${LANGFLOW_SUPERUSER:-admin}}"
+      SERVICE_SUPERUSER_PASSWORD: "${SERVICE_SUPERUSER_PASSWORD:-${LANGFLOW_SUPERUSER_PASSWORD:-}}"
+      # Isi dengan kunci sk-... yang SEKARANG dipakai portal untuk Langflow:
+      # portal pindah ke service ini tanpa mengubah setelan kuncinya.
+      SERVICE_API_KEY: "${SERVICE_API_KEY:-}"
+      # Penanda tangan token login. Kosong = acak tiap restart (cukup login ulang).
+      SERVICE_SECRET_KEY: "${SERVICE_SECRET_KEY:-}"
+
+      # ── Sama dengan layanan `langflow` di berkas pertama ────────────────
+      PYTHONPATH: /synchrono/lib:/components/matching
+      SYNCHRONO_COMPONENTS: /components
+      PG_DSN: "host=${PG_HOST:-172.16.12.98} port=${PG_PORT:-5430} dbname=${PG_DB:-synchrono} user=${PG_USER:-root} password=${PG_PASSWORD:?isi di .env}"
+
+      PORTAL_PG_DSN: "${PORTAL_PG_DSN:-}"
+      MATCHING_MAX_CONCURRENT: "${MATCHING_MAX_CONCURRENT:-1}"
+      REASONING_AI_BASE_URL: "${REASONING_AI_BASE_URL:-}"
+      REASONING_AI_MODEL: "${REASONING_AI_MODEL:-gemma3:12b}"
+      REASONING_AI_API_KEY: "${REASONING_AI_API_KEY:-}"
+      REASONING_AI_ALLOW_EXTERNAL: "${REASONING_AI_ALLOW_EXTERNAL:-0}"
+      REASONING_AI_MAX_PATTERNS_PER_JOB: "${REASONING_AI_MAX_PATTERNS_PER_JOB:-25}"
+      REASONING_AI_BUDGET_SECONDS: "${REASONING_AI_BUDGET_SECONDS:-90}"
+
+      S3_ENDPOINT: "${S3_ENDPOINT:-172.16.12.98:8333}"
+      S3_ACCESS_KEY: "${S3_ACCESS_KEY:-ADMIN}"
+      S3_SECRET_KEY: "${S3_SECRET_KEY:-Password1234}"
+      S3_USE_SSL: "false"
+
+      WILAYAH_PARQUET: "s3://syncrono-master/wilayah/master_wilayah_nik.parquet"
+      WILAYAH_S3_ENDPOINT: ""
+      WILAYAH_S3_KEY: ""
+      WILAYAH_S3_SECRET: ""
+      WILAYAH_KECAMATAN_TEGAS: "${WILAYAH_KECAMATAN_TEGAS:-0}"
+
+      DUCKDB_MEMORY_LIMIT: "${DUCKDB_MEMORY_LIMIT:-3GB}"
+      DUCKDB_TEMP_DIR: "${DUCKDB_TEMP_DIR:-/tmp/duckdb_spill}"
+      DUCKDB_MODE: "${DUCKDB_MODE:-kolam}"
+      DUCKDB_POOL_SIZE: "${DUCKDB_POOL_SIZE:-8}"
+      DUCKDB_POOL_TIMEOUT: "${DUCKDB_POOL_TIMEOUT:-30}"
+      DUCKDB_POOL_MAX_UMUR: "${DUCKDB_POOL_MAX_UMUR:-1800}"
+
+      GRADING_MAX_CONCURRENT: "${GRADING_MAX_CONCURRENT:-2}"
+      GRADING_STALE_MINUTES: "15"
+      GRADING_CALLBACK_RETRIES: "3"
+      GRADING_CALLBACK_TIMEOUT: "20"
+
+      NORMALISASI_AI: "${NORMALISASI_AI:-nama_saja}"
+      NORMALISASI_AI_MODEL: "${NORMALISASI_AI_MODEL:-gemma4:31b}"
+      NORMALISASI_AI_BASE_URL: "${NORMALISASI_AI_BASE_URL:-}"
+      OLLAMA_API_KEY: "${OLLAMA_API_KEY:-ollama}"
+    volumes:
+      # Relatif terhadap langflow-synchrono/infra: logika yang SAMA dengan
+      # Langflow, dari checkout git yang sama. `git pull` di sana lalu restart
+      # container ini — tanpa build ulang.
+      - ../lib:/synchrono/lib:ro
+      - ../components:/components:ro
+    depends_on:
+      skema-service:
+        condition: service_completed_successfully
+      s3-relay:
+        condition: service_started
+      konverter:
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # luar: PostgreSQL & SeaweedFS backend.  dalam: konverter jalur B.
+    networks: [luar, dalam]
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped

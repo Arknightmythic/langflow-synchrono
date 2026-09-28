@@ -1,0 +1,114 @@
+# Log k6 — SESUDAH Arrow, mode bergantian, TANPA polling latar (-Bising 0).
+#   ./jalankan.ps1 -Skenario skala_jutaan -Target langflow,service -Bergantian \
+#     -BerkasBesar besar-1000k -Bucket bucket-test -Bising 0 -BatasMenit 10
+#
+# Inilah yang memisahkan mesin dari platform. Tanpa polling, engine Langflow
+# 12.513 ms dan service 12.042 ms — dua-duanya dapat percepatan Arrow. Dengan
+# polling 2 rps, Langflow kembali ke 21.538 ms sementara service tetap 12.123 ms.
+
+------------------------------------------------------------------
+  Memeriksa prasyarat
+------------------------------------------------------------------
+  ok    synchrono-seaweedfs
+  ok    synchrono-langflow
+  ok    synchrono-service
+  ok    bench-prometheus
+  ok    bench-pengukur
+  ok    postgresql :5432
+  ok    image grafana/k6
+
+------------------------------------------------------------------
+  Membuat API key Langflow
+------------------------------------------------------------------
+  ok    kunci dibuat (sk-uwLSApT74...)
+
+------------------------------------------------------------------
+  Memanaskan kedua sisi
+------------------------------------------------------------------
+  ok    service
+  ok    langflow
+
+------------------------------------------------------------------
+  Sumber daya saat idle
+------------------------------------------------------------------
+synchrono-service	0.27%	145.9MiB / 5.788GiB
+synchrono-langflow	0.44%	1.116GiB / 5.788GiB
+synchrono-seaweedfs	0.78%	843.3MiB / 5.788GiB
+
+------------------------------------------------------------------
+  k6 - skala_jutaan terhadap langflow  (20 rps, 60 detik, mode setara)
+------------------------------------------------------------------
+  mematikan synchrono-service (bukan yang diukur)
+synchrono-service
+synchrono-langflow
+  hanya synchrono-langflow yang hidup
+time="2026-09-17T19:48:05Z" level=info msg="[besar] mengirim besar-1000k (bucket bucket-test), bising 0 rps" source=console
+time="2026-09-17T19:48:06Z" level=info msg="[besar] dispatch 499 ms" source=console
+time="2026-09-17T19:48:19Z" level=info msg="[besar] SELESAI status=COMPLETED baris=1000000 grade=B engine=12513 ms tuntas=14221 ms polling=5x" source=console
+
+======  LANGFLOW  ======================================
+  permintaan      : 6 (0.4/detik)
+  latency  avg    : 699.3 ms
+           p95    : 912.2 ms
+           p99    : 944.4 ms
+           maks   : 952.5 ms
+  check           : 12 lulus, 0 GAGAL
+  iterasi dibuang : 0
+======================================================
+time="2026-09-17T19:48:20Z" level=error msg="test aborted: berkas besar selesai at besar (file:///skrip/skala_jutaan.js:126:18(206))"
+
+  menunggu 30 detik supaya pekerjaan latar selesai...
+
+------------------------------------------------------------------
+  k6 - skala_jutaan terhadap service  (20 rps, 60 detik, mode setara)
+------------------------------------------------------------------
+  mematikan synchrono-langflow (bukan yang diukur)
+synchrono-langflow
+synchrono-service
+  hanya synchrono-service yang hidup
+time="2026-09-17T19:49:53Z" level=info msg="[besar] mengirim besar-1000k (bucket bucket-test), bising 0 rps" source=console
+time="2026-09-17T19:49:53Z" level=info msg="[besar] dispatch 69 ms" source=console
+time="2026-09-17T19:50:05Z" level=info msg="[besar] SELESAI status=COMPLETED baris=1000000 grade=B engine=12042 ms tuntas=12499 ms polling=6x" source=console
+
+======  SERVICE  =======================================
+  permintaan      : 7 (0.6/detik)
+  latency  avg    : 69.6 ms
+           p95    : 91.5 ms
+           p99    : 92.8 ms
+           maks   : 93.1 ms
+  check           : 13 lulus, 1 GAGAL
+  iterasi dibuang : 0
+======================================================
+time="2026-09-17T19:50:06Z" level=error msg="test aborted: berkas besar selesai at besar (file:///skrip/skala_jutaan.js:126:18(206))"
+
+  menyalakan kembali kedua platform...
+synchrono-langflow
+synchrono-service
+
+------------------------------------------------------------------
+  Hasil
+------------------------------------------------------------------
+
+  LANGFLOW
+    latency p95   :     912,2 ms
+    latency p99   :     944,4 ms
+    latency avg   :     699,3 ms
+    rps terlayani :       0,4
+    check lulus   :    100,0%
+    synchrono-langflow: CPU puncak  387,1%   memori 1.247GiB
+    synchrono-service : CPU puncak    0,0%   memori 0B
+
+  SERVICE
+    latency p95   :      91,5 ms
+    latency p99   :      92,8 ms
+    latency avg   :      69,6 ms
+    rps terlayani :       0,6
+    check lulus   :     92,9%
+    synchrono-langflow: CPU puncak    0,0%   memori 0B
+    synchrono-service : CPU puncak  337,9%   memori 173.7MiB
+
+  langflow berbanding service: 10,0x pada p95
+
+  Berkas hasil : D:\ISGS\PROJECT\synchrono\synchrono-service\beban\hasil\
+  Grafana      : http://localhost:3005/d/synchrono-beban
+

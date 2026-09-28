@@ -1,0 +1,1208 @@
+{
+  "info": {
+    "name": "Synchrono Service — kontrak Langflow",
+    "description": "Grading, config, dan matching + reasoning TANPA Langflow, dengan kontrak Langflow yang sama persis: login -> api_key, lalu POST /api/v1/run/<endpoint> dengan header x-api-key dan `tweaks` yang dikunci node id.\n\nMulai dari 0a → 0b (atau isi `api_key` manual). Balasan /api/v1/run berselubung: isinya string JSON di outputs[0].outputs[0].results.message.text — skrip Tests membukanya dan mencetaknya di konsol.\n\nDibangkitkan oleh synchrono-service/infra/buat_postman.py; node id diambil dari app/alur.py.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "username",
+      "value": "admin"
+    },
+    {
+      "key": "password",
+      "value": "synchrono123"
+    },
+    {
+      "key": "bearer",
+      "value": ""
+    },
+    {
+      "key": "api_key",
+      "value": "synchrono-bench-key"
+    },
+    {
+      "key": "api_key_id",
+      "value": ""
+    },
+    {
+      "key": "grading_job_id",
+      "value": ""
+    },
+    {
+      "key": "matching_job_id",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "0. Auth — cara Langflow",
+      "description": "Jalankan berurutan 0a → 0b. `api_key` tersimpan otomatis ke variabel koleksi. Alternatif: isi `api_key` manual dengan kunci dari SERVICE_API_KEY (lokal: synchrono-bench-key).",
+      "item": [
+        {
+          "name": "0a. Login (dapat bearer token)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "login"
+              ]
+            },
+            "description": "Form-urlencoded, BUKAN JSON (JSON dibalas 422 — sama dengan Langflow).",
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{username}}"
+                },
+                {
+                  "key": "password",
+                  "value": "{{password}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "var d = pm.response.json();",
+                  "if (d.access_token) pm.collectionVariables.set('bearer', d.access_token);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "0b. Buat API key",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{bearer}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/api_key/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "api_key",
+                ""
+              ]
+            },
+            "description": "Nilai `api_key` HANYA muncul di balasan ini; tersimpan ke variabel koleksi.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "var d = pm.response.json();",
+                  "if (d.api_key) pm.collectionVariables.set('api_key', d.api_key);",
+                  "if (d.id) pm.collectionVariables.set('api_key_id', d.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "0c. Daftar API key",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{bearer}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/api_key/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "api_key",
+                ""
+              ]
+            },
+            "description": "Nilai kunci tersamar: 8 karakter pertama + bintang."
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Grading",
+      "item": [
+        {
+          "name": "1a. Dispatch — CSV",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/run/grading-dispatch?stream=false",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "run",
+                "grading-dispatch"
+              ],
+              "query": [
+                {
+                  "key": "stream",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Balas QUEUED dalam <5 detik; grading berjalan di latar. `jobId` tersimpan ke `grading_job_id` untuk 1d. `payload` adalah STRING berisi JSON.\n\nNode id `GradingDispatch-a3967` — sama dengan Langflow.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"GradingDispatch-a3967\": {\n      \"payload\": \"{\\\"fileId\\\": \\\"postman-csv\\\", \\\"filename\\\": \\\"data.csv\\\", \\\"s3Bucket\\\": \\\"bucket-test\\\", \\\"s3Endpoint\\\": \\\"\\\", \\\"rawSourceKey\\\": \\\"uploads/fmt-csv/raw/data.csv\\\", \\\"parquetKey\\\": \\\"uploads/postman-csv/enriched.parquet\\\", \\\"enrichedParquetKey\\\": \\\"uploads/postman-csv/enriched.parquet\\\", \\\"institution\\\": {\\\"id\\\": \\\"inst-001\\\", \\\"name\\\": \\\"Kementerian Sosial\\\"}, \\\"callback\\\": {\\\"url\\\": \\\"\\\", \\\"secretToken\\\": \\\"\\\"}}\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "var r = pm.response.json();",
+                  "if (r.outputs) {",
+                  "  var hasil = JSON.parse(r.outputs[0].outputs[0].results.message.text);",
+                  "  console.log(hasil);",
+                  "  pm.test('isi text: ' + JSON.stringify(hasil).slice(0, 180), function () {});",
+                  "} else {",
+                  "  // Galat komponen: `detail` berisi STRING JSON, persis Langflow.",
+                  "  try { console.log(JSON.parse(r.detail).message); } catch (e) { console.log(r.detail); }",
+                  "}",
+                  "if (r.outputs) {",
+                  "  if (hasil.jobId) pm.collectionVariables.set('grading_job_id', hasil.jobId);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "1b. Dispatch — .xlsx",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/run/grading-dispatch?stream=false",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "run",
+                "grading-dispatch"
+              ],
+              "query": [
+                {
+                  "key": "stream",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Jalur A, dibaca langsung.\n\nNode id `GradingDispatch-a3967` — sama dengan Langflow.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"GradingDispatch-a3967\": {\n      \"payload\": \"{\\\"fileId\\\": \\\"postman-xlsx\\\", \\\"filename\\\": \\\"data.xlsx\\\", \\\"s3Bucket\\\": \\\"bucket-test\\\", \\\"s3Endpoint\\\": \\\"\\\", \\\"rawSourceKey\\\": \\\"uploads/fmt-xlsx/raw/data.xlsx\\\", \\\"parquetKey\\\": \\\"uploads/postman-xlsx/enriched.parquet\\\", \\\"enrichedParquetKey\\\": \\\"uploads/postman-xlsx/enriched.parquet\\\", \\\"institution\\\": {\\\"id\\\": \\\"inst-001\\\", \\\"name\\\": \\\"Kementerian Sosial\\\"}, \\\"callback\\\": {\\\"url\\\": \\\"\\\", \\\"secretToken\\\": \\\"\\\"}}\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "var r = pm.response.json();",
+                  "if (r.outputs) {",
+                  "  var hasil = JSON.parse(r.outputs[0].outputs[0].results.message.text);",
+                  "  console.log(hasil);",
+                  "  pm.test('isi text: ' + JSON.stringify(hasil).slice(0, 180), function () {});",
+                  "} else {",
+                  "  // Galat komponen: `detail` berisi STRING JSON, persis Langflow.",
+                  "  try { console.log(JSON.parse(r.detail).message); } catch (e) { console.log(r.detail); }",
+                  "}",
+                  "if (r.outputs) {",
+                  "  if (hasil.jobId) pm.collectionVariables.set('grading_job_id', hasil.jobId);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "1c. Dispatch — .sql (jalur B, konverter)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/run/grading-dispatch?stream=false",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "run",
+                "grading-dispatch"
+              ],
+              "query": [
+                {
+                  "key": "stream",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Dipulihkan di container konverter lebih dulu. `.mdf`/`.dmp` sama bentuknya (butuh konverter-mssql / konverter-oracle hidup).\n\nNode id `GradingDispatch-a3967` — sama dengan Langflow.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"GradingDispatch-a3967\": {\n      \"payload\": \"{\\\"fileId\\\": \\\"postman-sql\\\", \\\"filename\\\": \\\"data.sql\\\", \\\"s3Bucket\\\": \\\"bucket-test\\\", \\\"s3Endpoint\\\": \\\"\\\", \\\"rawSourceKey\\\": \\\"uploads/fmt-sql/raw/data.sql\\\", \\\"parquetKey\\\": \\\"uploads/postman-sql/enriched.parquet\\\", \\\"enrichedParquetKey\\\": \\\"uploads/postman-sql/enriched.parquet\\\", \\\"institution\\\": {\\\"id\\\": \\\"inst-001\\\", \\\"name\\\": \\\"Kementerian Sosial\\\"}, \\\"callback\\\": {\\\"url\\\": \\\"\\\", \\\"secretToken\\\": \\\"\\\"}}\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "var r = pm.response.json();",
+                  "if (r.outputs) {",
+                  "  var hasil = JSON.parse(r.outputs[0].outputs[0].results.message.text);",
+                  "  console.log(hasil);",
+                  "  pm.test('isi text: ' + JSON.stringify(hasil).slice(0, 180), function () {});",
+                  "} else {",
+                  "  // Galat komponen: `detail` berisi STRING JSON, persis Langflow.",
+                  "  try { console.log(JSON.parse(r.detail).message); } catch (e) { console.log(r.detail); }",
+                  "}",
+                  "if (r.outputs) {",
+                  "  if (hasil.jobId) pm.collectionVariables.set('grading_job_id', hasil.jobId);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "1d. Status — job terakhir (job_id)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/run/grading-status?stream=false",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "run",
+                "grading-status"
+              ],
+              "query": [
+                {
+                  "key": "stream",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Polling sampai `done: true`. `result` = muatan callback yang sama persis.\n\nNode id `GradingStatus-3cc03` — sama dengan Langflow.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"GradingStatus-3cc03\": {\n      \"job_id\": \"{{grading_job_id}}\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "var r = pm.response.json();",
+                  "if (r.outputs) {",
+                  "  var hasil = JSON.parse(r.outputs[0].outputs[0].results.message.text);",
+                  "  console.log(hasil);",
+                  "  pm.test('isi text: ' + JSON.stringify(hasil).slice(0, 180), function () {});",
+                  "} else {",
+                  "  // Galat komponen: `detail` berisi STRING JSON, persis Langflow.",
+                  "  try { console.log(JSON.parse(r.detail).message); } catch (e) { console.log(r.detail); }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "1e. Status — per berkas (file_id)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/run/grading-status?stream=false",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "run",
+                "grading-status"
+              ],
+              "query": [
+                {
+                  "key": "stream",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Job TERBARU untuk berkas itu. Berkas yang belum pernah digrading: found=false.\n\nNode id `GradingStatus-3cc03` — sama dengan Langflow.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"GradingStatus-3cc03\": {\n      \"file_id\": \"postman-csv\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "var r = pm.response.json();",
+                  "if (r.outputs) {",
+                  "  var hasil = JSON.parse(r.outputs[0].outputs[0].results.message.text);",
+                  "  console.log(hasil);",
+                  "  pm.test('isi text: ' + JSON.stringify(hasil).slice(0, 180), function () {});",
+                  "} else {",
+                  "  // Galat komponen: `detail` berisi STRING JSON, persis Langflow.",
+                  "  try { console.log(JSON.parse(r.detail).message); } catch (e) { console.log(r.detail); }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "1f. Pipeline sinkron (penelusuran, bukan untuk portal)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/run/grading?stream=false",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "run",
+                "grading"
+              ],
+              "query": [
+                {
+                  "key": "stream",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Memblokir sampai selesai, tanpa menyentuh tabel grading_jobs.\n\nNode id `OpenGradingSession-ab8d5` — sama dengan Langflow.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"OpenGradingSession-ab8d5\": {\n      \"file_id\": \"uji-b\",\n      \"s3_bucket\": \"bucket-test\",\n      \"parquet_key\": \"uploads/uji-b/data.parquet\",\n      \"s3_endpoint\": \"\",\n      \"enriched_key\": \"uji-kompat/postman-pipeline.parquet\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "var r = pm.response.json();",
+                  "if (r.outputs) {",
+                  "  var hasil = JSON.parse(r.outputs[0].outputs[0].results.message.text);",
+                  "  console.log(hasil);",
+                  "  pm.test('isi text: ' + JSON.stringify(hasil).slice(0, 180), function () {});",
+                  "} else {",
+                  "  // Galat komponen: `detail` berisi STRING JSON, persis Langflow.",
+                  "  try { console.log(JSON.parse(r.detail).message); } catch (e) { console.log(r.detail); }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "1g. Contoh galat — format ditolak (.xls)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/run/grading-dispatch?stream=false",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "run",
+                "grading-dispatch"
+              ],
+              "query": [
+                {
+                  "key": "stream",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Ditolak SEKETIKA: HTTP 500, `detail` berisi string JSON — persis Langflow.\n\nNode id `GradingDispatch-a3967` — sama dengan Langflow.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"GradingDispatch-a3967\": {\n      \"payload\": \"{\\\"fileId\\\": \\\"postman-xls\\\", \\\"filename\\\": \\\"data.xls\\\", \\\"s3Bucket\\\": \\\"bucket-test\\\", \\\"s3Endpoint\\\": \\\"\\\", \\\"rawSourceKey\\\": \\\"uploads/fmt-xls/raw/data.xls\\\", \\\"parquetKey\\\": \\\"uploads/postman-xls/enriched.parquet\\\", \\\"enrichedParquetKey\\\": \\\"uploads/postman-xls/enriched.parquet\\\", \\\"institution\\\": {\\\"id\\\": \\\"inst-001\\\", \\\"name\\\": \\\"Kementerian Sosial\\\"}, \\\"callback\\\": {\\\"url\\\": \\\"\\\", \\\"secretToken\\\": \\\"\\\"}}\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "var r = pm.response.json();",
+                  "if (r.outputs) {",
+                  "  var hasil = JSON.parse(r.outputs[0].outputs[0].results.message.text);",
+                  "  console.log(hasil);",
+                  "  pm.test('isi text: ' + JSON.stringify(hasil).slice(0, 180), function () {});",
+                  "} else {",
+                  "  // Galat komponen: `detail` berisi STRING JSON, persis Langflow.",
+                  "  try { console.log(JSON.parse(r.detail).message); } catch (e) { console.log(r.detail); }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Config — aturan grade",
+      "item": [
+        {
+          "name": "2a. Baca semua grade",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/run/config-rules?stream=false",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "run",
+                "config-rules"
+              ],
+              "query": [
+                {
+                  "key": "stream",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Kosongkan grade_id untuk semua grade.\n\nNode id `GradingRuleGet-9c9c5` — sama dengan Langflow.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"GradingRuleGet-9c9c5\": {\n      \"grade_id\": \"\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "var r = pm.response.json();",
+                  "if (r.outputs) {",
+                  "  var hasil = JSON.parse(r.outputs[0].outputs[0].results.message.text);",
+                  "  console.log(hasil);",
+                  "  pm.test('isi text: ' + JSON.stringify(hasil).slice(0, 180), function () {});",
+                  "} else {",
+                  "  // Galat komponen: `detail` berisi STRING JSON, persis Langflow.",
+                  "  try { console.log(JSON.parse(r.detail).message); } catch (e) { console.log(r.detail); }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "2b. Baca satu grade",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/run/config-rules?stream=false",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "run",
+                "config-rules"
+              ],
+              "query": [
+                {
+                  "key": "stream",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "grade_id berupa TEKS \"2\". Angka 2 (bukan teks) dibuang — sama dengan Langflow.\n\nNode id `GradingRuleGet-9c9c5` — sama dengan Langflow.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"GradingRuleGet-9c9c5\": {\n      \"grade_id\": \"2\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "var r = pm.response.json();",
+                  "if (r.outputs) {",
+                  "  var hasil = JSON.parse(r.outputs[0].outputs[0].results.message.text);",
+                  "  console.log(hasil);",
+                  "  pm.test('isi text: ' + JSON.stringify(hasil).slice(0, 180), function () {});",
+                  "} else {",
+                  "  // Galat komponen: `detail` berisi STRING JSON, persis Langflow.",
+                  "  try { console.log(JSON.parse(r.detail).message); } catch (e) { console.log(r.detail); }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "2c. Ubah aturan — dryRun (tidak menulis)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/run/config-rules-update?stream=false",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "run",
+                "config-rules-update"
+              ],
+              "query": [
+                {
+                  "key": "stream",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Validasi + daftar perubahan tanpa menulis. Hapus `dryRun` untuk benar-benar menyimpan.\n\nNode id `GradingRuleUpdate-ea0f7` — sama dengan Langflow.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"GradingRuleUpdate-ea0f7\": {\n      \"payload\": \"{\\\"gradeId\\\": 2, \\\"updatedBy\\\": \\\"postman\\\", \\\"dryRun\\\": true, \\\"criteria\\\": {\\\"minCompleteness\\\": {\\\"tempat_lahir\\\": 0.75}, \\\"minNikTrusted\\\": 0.75}, \\\"score\\\": {\\\"min\\\": 72}, \\\"matching\\\": {\\\"autoScoreMin\\\": 86.0}}\",\n      \"dry_run\": false\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "var r = pm.response.json();",
+                  "if (r.outputs) {",
+                  "  var hasil = JSON.parse(r.outputs[0].outputs[0].results.message.text);",
+                  "  console.log(hasil);",
+                  "  pm.test('isi text: ' + JSON.stringify(hasil).slice(0, 180), function () {});",
+                  "} else {",
+                  "  // Galat komponen: `detail` berisi STRING JSON, persis Langflow.",
+                  "  try { console.log(JSON.parse(r.detail).message); } catch (e) { console.log(r.detail); }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Matching + reasoning",
+      "description": "PRASYARAT (spesifikasi §1 langkah 1): portal membuat baris `syncrono_matching_job` berstatus PENDING dengan id = `matching_job_id` SEBELUM dispatch. Tanpa baris itu job gagal dan callback FAILED — lihat langflow-synchrono/infra/simulasi_portal/simulasi.py.",
+      "item": [
+        {
+          "name": "3a. Dispatch matching (bentuk persis spesifikasi §3)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/run/matching-dispatch?stream=false",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "run",
+                "matching-dispatch"
+              ],
+              "query": [
+                {
+                  "key": "stream",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Balas IN_PROGRESS seketika; hasil tersuntik ke DB portal lalu callback ke `callbackUrl`. `matching_job_id` dibuat baru oleh skrip pra-permintaan. Header `x-api-key` DAN `Authorization: Bearer` dikirim bersamaan, seperti spesifikasi.\n\nNode id `MatchingDispatch-b4819` — sama dengan Langflow.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"chat\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"MatchingDispatch-b4819\": {\n      \"payload\": \"{\\\"jobId\\\": \\\"{{matching_job_id}}\\\", \\\"fileId\\\": \\\"sim-grade-d\\\", \\\"masterFileId\\\": \\\"md-master-uji-299k\\\", \\\"actor\\\": \\\"admin@dukcapil.go.id\\\", \\\"callbackUrl\\\": \\\"http://host.docker.internal:3999/api/internal/matching/callback\\\", \\\"s3Bucket\\\": \\\"bucket-test\\\", \\\"s3Endpoint\\\": \\\"\\\", \\\"incomingFile\\\": {\\\"fileId\\\": \\\"sim-grade-d\\\", \\\"filename\\\": \\\"data.csv\\\", \\\"s3Key\\\": \\\"uploads/sim-grade-d/enriched.parquet\\\", \\\"format\\\": \\\"parquet\\\"}, \\\"masterDataFile\\\": {\\\"masterFileId\\\": \\\"md-master-uji-299k\\\", \\\"filename\\\": \\\"md-master-uji-299k.parquet\\\", \\\"s3Key\\\": \\\"master-data/md-master-uji-299k.parquet\\\", \\\"format\\\": \\\"parquet\\\"}, \\\"rulePreset\\\": \\\"FAST\\\"}\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// jobId baru tiap kirim — harus sama dengan baris syncrono_matching_job di DB portal.",
+                  "pm.collectionVariables.set('matching_job_id', pm.variables.replaceIn('{{$guid}}'));"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "var r = pm.response.json();",
+                  "if (r.outputs) {",
+                  "  var hasil = JSON.parse(r.outputs[0].outputs[0].results.message.text);",
+                  "  console.log(hasil);",
+                  "  pm.test('isi text: ' + JSON.stringify(hasil).slice(0, 180), function () {});",
+                  "} else {",
+                  "  // Galat komponen: `detail` berisi STRING JSON, persis Langflow.",
+                  "  try { console.log(JSON.parse(r.detail).message); } catch (e) { console.log(r.detail); }",
+                  "}",
+                  "if (r.outputs) {",
+                  "  if (hasil.jobId) pm.collectionVariables.set('matching_job_id', hasil.jobId);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "3b. Contoh galat — field wajib kurang",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/run/matching-dispatch?stream=false",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "run",
+                "matching-dispatch"
+              ],
+              "query": [
+                {
+                  "key": "stream",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Semua field yang kurang disebut sekaligus (HTTP 500, seperti Langflow).\n\nNode id `MatchingDispatch-b4819` — sama dengan Langflow.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"chat\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"MatchingDispatch-b4819\": {\n      \"payload\": \"{\\\"jobId\\\": \\\"postman\\\"}\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "var r = pm.response.json();",
+                  "if (r.outputs) {",
+                  "  var hasil = JSON.parse(r.outputs[0].outputs[0].results.message.text);",
+                  "  console.log(hasil);",
+                  "  pm.test('isi text: ' + JSON.stringify(hasil).slice(0, 180), function () {});",
+                  "} else {",
+                  "  // Galat komponen: `detail` berisi STRING JSON, persis Langflow.",
+                  "  try { console.log(JSON.parse(r.detail).message); } catch (e) { console.log(r.detail); }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Kesehatan",
+      "item": [
+        {
+          "name": "4a. /health_check (bentuk Langflow)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health_check",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health_check"
+              ]
+            },
+            "description": "{status, chat, db} — db = PostgreSQL engine. Tidak sehat -> 500."
+          }
+        },
+        {
+          "name": "4b. /health (tanpa basis data)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Probe container; tidak menyentuh PostgreSQL maupun S3."
+          }
+        },
+        {
+          "name": "4c. /health/db",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health/db",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health",
+                "db"
+              ]
+            },
+            "description": "Satu perjalanan ke PostgreSQL, dengan waktunya."
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. REST service (benchmark — BUKAN untuk portal)",
+      "description": "Bentuk lama service pembanding: JSON langsung tanpa selubung, kode status bermakna (202, 400, 401, 404, 409, 422). Tanpa kunci -> 401 (bukan 403 seperti /api/v1/run).",
+      "item": [
+        {
+          "name": "5a. Kirim job grading",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/grading/jobs",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "grading",
+                "jobs"
+              ]
+            },
+            "description": "202 QUEUED. Lewat komponen GradingDispatch yang sama.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fileId\": \"postman-rest\",\n  \"filename\": \"data.csv\",\n  \"s3Bucket\": \"bucket-test\",\n  \"s3Endpoint\": \"\",\n  \"rawSourceKey\": \"uploads/fmt-csv/raw/data.csv\",\n  \"parquetKey\": \"uploads/postman-rest/enriched.parquet\",\n  \"enrichedParquetKey\": \"uploads/postman-rest/enriched.parquet\",\n  \"institution\": {\n    \"id\": \"inst-001\",\n    \"name\": \"Kementerian Sosial\"\n  },\n  \"callback\": {\n    \"url\": \"\",\n    \"secretToken\": \"\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "5b. Status per berkas",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/grading/jobs/postman-rest",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "grading",
+                "jobs",
+                "postman-rest"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "5c. Baca aturan grade 2",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/config/rules/2",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "config",
+                "rules",
+                "2"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "5d. Ubah aturan — dryRun",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/config/rules/2",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "config",
+                "rules",
+                "2"
+              ]
+            },
+            "description": "409 kalau validasi menolak.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"criteria\": {\n    \"minCompleteness\": {\n      \"tempat_lahir\": 0.75\n    }\n  },\n  \"score\": {\n    \"min\": 72\n  },\n  \"updatedBy\": \"postman\",\n  \"dryRun\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Bersihkan",
+      "item": [
+        {
+          "name": "6a. Hapus API key (yang dibuat 0b)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{bearer}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/api_key/{{api_key_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "api_key",
+                "{{api_key_id}}"
+              ]
+            },
+            "description": "Berlaku seketika — kunci yang dihapus langsung ditolak. Setelah ini isi ulang `api_key` (0b) sebelum memanggil yang lain."
+          }
+        }
+      ]
+    }
+  ]
+}

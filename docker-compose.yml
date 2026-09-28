@@ -1,0 +1,119 @@
+# Synchrono Service — PENGEMBANGAN LOKAL, berdampingan dengan stack Langflow.
+#
+# Untuk server, lihat docker-compose.server.yml dan DEPLOY.md.
+#
+# MENUMPANG JARINGAN STACK LANGFLOW, TIDAK MEMBUAT SENDIRI
+#
+# SeaweedFS, PostgreSQL, dan konverter jalur B yang dipakai HARUS yang sama
+# dengan yang dipakai Langflow — satu penyimpanan, satu data, dua pintu API.
+# Jadi dua jaringan milik stack Langflow dipakai apa adanya:
+#
+#     infra_luar    SeaweedFS lokal, dan PostgreSQL di host (DBngin)
+#     infra_dalam   konverter .sql/.mdf/.dmp dan penerus S3-nya — jaringan
+#                   `internal: true`, tanpa jalan keluar
+#
+# Stack itu HARUS SUDAH JALAN lebih dulu:
+#
+#     cd ../langflow-synchrono/infra && docker compose up -d
+#     cd ../../synchrono-service    && docker compose up -d --build
+#
+# Sebelumnya service ini memakai `infra_default`. Jaringan itu tertinggal sejak
+# stack Langflow dipecah jadi `luar`/`dalam`: SeaweedFS tidak lagi ada di sana,
+# dan grading lewat service tidak bisa membaca berkas apa pun.
+
+services:
+  synchrono-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: synchrono-service:2.0.0
+    container_name: synchrono-service
+    ports:
+      - "8000:8000"
+    environment:
+      # ── Lapisan HTTP ────────────────────────────────────────────────────
+      WEB_CONCURRENCY: "1"
+      ACCESS_LOG: "0"
+
+      # ── Autentikasi (kontrak Langflow) ──────────────────────────────────
+      # Login -> token -> API key, persis Langflow. Kredensialnya sama dengan
+      # Langflow lokal, supaya skrip yang memakai satu juga jalan di yang lain.
+      SERVICE_SUPERUSER: "admin"
+      SERVICE_SUPERUSER_PASSWORD: "synchrono123"
+      # Kunci tetap, tanpa lewat login. Perkakas benchmark (beban/, k6)
+      # memakai nilai ini. Boleh beberapa, dipisah koma.
+      SERVICE_API_KEY: "synchrono-bench-key"
+
+      # ── Koneksi DuckDB ──────────────────────────────────────────────────
+      DUCKDB_MODE: "kolam"
+      DUCKDB_POOL_SIZE: "8"
+      DUCKDB_POOL_TIMEOUT: "30"
+      WARMUP_CONNECTIONS: "2"
+
+      # ── Sama persis dengan stack Langflow ───────────────────────────────
+      PG_DSN: "host=host.docker.internal port=5432 dbname=synchrono user=postgres"
+      S3_ENDPOINT: "seaweedfs:8333"
+      S3_ACCESS_KEY: synchrono
+      S3_SECRET_KEY: synchrono123
+      S3_USE_SSL: "false"
+
+      WILAYAH_PARQUET: "s3://syncrono-master/wilayah/master_wilayah_nik.parquet"
+      WILAYAH_S3_ENDPOINT: ""
+      WILAYAH_S3_KEY: ""
+      WILAYAH_S3_SECRET: ""
+      WILAYAH_KECAMATAN_TEGAS: "0"
+
+      # Batas memori DuckDB — WAJIB di container (alasannya di compose Langflow).
+      DUCKDB_MEMORY_LIMIT: "3GB"
+      DUCKDB_TEMP_DIR: "/tmp/duckdb_spill"
+
+      # ── Grading ─────────────────────────────────────────────────────────
+      GRADING_MAX_CONCURRENT: "2"
+      GRADING_STALE_MINUTES: "15"
+      GRADING_CALLBACK_RETRIES: "3"
+      GRADING_CALLBACK_TIMEOUT: "20"
+
+      NORMALISASI_AI: "nama_saja"
+      NORMALISASI_AI_BASE_URL: ""
+
+      # ── Matching ────────────────────────────────────────────────────────
+      # DB portal TIRUAN, sama dengan Langflow lokal (lihat MATCHING.md).
+      PORTAL_PG_DSN: "host=host.docker.internal port=5432 dbname=portal_sim user=postgres"
+      MATCHING_MAX_CONCURRENT: "1"
+
+      # Reasoning matching. Kosong = tanpa LLM (kalimat deterministik).
+      REASONING_AI_BASE_URL: "${REASONING_AI_BASE_URL:-}"
+      REASONING_AI_MODEL: "${REASONING_AI_MODEL:-gemma3:12b}"
+      REASONING_AI_API_KEY: "${REASONING_AI_API_KEY:-}"
+      REASONING_AI_ALLOW_EXTERNAL: "${REASONING_AI_ALLOW_EXTERNAL:-0}"
+    volumes:
+      # SATU-SATUNYA salinan logika: lib/ dan komponen Langflow, dimuat
+      # langsung (app/alur.py). Berkas yang sama di-mount ke container Langflow.
+      - ../langflow-synchrono/lib:/synchrono/lib:ro
+      - ../langflow-synchrono/components:/components:ro
+      # Kode service di-mount juga supaya perubahan kecil tidak perlu rebuild.
+      - ./app:/synchrono/app:ro
+      - ./infra:/synchrono/infra:ro
+      - ./beban:/synchrono/beban:ro
+      - ../test-data-csv:/synchrono/test-data-csv
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [luar, dalam]
+    healthcheck:
+      # /health tidak menyentuh PostgreSQL — container yang sehat tapi basis
+      # datanya sedang mati tidak boleh ikut di-restart berulang-ulang.
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+networks:
+  luar:
+    name: infra_luar
+    external: true
+  dalam:
+    name: infra_dalam
+    external: true

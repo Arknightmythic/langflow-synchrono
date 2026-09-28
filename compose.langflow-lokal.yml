@@ -1,0 +1,36 @@
+# Override untuk stack Langflow selama benchmark.
+#
+# Dipakai BERSAMA docker-compose.yml milik langflow-synchrono, bukan
+# menggantikannya:
+#
+#     docker compose \
+#       -f ../langflow-synchrono/infra/docker-compose.yml \
+#       -f compose.langflow-lokal.yml \
+#       up -d
+#
+# (Jalankan dari folder synchrono-service. Nama proyek tetap `infra` karena
+# diambil dari folder berkas compose PERTAMA, jadi container yang sudah ada
+# diperbarui di tempat — flow dan API key tidak hilang.)
+#
+# KENAPA PERLU
+#
+# Bawaannya, Langflow membaca rujukan wilayah dari SeaweedFS SERVER lewat VPN.
+# Kalau dibiarkan, tiap job grading di sisi Langflow menanggung satu perjalanan
+# lintas jaringan yang tidak ditanggung sisi service — dan selisih yang terbaca
+# nanti sebagian besar adalah selisih VPN, bukan selisih platform.
+#
+# Override ini mengarahkannya ke SeaweedFS lokal, ke PATH YANG SAMA PERSIS
+# (`s3://syncrono-master/wilayah/master_wilayah_nik.parquet`), yang sudah diisi
+# oleh infra/siapkan_seaweed.py. Dengan endpoint dikosongkan, `_wilayah.muat()`
+# memakai secret utama dan tidak ada permintaan yang keluar dari mesin ini.
+#
+# Kembalikan ke semula setelah benchmark selesai — cukup jalankan
+# `docker compose up -d` dari langflow-synchrono/infra tanpa override ini.
+
+services:
+  langflow:
+    environment:
+      WILAYAH_PARQUET: "s3://syncrono-master/wilayah/master_wilayah_nik.parquet"
+      WILAYAH_S3_ENDPOINT: ""
+      WILAYAH_S3_KEY: ""
+      WILAYAH_S3_SECRET: ""

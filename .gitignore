@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+
+# Hasil mentah tiap jalan k6. Berkasnya besar, berubah tiap jalan, dan angka
+# yang penting sudah diringkas di PERBANDINGAN.md.
+beban/hasil/*.json

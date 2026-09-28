@@ -1,0 +1,235 @@
+﻿PENGUJIAN MENYELURUH - 20260918-102928
+
+Lingkungan:
+synchrono-service  CPU 0.18%  MEM 61.34MiB / 5.788GiB
+synchrono-langflow  CPU 98.78%  MEM 330.5MiB / 5.788GiB
+synchrono-seaweedfs  CPU 0.72%  MEM 129.4MiB / 5.788GiB
+  langflow workers: 1
+
+========================================================================
+  1-dasar
+========================================================================
+  durasi 169 detik
+
+  LANGFLOW
+  latency p95   :      44,0 ms
+  latency p99   :     110,2 ms
+  latency avg   :      16,3 ms
+  rps terlayani :      50,0
+  check lulus   :    100,0%
+  synchrono-langflow: CPU puncak   66,0%   memori 1.235GiB
+  synchrono-service : CPU puncak    0,0%   memori 0B
+  SERVICE
+  latency p95   :       4,3 ms
+  latency p99   :       6,8 ms
+  latency avg   :       2,8 ms
+  rps terlayani :      50,0
+  check lulus   :    100,0%
+  synchrono-langflow: CPU puncak    0,0%   memori 0B
+  synchrono-service : CPU puncak   67,9%   memori 52.76MiB
+  langflow berbanding service: 10,2x pada p95
+
+========================================================================
+  2-status-2rps
+========================================================================
+  durasi 181 detik
+
+  LANGFLOW
+  latency p95   :   1.400,6 ms
+  latency p99   :   1.456,6 ms
+  latency avg   :   1.012,7 ms
+  rps terlayani :       2,0
+  check lulus   :    100,0%
+  synchrono-langflow: CPU puncak  245,3%   memori 1.239GiB
+  synchrono-service : CPU puncak    0,0%   memori 0B
+  SERVICE
+  latency p95   :     127,6 ms
+  latency p99   :     198,2 ms
+  latency avg   :      75,4 ms
+  rps terlayani :       2,0
+  check lulus   :    100,0%
+  synchrono-langflow: CPU puncak    0,0%   memori 0B
+  synchrono-service : CPU puncak   86,9%   memori 61.02MiB
+  langflow berbanding service: 11,0x pada p95
+
+========================================================================
+  3-status-10rps
+========================================================================
+  durasi 196 detik
+
+  LANGFLOW
+  latency p95   :  45.308,4 ms
+  latency p99   :  47.940,2 ms
+  latency avg   :  25.322,3 ms
+  rps terlayani :       2,0
+  check lulus   :     99,2%
+  synchrono-langflow: CPU puncak  335,5%   memori 1.332GiB
+  synchrono-service : CPU puncak    0,0%   memori 0B
+  SERVICE
+  latency p95   :      87,1 ms
+  latency p99   :     156,5 ms
+  latency avg   :      56,9 ms
+  rps terlayani :      10,0
+  check lulus   :    100,0%
+  synchrono-langflow: CPU puncak    0,0%   memori 0B
+  synchrono-service : CPU puncak  131,4%   memori 65.44MiB
+  langflow berbanding service: 520,0x pada p95
+
+========================================================================
+  4-aturan
+========================================================================
+  durasi 181 detik
+
+  LANGFLOW
+  latency p95   :  24.174,3 ms
+  latency p99   :  25.392,7 ms
+  latency avg   :  10.394,5 ms
+  rps terlayani :       2,7
+  check lulus   :    100,0%
+  synchrono-langflow: CPU puncak  337,4%   memori 1.289GiB
+  synchrono-service : CPU puncak    0,0%   memori 0B
+  SERVICE
+  latency p95   :      67,2 ms
+  latency p99   :     109,4 ms
+  latency avg   :      45,3 ms
+  rps terlayani :       5,0
+  check lulus   :    100,0%
+  synchrono-langflow: CPU puncak    0,0%   memori 0B
+  synchrono-service : CPU puncak   54,7%   memori 57.07MiB
+  langflow berbanding service: 359,7x pada p95
+
+========================================================================
+  5-campuran
+========================================================================
+  durasi 204 detik
+
+  LANGFLOW
+  latency p95   :   5.484,1 ms
+  latency p99   :   8.514,5 ms
+  latency avg   :   3.432,4 ms
+  rps terlayani :       2,9
+  check lulus   :    100,0%
+  synchrono-langflow: CPU puncak  340,8%   memori 1.284GiB
+  synchrono-service : CPU puncak    0,0%   memori 0B
+  SERVICE
+  latency p95   :     112,3 ms
+  latency p99   :     327,9 ms
+  latency avg   :      69,8 ms
+  rps terlayani :       3,0
+  check lulus   :     99,6%
+  synchrono-langflow: CPU puncak    0,0%   memori 0B
+  synchrono-service : CPU puncak  187,0%   memori 66.55MiB
+  langflow berbanding service: 48,8x pada p95
+
+========================================================================
+  6-kapasitas-langflow
+========================================================================
+  durasi 325 detik
+
+  KURVA KAPASITAS - langflow
+  1       1,45       688,4       817,9
+  2       2,36       841,8     1.061,2
+  4       2,90     1.357,3     1.552,8
+  8       2,83     2.761,3     4.008,5  <- mentok, throughput berhenti naik
+  16       3,11     4.893,4    10.576,1  <- mentok, throughput berhenti naik
+  32       2,97     9.822,8    20.237,7  <- mentok, throughput berhenti naik
+  64       2,40    17.819,8    28.520,5  <- mentok, throughput berhenti naik
+  141       0,30    27.209,0    29.833,8  <- mentok, throughput berhenti naik
+
+========================================================================
+  7-kapasitas-service
+========================================================================
+  durasi 169 detik
+
+  KURVA KAPASITAS - service
+  1      19,03        52,2        71,1
+  4      68,93        57,5        80,6
+  16      96,18       165,0       252,1
+  64      98,94       636,9     1.032,5  <- mentok, throughput berhenti naik
+  141      98,60     1.403,9     2.003,8  <- mentok, throughput berhenti naik
+
+========================================================================
+  8-skala-1juta
+========================================================================
+  durasi 235 detik
+
+  time="2026-09-18T03:54:10Z" level=info msg="[besar] dispatch 1716 ms" source=console
+  time="2026-09-18T03:54:52Z" level=info msg="[besar] SELESAI status=COMPLETED baris=1000000 grade=B engine=40361 ms tuntas=44614 ms polling=8x" source=console
+  time="2026-09-18T03:55:59Z" level=info msg="[besar] dispatch 201 ms" source=console
+  time="2026-09-18T03:56:20Z" level=info msg="[besar] SELESAI status=COMPLETED baris=1000000 grade=B engine=20023 ms tuntas=21281 ms polling=10x" source=console
+  LANGFLOW
+  latency p95   :   7.174,9 ms
+  latency p99   :   8.008,1 ms
+  latency avg   :   3.852,9 ms
+  rps terlayani :       1,9
+  check lulus   :     98,8%
+  synchrono-langflow: CPU puncak  387,5%   memori 1.262GiB
+  synchrono-service : CPU puncak    0,0%   memori 0B
+  SERVICE
+  latency p95   :     263,5 ms
+  latency p99   :     343,1 ms
+  latency avg   :     101,6 ms
+  rps terlayani :       2,5
+  check lulus   :     99,1%
+  synchrono-langflow: CPU puncak    0,0%   memori 0B
+  synchrono-service : CPU puncak  392,0%   memori 169.7MiB
+  langflow berbanding service: 27,2x pada p95
+
+========================================================================
+  9-skala-5juta
+========================================================================
+  durasi 1466 detik
+
+  time="2026-09-18T03:58:08Z" level=info msg="[besar] dispatch 1367 ms" source=console
+  time="2026-09-18T04:19:21Z" level=info msg="[besar] dispatch 198 ms" source=console
+  time="2026-09-18T04:21:32Z" level=info msg="[besar] SELESAI status=COMPLETED baris=5000000 grade=B engine=129551 ms tuntas=130860 ms polling=61x" source=console
+  LANGFLOW
+  latency p95   :  59.991,5 ms
+  latency p99   :  59.994,9 ms
+  latency avg   :  55.538,7 ms
+  rps terlayani :       1,8
+  check lulus   :      9,2%
+  synchrono-langflow: CPU puncak  414,8%   memori 3.912GiB
+  synchrono-service : CPU puncak    0,0%   memori 0B
+  SERVICE
+  latency p95   :     241,4 ms
+  latency p99   :     382,9 ms
+  latency avg   :     138,0 ms
+  rps terlayani :       2,5
+  check lulus   :     99,8%
+  synchrono-langflow: CPU puncak    0,0%   memori 0B
+  synchrono-service : CPU puncak  391,2%   memori 3.309GiB
+  langflow berbanding service: 248,5x pada p95
+
+========================================================================
+  10-skala-10juta
+========================================================================
+  durasi 1667 detik
+
+  time="2026-09-18T04:23:13Z" level=info msg="[besar] dispatch 2135 ms" source=console
+  time="2026-09-18T04:46:26Z" level=info msg="[besar] SELESAI status=COMPLETED baris=10000000 grade=B engine=385971 ms tuntas=1394688 ms polling=28x" source=console
+  time="2026-09-18T04:47:07Z" level=info msg="[besar] dispatch 190 ms" source=console
+  time="2026-09-18T04:49:22Z" level=info msg="[besar] SELESAI status=COMPLETED baris=10000000 grade=B engine=133382 ms tuntas=134843 ms polling=65x" source=console
+  LANGFLOW
+  latency p95   :  59.996,6 ms
+  latency p99   :  60.002,8 ms
+  latency avg   :  55.879,3 ms
+  rps terlayani :       1,9
+  check lulus   :      6,1%
+  synchrono-langflow: CPU puncak  363,3%   memori 2.19GiB
+  synchrono-service : CPU puncak    0,0%   memori 0B
+  SERVICE
+  latency p95   :     112,4 ms
+  latency p99   :     193,4 ms
+  latency avg   :      66,1 ms
+  rps terlayani :       2,5
+  check lulus   :     99,9%
+  synchrono-langflow: CPU puncak    0,0%   memori 0B
+  synchrono-service : CPU puncak  390,9%   memori 3.054GiB
+  langflow berbanding service: 533,9x pada p95
+
+========================================================================
+  SELESAI
+========================================================================
+  Catatan per tahap : D:\ISGS\PROJECT\synchrono\synchrono-service\beban\hasil\menyeluruh-20260918-102928
+  Ringkasan ini     : D:\ISGS\PROJECT\synchrono\synchrono-service\beban\hasil\menyeluruh-20260918-102928\RINGKASAN.txt

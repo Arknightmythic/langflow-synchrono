@@ -1,0 +1,26 @@
+# Prometheus untuk benchmark, bukan untuk produksi.
+#
+# Interval 5 detik. Jauh lebih rapat dari kelaziman (15-60 detik), dan memang
+# harus: satu jalan k6 hanya berlangsung 60-120 detik, jadi interval 30 detik
+# akan menyisakan segelintir titik dan seluruh bentuk grafiknya hilang.
+
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+  external_labels:
+    sumber: benchmark-synchrono
+
+scrape_configs:
+  # CPU dan memori tiap container. Inilah sumber jawaban "usage RAM CPU".
+  - job_name: pengukur
+    static_configs:
+      - targets: ['pengukur:9200']
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+# Hasil k6 TIDAK di-scrape — k6 yang mengirimkannya ke sini lewat remote write
+# (lihat --web.enable-remote-write-receiver di docker-compose.yml). Begitu
+# arahnya karena k6 hidup sebentar lalu mati; kalau menunggu di-scrape,
+# sebagian besar angkanya hilang bersama prosesnya.

@@ -1,0 +1,29 @@
+# duckdb & python-dotenv DIPATOK SAMA PERSIS dengan Dockerfile.langflow.
+# Kalau berbeda, sebagian selisih yang terukur di benchmark adalah selisih versi
+# DuckDB — bukan selisih platform — dan hasilnya tidak berarti apa-apa.
+duckdb==1.5.5
+python-dotenv==1.2.3
+
+# Lapis kedua pengenalan kolom memakai rapidfuzz. Image Langflow sudah
+# membawanya; di sini harus diminta sendiri, kalau tidak lapis itu DILEWATI
+# diam-diam (ada penanganan ImportError di _normalisasi.py) dan pemetaan kolom
+# bisa berbeda hasilnya. Versinya disamakan dengan yang ada di image Langflow.
+rapidfuzz==3.14.5
+
+# pyarrow DIPATOK ke versi yang dibawa image Langflow, dengan alasan yang sama
+# seperti duckdb di atas. Lapis kamus pengenalan kolom menyeberangkan sampelnya
+# ke DuckDB lewat Arrow — terukur 17,9 detik -> 0,26 detik pada berkas 35 kolom.
+# Kalau versinya berbeda, sebagian selisih benchmark adalah selisih pyarrow.
+pyarrow==23.0.1
+
+# DuckDB memerlukan pytz saat mengubah nilai TIMESTAMPTZ jadi datetime Python.
+# Tanpa ini endpoint status membalas "Required module 'pytz' failed to import"
+# BEGITU ada job yang sudah punya created_at — jadi ia lolos dari smoke test
+# yang hanya menyentuh /health dan config, dan baru muncul di polling pertama.
+# Image Langflow membawanya diam-diam lewat pandas; di sini harus diminta.
+pytz==2025.2
+
+# Lapisan HTTP. Inilah satu-satunya bagian yang benar-benar menggantikan
+# Langflow.
+fastapi==0.121.2
+uvicorn[standard]==0.41.0
