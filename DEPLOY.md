@@ -131,6 +131,15 @@ cd ~/syncrono/service/synchrono-service && git pull
 
 **Tidak ada flow yang perlu dibangun ulang** — beda dengan Langflow.
 
+**Migrasi 008 (1 Okt 2026)** — hanya basis data, kode tidak berubah:
+
+```bash
+git pull && dc up -d skema-service && docker logs -f synchrono-skema-service   # "== 008_samakan_kueri_blocking.sql =="
+```
+
+Service tidak perlu di-restart: kueri blocking dibaca dari basis data di awal
+setiap job.
+
 **Pembaruan konfigurasi dinamis (30 Sep 2026)** mengubah `lib/`, `app/`,
 `components/`, dan menambah migrasi `006_config_dinamis` dan
 `007_blocking_semua_elemen`. Urutannya: migrasi dulu, baru service —

@@ -184,7 +184,7 @@ PATCH /api/v1/config/rules/3
 
 ## Deploy
 
-Dua migrasi, dijalankan otomatis oleh `skema-service` saat `docker compose up`
+Tiga migrasi, dijalankan otomatis oleh `skema-service` saat `docker compose up`
 (DEPLOY.md):
 
 - **`006_config_dinamis`** — kolom `bobot`, `elemen_kosong`, `bersih_nama` di
@@ -196,8 +196,13 @@ Dua migrasi, dijalankan otomatis oleh `skema-service` saat `docker compose up`
   daftar SELECT kueri blocking, per elemen dan hanya kalau belum ada (aman
   untuk kueri A/B server yang teksnya berbeda dari repo). Syarat JOIN tidak
   berubah.
+- **`008_samakan_kueri_blocking`** — kueri blocking lama di DB disamakan dengan
+  repo: penjaga NIK tepercaya di grade A/B, dan grade E tidak lagi mensyaratkan
+  status hidup kalau berkasnya tidak memuatnya. Ini MENGUBAH hasil grade E (di
+  sistem lama Pass 3 grade E praktis tidak pernah mendapat kandidat); grade A/B
+  pada data uji identik. Tidak berpengaruh pada pemasangan baru.
 
-Keduanya tidak mengubah hasil dengan nilai bawaan. Diuji 30 Sep 2026 pada
+006 dan 007 tidak mengubah hasil dengan nilai bawaan. Diuji 30 Sep 2026 pada
 52.493 baris × master 2 juta, grade A–E, kode lama vs baru: status, NIK, skor,
 metode, dan pola **identik di setiap baris**; satu-satunya selisih adalah
 snapshot satu baris yang NIK master-nya tercatat dua kali — pilihan barisnya

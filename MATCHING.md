@@ -249,7 +249,7 @@ Jaro-Winkler, bukan sebagai tanggal. Selisih 1 hari bernilai ±0,96.
 
 | | |
 |---|---|
-| **Blocking** | NIK incoming **=** NIK master. Versi di repo (`matching_queries.json`, sejak 23 Sep) hanya memakai NIK **tepercaya**: NIK tidak tepercaya tidak mendapat kandidat. **DB server 192.168.2.107 masih versi lama `ON i.nik = m.nik`** (semua NIK), karena seeder tidak menimpa isi yang sudah ada — lihat §8 |
+| **Blocking** | NIK incoming **=** NIK master. Versi di repo (`matching_queries.json`, sejak 23 Sep) hanya memakai NIK **tepercaya**: NIK tidak tepercaya tidak mendapat kandidat. DB server 192.168.2.107 sempat memakai versi lama `ON i.nik = m.nik` (semua NIK) karena seeder tidak menimpa isi yang sudah ada; migrasi 008 menyamakannya — lihat §8 |
 | **Skor** | `nama × 1,0` |
 | **Elemen kosong dihitung** | — (selalu 0) |
 | **Ambang** | AUTO ≥ 80,001 · REVIEW tidak pernah · selain itu UNMATCH |
@@ -258,7 +258,7 @@ Jaro-Winkler, bukan sebagai tanggal. Selisih 1 hari bernilai ±0,96.
 
 | | |
 |---|---|
-| **Blocking** | sama dengan A: NIK incoming = NIK master (penjaga NIK tepercaya hanya di versi repo; server masih versi lama) |
+| **Blocking** | sama dengan A: NIK incoming = NIK master, hanya NIK tepercaya |
 | **Skor** | `nama × 0,8 + tempat_lahir × 0,1 + nama_ibu × 0,1` |
 | **Elemen kosong dihitung** | nama, tempat lahir, nama ibu |
 | **Ambang** | AUTO: kosong ≤ 1 & ≥ 85 · REVIEW: kosong = 2 & 80–85 |
@@ -298,7 +298,7 @@ yang cocok, dan duplikat dibuang:
 
 | | |
 |---|---|
-| **Blocking** | status hidup sama (atau incoming tidak punya status hidup) **dan** 3 huruf pertama nama sama **dan** hari & bulan lahir sama (nama & tanggal wajib terisi) |
+| **Blocking** | status hidup sama (atau incoming tidak punya status hidup) **dan** 3 huruf pertama nama sama **dan** hari & bulan lahir sama (nama & tanggal wajib terisi). Versi sistem lama mensyaratkan status hidup sama TANPA pengecualian — berkas E tanpa kolom status hidup tidak pernah mendapat kandidat (terukur: AUTO 30.137 vs 47.818 pada 52.493 baris). Server 192.168.2.107 sempat memakai versi itu; migrasi 008 menyamakannya |
 | **Skor** | `nama × 0,5 + rata-rata(wilayah) × 0,3 + nama_ibu × 0,1 + tanggal_lahir × 0,1` |
 | **Rata-rata wilayah** | rata-rata Jaro-Winkler provinsi, kabupaten, kecamatan, kelurahan, **hanya yang terisi di kedua sisi**; tidak ada sama sekali → 0 |
 | **Elemen kosong dihitung** | nama, tanggal lahir, wilayah (kosong hanya kalau **keempatnya** kosong), nama ibu |
@@ -407,10 +407,11 @@ otomatis). Job membaca aturan **sekali di awal** dan mencatat versinya di
 
 **Yang berlaku adalah isi tabel di DB, bukan berkas seed.** Seeder memakai
 `ON CONFLICT DO NOTHING`, jadi perubahan di `matching_queries.json` tidak
-pernah menimpa DB yang sudah terisi. Terbaca 29 Sep: `matching_queries` di DB
-server 192.168.2.107 **tidak** memuat penjaga `nik_trusted` untuk grade A/B;
-berkas seed di repo memuatnya. Memeriksanya:
-`SELECT grade_code, matching_query LIKE '%nik_trusted%' FROM matching_queries;`
+pernah menimpa DB yang sudah terisi. Terbaca 1 Okt: `matching_queries` di DB
+server 192.168.2.107 masih versi sistem lama — tanpa penjaga `nik_trusted` di
+grade A/B, dan grade E mensyaratkan status hidup sama. Migrasi
+`008_samakan_kueri_blocking` menyamakan keduanya dengan repo. Memeriksanya:
+`SELECT grade_code, matching_query LIKE '%nik_trusted%', matching_query LIKE '%status_hidup_clean IS NULL%' FROM matching_queries;`
 
 ### Environment
 
@@ -443,7 +444,7 @@ Ambang pola review (0,70 dan 0,85) adalah konstanta di kode.
 | | Keadaan sekarang |
 |---|---|
 | **REVIEW memakai `=`** (bawaan) | REVIEW hanya untuk baris dengan tepat 2 elemen kosong yang sisanya cocok (hampir) sempurna; baris lengkap berskor tanggung jadi UNMATCH; grade A & C tidak pernah REVIEW (§4.1). Sama persis dengan kode lama, dan **dipertahankan**: acuan aturan adalah engine lama (1 Okt 2026) |
-| **Kueri blocking grade A/B di server ≠ repo** | server masih `ON i.nik = m.nik` (semua NIK, seperti sistem lama); repo memakai NIK tepercaya saja (§8) |
+| **Kueri blocking server ≠ repo** (diperbaiki 1 Okt 2026) | grade A/B server memakai semua NIK dan grade E mensyaratkan status hidup sama, seperti sistem lama; migrasi 008 menyamakannya dengan repo (§8) |
 | **Tanggal master harus valid** | tanggal master dibaca dengan `CAST(... AS DATE)`. Kalau kolomnya teks dan ada satu nilai tidak valid/kosong (`''`, `31-01-1990`), **seluruh job gagal**. Kode lama mengosongkan nilai itu saja. Master server saat ini aman (job 2 juta baris sukses) |
 | **Gelar tidak dibuang sebelum skor** (bawaan) | nama dibandingkan setelah `lower`/`trim` saja. `ENDANG, S.E.` vs `ENDANG` = 0,90, bukan 1,0. Sejak 30 Sep bisa dinyalakan per grade: `matching.nameCleaning` (gelar, bin/binti, singkatan "M.") — belum dinyalakan, menunggu keputusan |
 | **CONFLICT di Pass 3 hanya untuk seri persis** (bawaan) | selisih seri 0. Spesifikasi menyebut "seri/sangat dekat" tanpa angka; bisa diatur lewat `matching.conflictEpsilon` |
@@ -488,7 +489,8 @@ Pembanding: `data-matching/processing/matching_service_new.py`
 | **Seri / CONFLICT** | tidak ada status CONFLICT; saat skor seri, kandidat yang **lebih dulu** muncul di join yang menang (bergantung urutan) | 2 kandidat teratas; seri antara 2 NIK berbeda → **CONFLICT** + `rank_conflict` | tidak ada lagi pemenang "kebetulan" |
 | **Status** | angka 1/2/3 (cocok/review/tidak cocok) di tabel `institution`, baris review juga ke `manual_review` | `AUTO/REVIEW/UNMATCH/CONFLICT` + `method` + `pattern_group` + snapshot incoming & master, di `syncrono_matching_result` portal | portal bisa menampilkan cara & alasan tiap keputusan |
 | **UNMATCH** | tetap menyimpan `nik_master` kandidat terbaik (kecuali tanpa kandidat) | `master_nik` & snapshot master **kosong** (spesifikasi §4.1); skornya tetap disimpan | portal tidak menunjuk orang yang justru ditolak |
-| **Blocking grade A/B** | `ON i.nik = m.nik` (semua NIK) | repo: hanya NIK **tepercaya**. **Server masih versi lama** (§8) | di server perilakunya sama dengan lama; akan berubah kalau DB server diperbarui |
+| **Blocking grade A/B** | `ON i.nik = m.nik` (semua NIK) | hanya NIK **tepercaya** (migrasi 008 untuk DB lama) | pada data uji server: hasil identik |
+| **Blocking grade E** | status hidup harus sama — berkas tanpa kolom status hidup tidak dapat kandidat | status hidup hanya disyaratkan kalau berkasnya memuatnya | AUTO 30.137 → 47.818 pada data uji |
 | **Jenis kelamin master** | hanya `lower()` — **cacat yang sama** | dinormalisasi ke `l`/`p` sejak 28 Sep 2026 | dengan master `LAKI-LAKI`/`PEREMPUAN`, engine lama pun tidak menemukan kandidat di grade C/D (blocking lewat jenis kelamin) |
 | **Tanggal master tidak valid** | `strptime` longgar → nilai itu kosong | `CAST AS DATE` → **job gagal** | service lebih rapuh terhadap master kotor (§9) |
 | **Grade 6 (F)** | didukung lewat **custom mapping**: pengguna memasangkan kolom sendiri + bobot, blocking disusun dinamis (NIK, atau jenis kelamin / 3 huruf nama / hari-bulan lahir) | **ditolak** ("elemen tidak cukup") | fitur grade 6 belum ada di service |
