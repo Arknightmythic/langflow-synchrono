@@ -140,6 +140,17 @@ git pull && dc up -d skema-service && docker logs -f synchrono-skema-service   #
 Service tidak perlu di-restart: kueri blocking dibaca dari basis data di awal
 setiap job.
 
+**Opsi `dateMatch` + migrasi 009 (1 Okt 2026)** — `lib/` berubah, plus satu
+kolom baru:
+
+```bash
+git pull && dc up -d skema-service && docker logs -f synchrono-skema-service   # "== 009_cocok_tanggal.sql =="
+dc restart synchrono-service      # lib/ di-mount: cukup restart
+```
+
+Tidak mengubah hasil apa pun sampai `matching.dateMatch` dipasang lewat API
+(KONFIGURASI.md).
+
 **Pembaruan konfigurasi dinamis (30 Sep 2026)** mengubah `lib/`, `app/`,
 `components/`, dan menambah migrasi `006_config_dinamis` dan
 `007_blocking_semua_elemen`. Urutannya: migrasi dulu, baru service —

@@ -69,9 +69,9 @@ import os
 import duckdb
 
 from _jobs import jalankan_pg, q
-from _shared import (BERSIH_NAMA_BAWAAN, BOBOT_BAWAAN, ELEMEN_SKOR, MISSING,
-                     SQL_MACRO, kolom_elemen, kolom_kurang, sql_view_incoming,
-                     sql_view_master)
+from _shared import (BERSIH_NAMA_BAWAAN, BOBOT_BAWAAN, COCOK_TANGGAL, ELEMEN_SKOR,
+                     MISSING, SQL_MACRO, kolom_elemen, kolom_kurang,
+                     sql_view_incoming, sql_view_master)
 
 # Urutan ini dipakai di seluruh muatan API.
 ELEMEN = ["nik", "nama", "tempat_lahir", "tanggal_lahir",
@@ -173,7 +173,8 @@ def _baca_pg(con, sql: str):
         try:
             return con.execute(sql)
         except Exception as e:
-            if any(k in str(e) for k in ("bobot", "engine_config", "config_")):
+            if any(k in str(e) for k in ("bobot", "engine_config", "config_",
+                                         "cocok_tanggal")):
                 raise RuntimeError(
                     "Tabel/kolom konfigurasi dinamis belum ada di basis data engine. "
                     "Jalankan migrasi: python infra/skema/migrate.py") from e
@@ -233,7 +234,7 @@ def _baca_aturan(con) -> dict[int, dict]:
     """grade_rules per grade, kolom JSON sudah diurai dan diisi bawaan."""
     kur = _baca_pg(con, f"""
         SELECT grade_code, {', '.join(KOLOM_ATURAN)},
-               bobot, elemen_kosong, bersih_nama,
+               bobot, elemen_kosong, bersih_nama, cocok_tanggal,
                CAST(diubah_at AS VARCHAR) AS diubah_at, diubah_oleh
           FROM pg.public.grade_rules""")
     hasil = {}
@@ -245,6 +246,9 @@ def _baca_aturan(con) -> dict[int, dict]:
                               else (list(MISSING[g]) if g in MISSING else None))
         r["bersih_nama"] = ({**BERSIH_NAMA_BAWAAN, **(_json(r["bersih_nama"]) or {})}
                             if g in GRADE_MATCHING else None)
+        # NULL = bawaan engine lama (Jaro-Winkler atas teks tanggal).
+        r["cocok_tanggal"] = ((r["cocok_tanggal"] or "similarity")
+                              if g in GRADE_MATCHING else None)
         hasil[g] = r
     return hasil
 
@@ -338,6 +342,7 @@ def aturan_matching(con, grade: int) -> dict:
         "bobot": atr["bobot"],
         "elemen_kosong": atr["elemen_kosong"],
         "bersih_nama": atr["bersih_nama"],
+        "cocok_tanggal": atr["cocok_tanggal"],
         "kueri": kueri,
         "epsilon": float(glob["matching.conflictEpsilon"]),
         "kontra_jw": float(glob["matching.contradictionJw"]),
@@ -433,8 +438,9 @@ def _susun_matching(gid: int, atr: dict, kueri: str | None) -> dict:
         m["weights"] = {f: b for f, b in atr["bobot"]}
         m["missingElements"] = list(atr["elemen_kosong"])
         m["nameCleaning"] = dict(atr["bersih_nama"])
+        m["dateMatch"] = atr["cocok_tanggal"]
     else:
-        m["weights"] = m["missingElements"] = m["nameCleaning"] = None
+        m["weights"] = m["missingElements"] = m["nameCleaning"] = m["dateMatch"] = None
     m["blocking"] = {
         "query": kueri,
         "editable": False,
@@ -736,6 +742,10 @@ def validasi_matching(gid: int, m: dict) -> list[str]:
                 f"ini (kolom {', '.join(kol)} tidak ada), jadi tidak bisa diberi bobot "
                 f"atau dihitung kosong. Kueri blocking diubah lewat basis data/migrasi "
                 f"(tabel matching_queries).")
+
+    if m.get("dateMatch") not in COCOK_TANGGAL:
+        masalah.append(f"Grade {g}: dateMatch = {m.get('dateMatch')!r}, pilih salah satu "
+                       f"dari {list(COCOK_TANGGAL)}.")
 
     bersih = m.get("nameCleaning")
     if not isinstance(bersih, dict):
@@ -1072,10 +1082,18 @@ def _kumpulkan_matching(bagian: dict | None, grade_id: int,
             keluar[PETA_MATCHING[kunci]] = nilai
             patch[kunci] = nilai
             continue
+        if kunci == "dateMatch":
+            if grade_id not in GRADE_MATCHING:
+                raise ValueError(f"Grade {HURUF.get(grade_id)} tidak dicocokkan, jadi tidak "
+                                 f"punya `matching.dateMatch`.")
+            # null = kembali ke bawaan (similarity); nilai lain diperiksa validasi.
+            keluar["cocok_tanggal"] = nilai
+            patch[kunci] = "similarity" if nilai is None else nilai
+            continue
         if kunci not in PETA_MATCHING_JSON:
             raise ValueError(
                 f"Field 'matching.{kunci}' tidak dikenali. Yang tersedia: "
-                f"{sorted(list(PETA_MATCHING) + list(PETA_MATCHING_JSON))}")
+                f"{sorted(list(PETA_MATCHING) + list(PETA_MATCHING_JSON) + ['dateMatch'])}")
         if grade_id not in GRADE_MATCHING:
             raise ValueError(
                 f"Grade {HURUF.get(grade_id)} tidak dicocokkan, jadi tidak punya "
@@ -1214,6 +1232,10 @@ def _snapshot(kriteria: dict, pita: dict, aturan: dict, kueri: dict,
                      "weights": a["bobot"],
                      "missingElements": a["elemen_kosong"],
                      "nameCleaning": a["bersih_nama"],
+                     # Hanya kalau bukan bawaan: versi konfigurasi yang tidak
+                     # memakainya tetap sama dengan sebelum opsi ini ada.
+                     **({"dateMatch": a["cocok_tanggal"]}
+                        if a.get("cocok_tanggal") not in (None, "similarity") else {}),
                      "blockingQuery": kueri.get(g)}
             for g, a in sorted(aturan.items())
         },

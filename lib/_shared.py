@@ -381,7 +381,21 @@ def _pasangan(field: str) -> tuple[str, str]:
     return kiri, kanan
 
 
-def _suku_skor(field: str) -> str:
+# Cara menilai tanggal lahir di skor Pass 3 (`matching.dateMatch` per grade).
+#
+#   similarity  Jaro-Winkler atas teks yyyy-mm-dd — engine lama, bawaan. Beda
+#               1 hari, hari/bulan tertukar, maupun beda TAHUN tetap bernilai
+#               ±0,9. Karena blocking C/D/E sudah mensyaratkan hari & bulan
+#               sama, orang LAIN bernama sama yang lahir di tahun berbeda nyaris
+#               tidak dihukum dan lolos AUTO (terukur dengan data uji ber-kunci
+#               jawaban, test-data-csv/uji-master-ae).
+#   exact       1 kalau tanggalnya sama persis, selain itu 0 — seperti V1 engine
+#               lama untuk grade D/E. Tanggal bukan teks: 12 dan 13 Maret bukan
+#               "hampir sama", melainkan dua hari yang berbeda.
+COCOK_TANGGAL = ("similarity", "exact")
+
+
+def _suku_skor(field: str, cocok_tanggal: str = "similarity") -> str:
     """Kemiripan satu elemen, 0-1. Sisi yang kosong bernilai 0 (macro `j`)."""
     if field == "wilayah":
         # Rata-rata tingkat yang terisi DI KEDUA SISI; tidak ada satu pun -> 0.
@@ -395,6 +409,10 @@ def _suku_skor(field: str) -> str:
                 f"x -> x IS NOT NULL)), 0.0)")
     kiri, kanan = _pasangan(field)
     if field == "tanggal_lahir":
+        if cocok_tanggal == "exact":
+            # Kosong di salah satu sisi -> perbandingan NULL -> 0, sama seperti `j`.
+            return (f"CAST(CASE WHEN CAST({kiri} AS DATE) = CAST({kanan} AS DATE) "
+                    f"THEN 1.0 ELSE 0.0 END AS DOUBLE)")
         kiri = f"CAST({kiri} AS VARCHAR)"
         kanan = f"CAST({kanan} AS VARCHAR)"
     return f"j({kiri}, {kanan})"
@@ -435,15 +453,16 @@ def _pecahan(persen) -> str:
     return repr(float(persen) / 100)
 
 
-def sql_skor(grade: int, bobot: list | None = None) -> str:
+def sql_skor(grade: int, bobot: list | None = None,
+             cocok_tanggal: str = "similarity") -> str:
     """
     Ekspresi SQL skor 0-100: jumlah kemiripan elemen x bobotnya.
 
     `bobot` = [(elemen, persen), ...] dari konfigurasi grade; None = bawaan.
-    Elemen berbobot 0 dilewati.
+    Elemen berbobot 0 dilewati. `cocok_tanggal` lihat COCOK_TANGGAL.
     """
     isi = BOBOT_BAWAAN[grade] if bobot is None else bobot
-    suku = [f"{_suku_skor(f)} * {_pecahan(b)}" for f, b in isi if b]
+    suku = [f"{_suku_skor(f, cocok_tanggal)} * {_pecahan(b)}" for f, b in isi if b]
     if not suku:
         return "0.0"
     return "(" + " + ".join(suku) + ") * 100"

@@ -393,6 +393,7 @@ Rincian API dan contoh muatan: [KONFIGURASI.md](KONFIGURASI.md).
 | `grade_rules.bobot` | bobot skor per elemen, persen, **berurutan** (§5) | API — `matching.weights` |
 | `grade_rules.elemen_kosong` | elemen yang dihitung `missing_count` (§4.1) | API — `matching.missingElements` |
 | `grade_rules.bersih_nama` | pembersihan nama: gelar, bin/binti, singkatan "M." | API — `matching.nameCleaning` |
+| `grade_rules.cocok_tanggal` | cara menilai tanggal lahir: `similarity` (bawaan) / `exact` | API — `matching.dateMatch` |
 | `engine_config` | selisih seri (`matching.conflictEpsilon`), ambang nama ibu bertentangan (`matching.contradictionJw`) | API — `PATCH /api/v1/config/global` |
 | `matching_queries` | kueri blocking per grade (§5). Sejak migrasi 007 setiap kueri membawa kolom keenam elemen (hanya daftar SELECT yang bertambah; syarat JOIN tetap), jadi elemen apa pun bisa diberi bobot | hanya DB/seed. API **menampilkannya** (`matching.blocking`, `matching.availableElements`), tidak mengubahnya |
 | `config_riwayat`, `config_versi` | jejak perubahan & versi konfigurasi per job | otomatis |
@@ -450,7 +451,7 @@ Ambang pola review (0,70 dan 0,85) adalah konstanta di kode.
 | **CONFLICT di Pass 3 hanya untuk seri persis** (bawaan) | selisih seri 0. Spesifikasi menyebut "seri/sangat dekat" tanpa angka; bisa diatur lewat `matching.conflictEpsilon` |
 | **`customRuleIds` & `rulePreset` diabaikan** | blocking ditentukan grade, bukan pilihan aturan dari portal |
 | **Kueri grade D & E memuat `!= '`** | di beberapa tempat tertulis `!= '` (satu tanda petik), sehingga dua syarat "master tidak kosong" ikut terbaca sebagai literal teks. Dampaknya praktis nihil, karena syarat `LEFT(..., 3) = LEFT(..., 3)` sesudahnya sudah menolak nilai kosong. Kueri disalin apa adanya dari sistem lama |
-| **Tanggal dibandingkan sebagai teks** | Jaro-Winkler atas `yyyy-mm-dd`: selisih 1 hari ≈ 0,96, tertukar hari/bulan juga ≈ 0,96 |
+| **Tanggal dibandingkan sebagai teks** (bawaan) | Jaro-Winkler atas `yyyy-mm-dd`: selisih 1 hari ≈ 0,96, tertukar hari/bulan juga ≈ 0,96, beda tahun ≈ 0,9. Diukur dengan data uji ber-kunci jawaban (`test-data-csv/uji-master-ae`): sumber utama AUTO salah orang di grade C/D/E — orang lain bernama sama, hari & bulan lahir sama (syarat blocking), tahun berbeda. Sejak 1 Okt 2026 bisa diganti lewat `matching.dateMatch: "exact"` (sama persis = 1, selain itu 0): ketepatan AUTO C 82,6% → 92,2%, D 88,1% → 96,5%, E 88,4% → 95,7% |
 | **NIK kembar di master → snapshot bisa orang yang salah** | ditemukan 30 Sep 2026. Snapshot & reasoning mengambil baris master dengan `DISTINCT ON (nik)` tanpa urutan; kalau satu NIK tercatat untuk dua orang, baris yang terpilih acak antar-jalan. Status, NIK, dan skornya benar — yang bisa keliru hanya data master yang ditampilkan dan kalimat reasoning-nya (contoh: NIK `3580220211083231` = RIZKI PRATAMA dan AHMAD SANTOSO di master server; kode lama 4× dijalankan: 2× masing-masing). Belum diperbaiki |
 | **Diperbaiki 28 Sep 2026** | normalisasi jenis kelamin master (§2.2). Pada master `LAKI-LAKI`/`PEREMPUAN`: grade B Pass 1/2 dari 0/0 menjadi 41.597/1.882; grade C/D dari 0 kandidat (semua UNMATCH) menjadi ±45 ribu AUTO dari 52.493 baris |
 

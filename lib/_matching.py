@@ -240,6 +240,7 @@ def ringkas_aturan(grade: int, aturan: dict, versi: str) -> dict:
         "weights": {f: b for f, b in aturan["bobot"]},
         "missingElements": aturan["elemen_kosong"],
         "nameCleaning": aturan["bersih_nama"],
+        "dateMatch": aturan.get("cocok_tanggal"),
         "conflictEpsilon": aturan["epsilon"],
         "contradictionJw": aturan["kontra_jw"],
     }
@@ -402,7 +403,7 @@ def pass3(con, grade: int, aturan: dict, kueri: str) -> None:
     Bobot (`bobot`), elemen kosong (`elemen_kosong`), dan selisih seri
     (`epsilon`) dari konfigurasi grade; yang tidak ada memakai bawaan.
     """
-    skor = sql_skor(grade, aturan.get("bobot"))
+    skor = sql_skor(grade, aturan.get("bobot"), aturan.get("cocok_tanggal") or "similarity")
     kosong = sql_missing(grade, aturan.get("elemen_kosong"))
     eps = float(aturan.get("epsilon", 0.0))
     con.execute("""

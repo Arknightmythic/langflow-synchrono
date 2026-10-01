@@ -22,6 +22,7 @@ Cara kerja matching yang memakai angka-angka ini: [MATCHING.md](MATCHING.md).
 | `matching.weights` | **bobot skor per elemen, dalam persen** | A–E | `grade_rules.bobot` |
 | `matching.missingElements` | **elemen yang dihitung "kosong"** untuk aturan AUTO/REVIEW | A–E | `grade_rules.elemen_kosong` |
 | `matching.nameCleaning` | **pembersihan nama sebelum dibandingkan** | A–E | `grade_rules.bersih_nama` |
+| `matching.dateMatch` | **cara menilai tanggal lahir**: `similarity` (Jaro-Winkler atas teks, bawaan engine lama) atau `exact` (sama persis = 1, selain itu 0) | A–E | `grade_rules.cocok_tanggal` |
 | `matching.blocking` | kueri blocking — **hanya dibaca** | A–E | `matching_queries` |
 | `matching.availableElements` | dihitung: elemen yang bisa diberi bobot / dihitung kosong dengan kueri blocking grade itu | A–E | — |
 | `matching.analysis` | dihitung: skor tertinggi per jumlah kosong + peringatan | A–E | — |
@@ -164,6 +165,13 @@ PATCH /api/v1/config/rules/3
  "updatedBy": "nama-operator", "dryRun": true}
 ```
 
+Tanggal lahir harus sama persis di grade C (`null` = kembali ke `similarity`):
+
+```json
+PATCH /api/v1/config/rules/3
+{"matching": {"dateMatch": "exact"}, "updatedBy": "nama-operator", "dryRun": true}
+```
+
 Menyalakan pembersihan gelar di grade B:
 
 ```json
@@ -184,7 +192,7 @@ PATCH /api/v1/config/rules/3
 
 ## Deploy
 
-Tiga migrasi, dijalankan otomatis oleh `skema-service` saat `docker compose up`
+Empat migrasi, dijalankan otomatis oleh `skema-service` saat `docker compose up`
 (DEPLOY.md):
 
 - **`006_config_dinamis`** — kolom `bobot`, `elemen_kosong`, `bersih_nama` di
@@ -201,6 +209,8 @@ Tiga migrasi, dijalankan otomatis oleh `skema-service` saat `docker compose up`
   status hidup kalau berkasnya tidak memuatnya. Ini MENGUBAH hasil grade E (di
   sistem lama Pass 3 grade E praktis tidak pernah mendapat kandidat); grade A/B
   pada data uji identik. Tidak berpengaruh pada pemasangan baru.
+- **`009_cocok_tanggal`** — kolom `cocok_tanggal` (`matching.dateMatch`). NULL =
+  bawaan `similarity`, jadi tidak mengubah apa pun sampai dipasang lewat API.
 
 006 dan 007 tidak mengubah hasil dengan nilai bawaan. Diuji 30 Sep 2026 pada
 52.493 baris × master 2 juta, grade A–E, kode lama vs baru: status, NIK, skor,
