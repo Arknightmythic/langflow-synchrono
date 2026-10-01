@@ -110,6 +110,20 @@ walaupun NIK di berkas rusak, tidak tepercaya, atau tidak ada.
 | Hasil | `AUTO` skor 100 · `CONFLICT` kalau cocok dengan **lebih dari satu NIK** di master · `REVIEW` kalau NIK berkas ternyata milik **orang lain** di master (aturan pengaman 1) |
 | `method` | `PASS2_NAMA_TGL_IBU` |
 
+**Urutan kandidat CONFLICT.** Kalau beberapa orang di master identik (nama,
+tanggal lahir, dan nama ibu sama), engine **tidak** memilih — NIK yang hanya
+mirip bukan bukti; manusia yang memutuskan. Tapi portal hanya membandingkan
+baris dengan kandidat pertama (`master_nik` / `master_snapshot`), jadi kandidat
+diurutkan dari yang paling masuk akal:
+
+1. NIK yang berbeda **≤ 2 digit** dari NIK berkas, di posisi yang sama
+   (`BEDA_DIGIT_NIK` di `lib/_matching.py`; panjang NIK harus sama) —
+   kemungkinan salah ketik;
+2. tempat lahir sama persis;
+3. NIK terkecil (supaya hasilnya tetap sama setiap dijalankan).
+
+Kandidat kedua disebut di reasoning. Statusnya tetap `CONFLICT`.
+
 **Aturan pengaman 1.** Pass 2 bisa menemukan orang X lewat identitasnya,
 padahal NIK di berkas terdaftar atas nama orang lain di master. Barisnya bisa X
 (menurut identitas) atau pemilik NIK itu (menurut NIK), jadi manusia yang

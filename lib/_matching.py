@@ -355,8 +355,25 @@ def pass1(con, kontra_jw: float = 0.80) -> None:
     """)
 
 
+# Urutan kandidat CONFLICT Pass 2: NIK kandidat yang berbeda paling banyak
+# sekian digit dari NIK berkas ditaruh di depan.
+BEDA_DIGIT_NIK = 2
+
+
 def pass2(con) -> None:
-    """Nama + tanggal lahir + nama ibu persis, untuk yang belum ketemu."""
+    """
+    Nama + tanggal lahir + nama ibu persis, untuk yang belum ketemu.
+
+    Bisa ada lebih dari satu orang di master dengan nama, tanggal lahir, dan
+    nama ibu identik: CONFLICT, manusia yang memilih. NIK yang hanya mirip
+    TIDAK memecah seri — NIK yang tidak persis sama bukan bukti.
+
+    Kandidat diurutkan dari yang paling masuk akal — NIK berbeda <=
+    BEDA_DIGIT_NIK digit dari NIK berkas, lalu tempat lahir sama, lalu NIK —
+    karena portal hanya membandingkan baris dengan kandidat pertama
+    (`master_nik`/`master_snapshot`). Tanpa urutan ini yang tampil adalah NIK
+    terkecil, yang bisa saja orang dengan tempat lahir berbeda.
+    """
     con.execute(f"""
         CREATE OR REPLACE TABLE p2 AS
         WITH cocok AS (
@@ -366,7 +383,14 @@ def pass2(con) -> None:
                    -- di nik_cocok, yang hanya memuat NIK tepercaya) tapi orang
                    -- yang ditemukan lewat identitas BUKAN pemiliknya.
                    (i.id IN (SELECT id FROM nik_cocok) AND m.nik <> i.nik)
-                       AS nik_milik_lain
+                       AS nik_milik_lain,
+                   -- CASE, bukan AND: hamming() galat untuk panjang berbeda, dan
+                   -- AND tidak menjamin sisi kanannya dilewati.
+                   CASE WHEN length(i.nik) = length(m.nik)
+                        THEN hamming(i.nik, m.nik) <= {BEDA_DIGIT_NIK}
+                        ELSE FALSE END AS nik_dekat,
+                   COALESCE(nullif(i.tempat_lahir_clean, '')
+                            = m.tempat_lahir_master_clean, FALSE) AS tempat_sama
             FROM incoming_semua i
             JOIN master_df m
               ON  i.nama_clean = m.nama_master_clean
@@ -376,13 +400,26 @@ def pass2(con) -> None:
               AND nullif(i.nama_clean, '') IS NOT NULL
               AND i.tanggal_lahir_clean IS NOT NULL
               AND nullif(i.nama_ibu_clean, '') IS NOT NULL
+        ),
+        -- Satu baris per (incoming, NIK): master bisa memuat NIK yang sama dua kali.
+        per_nik AS (
+            SELECT id, nik, bool_or(nik_dekat) AS dekat, bool_or(tempat_sama) AS tempat_sama,
+                   bool_or(nik_milik_lain) AS nik_milik_lain
+            FROM cocok
+            WHERE NOT bertentangan
+            GROUP BY id, nik
+        ),
+        urut AS (
+            SELECT id, count(*) AS n_kandidat,
+                   list(nik ORDER BY dekat DESC, tempat_sama DESC, nik) AS calon,
+                   bool_or(nik_milik_lain) AS nik_milik_lain
+            FROM per_nik GROUP BY id
         )
-        SELECT id, count(DISTINCT nik) AS n_kandidat, min(nik) AS nik,
-               max(nik) AS nik_2,   -- kandidat kedua, bila CONFLICT
-               bool_or(nik_milik_lain) AS nik_milik_lain
-        FROM cocok
-        WHERE NOT bertentangan
-        GROUP BY id
+        SELECT id, n_kandidat,
+               calon[1] AS nik,
+               calon[2] AS nik_2,   -- kandidat kedua, bila CONFLICT
+               nik_milik_lain
+        FROM urut
     """)
 
 
