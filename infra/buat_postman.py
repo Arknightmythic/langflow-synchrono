@@ -252,6 +252,51 @@ def koleksi() -> dict:
                 "score": {"min": 72}, "matching": {"autoScoreMin": 86.0}}, ensure_ascii=False),
              "dry_run": False},
             "Validasi + daftar perubahan tanpa menulis. Hapus `dryRun` untuk benar-benar menyimpan."),
+        run("2d. Ubah bobot & pembersihan nama grade C — dryRun", "config-rules-update",
+            {"payload": json.dumps({
+                "gradeId": 3, "updatedBy": "postman", "dryRun": True,
+                "matching": {"weights": {"nama": 60, "tanggal_lahir": 25, "tempat_lahir": 15},
+                             "nameCleaning": {"titles": True}}}, ensure_ascii=False),
+             "dry_run": False},
+            "`weights` MENGGANTI seluruh bobot (harus berjumlah 100, persen); "
+            "`nameCleaning` digabung per sakelar. Lihat `warnings` dan "
+            "`after.matching.analysis` untuk akibatnya."),
+        run("2e. Nilai global — dryRun", "config-rules-update",
+            {"payload": json.dumps({
+                "global": {"matching": {"conflictEpsilon": 0.5}},
+                "updatedBy": "postman", "dryRun": True}, ensure_ascii=False),
+             "dry_run": False},
+            "Kunci `global` tanpa `gradeId`: bobot skor mutu grading, kombinasi grade E, "
+            "selisih seri, ambang nama ibu bertentangan. `null` = kembali ke env/bawaan."),
+        permintaan("2f. REST — baca semua (+ configVersion)", "GET", "/api/v1/config/rules",
+                   header={"x-api-key": "{{api_key}}"},
+                   deskripsi="Sama isinya dengan 2a, tanpa selubung. `configVersion` "
+                             "tersimpan ke variabel untuk 2j.",
+                   tes=["pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                        "var d = pm.response.json();",
+                        "if (d.configVersion) pm.collectionVariables.set('config_version', "
+                        "d.configVersion);"]),
+        permintaan("2g. REST — ubah bobot grade C, dryRun", "PATCH",
+                   "/api/v1/config/rules/3",
+                   header={"x-api-key": "{{api_key}}", "Content-Type": "application/json"},
+                   badan=json_badan({"matching": {"weights": {"nama": 60, "tanggal_lahir": 25,
+                                                              "tempat_lahir": 15}},
+                                     "updatedBy": "postman", "dryRun": True}),
+                   deskripsi="400 kalau bentuknya salah, 409 kalau validasi menolak "
+                             "(mis. bobot tidak berjumlah 100)."),
+        permintaan("2h. REST — nilai global, dryRun", "PATCH", "/api/v1/config/global",
+                   header={"x-api-key": "{{api_key}}", "Content-Type": "application/json"},
+                   badan=json_badan({"matching": {"conflictEpsilon": 0.5},
+                                     "updatedBy": "postman", "dryRun": True})),
+        permintaan("2i. REST — riwayat perubahan", "GET", "/api/v1/config/history",
+                   header={"x-api-key": "{{api_key}}"}, query=[("limit", "20")],
+                   deskripsi="Siapa mengubah apa, kapan, dari berapa ke berapa. "
+                             "`gradeId` untuk menyaring satu grade."),
+        permintaan("2j. REST — isi satu versi konfigurasi", "GET",
+                   "/api/v1/config/versions/{{config_version}}",
+                   header={"x-api-key": "{{api_key}}"},
+                   deskripsi="Konfigurasi lengkap yang dipakai job ber-`configVersion` itu "
+                             "(hasil grading, callback & blocking_metrics matching)."),
     ]}
 
     matching = {"name": "3. Matching + reasoning", "description": (
@@ -338,6 +383,7 @@ def koleksi() -> dict:
             {"key": "api_key_id", "value": ""},
             {"key": "grading_job_id", "value": ""},
             {"key": "matching_job_id", "value": ""},
+            {"key": "config_version", "value": ""},
         ],
         "item": [auth, grading, config, matching, sehat, rest, bersih],
     }

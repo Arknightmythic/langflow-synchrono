@@ -43,6 +43,13 @@ POLA_GELAR_BELAKANG = r",\s*[a-z][a-z.]{0,14}\.?\s*$"
 
 POLA_PATRONIMIK = r"\s+(bin|binti|ibnu|binte)\s+.*$"
 
+# Singkatan "Muhammad" di AWAL nama: "M. Rizki", "Muh Rizki", "Moch. Rizki".
+# Hanya kata PERTAMA — "Rina M." di belakang lebih mungkin inisial nama lain
+# (Marlina, Maharani) daripada Muhammad. Varian ejaan lengkap ("Mohammad",
+# "Muhamad") tidak disentuh: itu urusan Jaro-Winkler, bukan singkatan.
+SINGKATAN_MUHAMMAD = ["mochd", "moch", "muhd", "muh", "moh", "mhd", "mch", "m"]
+POLA_SINGKATAN = rf"^({'|'.join(SINGKATAN_MUHAMMAD)})\.?\s+"
+
 
 def _pola_depan() -> str:
     """Satu regex untuk semua gelar depan, boleh beruntun."""
@@ -58,18 +65,36 @@ def sql_bersih(kolom: str) -> str:
     Satu ekspresi untuk seluruh kolom sekaligus. Tidak ada pemrosesan per baris
     di Python — berkas 200 ribu baris selesai dalam satu pemindaian.
     """
-    mentah = f"lower(trim(CAST({kolom} AS VARCHAR)))"
+    return sql_bersih_pilih(kolom, gelar=True, patronimik=True, singkatan=False)
 
-    # 1. gelar belakang, dua kali untuk "..., S.Pd., M.Kom."
-    tanpa_belakang = (f"regexp_replace(regexp_replace({mentah}, "
-                      f"'{POLA_GELAR_BELAKANG}', ''), "
-                      f"'{POLA_GELAR_BELAKANG}', '')")
-    # 2. gelar depan
-    tanpa_depan = f"regexp_replace({tanpa_belakang}, '{_pola_depan()}', '')"
-    # 3. patronimik
-    tanpa_bin = f"regexp_replace({tanpa_depan}, '{POLA_PATRONIMIK}', '')"
+
+def sql_bersih_pilih(kolom: str, gelar: bool, patronimik: bool,
+                     singkatan: bool) -> str:
+    """
+    Seperti `sql_bersih`, tapi tiap bagian bisa dinyalakan sendiri.
+
+    Dipakai matching, yang pembersihannya diatur per grade lewat konfigurasi
+    (`nameCleaning`). Grading tetap memakai `sql_bersih` — ketiganya menyala
+    kecuali singkatan, dan ekspresinya persis sama dengan sebelum fungsi ini ada.
+    """
+    mentah = f"lower(trim(CAST({kolom} AS VARCHAR)))"
+    x = mentah
+
+    if gelar:
+        # 1. gelar belakang, dua kali untuk "..., S.Pd., M.Kom."
+        x = (f"regexp_replace(regexp_replace({x}, "
+             f"'{POLA_GELAR_BELAKANG}', ''), "
+             f"'{POLA_GELAR_BELAKANG}', '')")
+        # 2. gelar depan
+        x = f"regexp_replace({x}, '{_pola_depan()}', '')"
+    if patronimik:
+        # 3. patronimik
+        x = f"regexp_replace({x}, '{POLA_PATRONIMIK}', '')"
+    if singkatan:
+        # Sesudah gelar dibuang: "H. M. Rizki" -> "m. rizki" -> "muhammad rizki".
+        x = f"regexp_replace({x}, '{POLA_SINGKATAN}', 'muhammad ')"
     # 4. rapikan spasi ganda
-    rapi = f"trim(regexp_replace({tanpa_bin}, '\\s+', ' ', 'g'))"
+    rapi = f"trim(regexp_replace({x}, '\\s+', ' ', 'g'))"
 
     # Kalau pembersihan menyisakan kosong, kembalikan nilai mentahnya.
     return f"CASE WHEN nullif({rapi}, '') IS NULL THEN {mentah} ELSE {rapi} END"

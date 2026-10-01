@@ -131,6 +131,21 @@ cd ~/syncrono/service/synchrono-service && git pull
 
 **Tidak ada flow yang perlu dibangun ulang** — beda dengan Langflow.
 
+**Pembaruan konfigurasi dinamis (30 Sep 2026)** mengubah `lib/`, `app/`,
+`components/`, dan menambah migrasi `006_config_dinamis` dan
+`007_blocking_semua_elemen`. Urutannya: migrasi dulu, baru service —
+
+```bash
+dc up -d skema-service && docker logs -f synchrono-skema-service   # 006 & 007 diterapkan, lalu selesai
+dc up -d --build synchrono-service
+```
+
+Migrasi mengisi bobot/elemen kosong dengan nilai yang selama ini berlaku dan
+hanya MENAMBAH kolom keluaran kueri blocking, jadi hasil matching tidak berubah
+sampai ada yang mengubah konfigurasi lewat API (KONFIGURASI.md). Periksa:
+`GET /api/v1/config/rules` memuat `configVersion`, dan setiap grade A–E punya
+`matching.weights` serta `matching.availableElements` berisi keenam elemen.
+
 ---
 
 ## Pindah dari susunan lama (dua checkout + overlay)

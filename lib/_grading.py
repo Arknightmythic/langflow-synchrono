@@ -37,7 +37,7 @@ import re
 import socket
 import time
 
-from _config import baca_kriteria
+from _config import KOMBINASI_E, baca_kriteria, nilai_global, rekam_versi
 from _nama import sql_ada_gelar, sql_ada_patronimik, sql_bersih
 from _normalisasi import ALIAS, bangun_view, petakan_kolom  # noqa: F401
 import _wilayah
@@ -1111,15 +1111,22 @@ def skor_dan_grade(s: dict) -> dict:
     ada = {e: e in peta for e in ENAM_ELEMEN}
     rate = {e: (m[f"isi_{e}"] / total if ada[e] else 0.0) for e in ENAM_ELEMEN}
 
+    # Kombinasi grade E dan bobot skor mutu adalah konfigurasi global
+    # (API config, `global.grading`); versinya dicatat di hasil.
+    glob = nilai_global(con)
+    versi = rekam_versi(con)
+
     grade = _tentukan_grade(baca_kriteria(con), ada, rate, m, total,
-                            s["wilayah_ada"])
+                            s["wilayah_ada"], glob["grading.gradeECombinations"])
     pita = _ambil_pita(con, grade)
 
     # Mutu menerus: seberapa baik berkas ini DI DALAM kelasnya sendiri.
     hadir = [e for e in ENAM_ELEMEN if ada[e]]
     kelengkapan = sum(rate[e] for e in hadir) / len(hadir) if hadir else 0.0
     if ada["nik"]:
-        mutu = 0.6 * kelengkapan + 0.4 * (m["trusted"] / total)
+        bobot = glob["grading.scoreWeights"]
+        mutu = (bobot["kelengkapan"] * kelengkapan
+                + bobot["nik_tepercaya"] * (m["trusted"] / total))
     else:
         mutu = kelengkapan
 
@@ -1129,7 +1136,8 @@ def skor_dan_grade(s: dict) -> dict:
                              (s.get("normalisasi") or {}).get("tanggal"))
 
     print(f"[G4] grade {HURUF[grade]} ({grade}) — skor {skor} "
-          f"[pita {pita['score_min']}-{pita['score_max']}, mutu {mutu:.3f}]")
+          f"[pita {pita['score_min']}-{pita['score_max']}, mutu {mutu:.3f}] "
+          f"konfigurasi {versi}")
     print(f"[G4] trusted {m['trusted']:,} / {total:,}, anomali {m['anomali']:,}")
     if m["presisi"]:
         print(f"[G4] {m['presisi']:,} NIK tersimpan sebagai pecahan di atas "
@@ -1139,6 +1147,7 @@ def skor_dan_grade(s: dict) -> dict:
         **s,
         "grade": grade,
         "quality_score": skor,
+        "config_version": versi,
         "pita": pita,
         "metrik": m,
         "rate": rate,
@@ -1177,7 +1186,8 @@ def _cocok_kriteria(k: dict, ada: dict, rate: dict, trusted_rate: float) -> bool
     return True
 
 
-def _tentukan_grade(kriteria: list[dict], ada, rate, m, total, wilayah_ada) -> int:
+def _tentukan_grade(kriteria: list[dict], ada, rate, m, total, wilayah_ada,
+                    kombinasi_e: list[list[str]] | None = None) -> int:
     """
     Aturan grade A-F.
 
@@ -1186,9 +1196,10 @@ def _tentukan_grade(kriteria: list[dict], ada, rate, m, total, wilayah_ada) -> i
     elemen, ambang mutu NIK — jadi yang membedakannya hanya angka, dan angka
     itu bisa disetel lewat API tanpa deploy ulang.
 
-    E dan F tetap di sini. Grade E berbentuk KOMBINASI kolom yang harus ada,
-    bukan ambang persentase; grade F bukan aturan melainkan hasil "tidak satu
-    pun di atas terpenuhi".
+    Grade E berbentuk KOMBINASI kolom yang harus ada, bukan ambang persentase.
+    Kombinasinya konfigurasi global (`grading.gradeECombinations`); berkas
+    yang memuat SEMUA kolom salah satu kombinasi adalah grade E. Grade F bukan
+    aturan melainkan hasil "tidak satu pun di atas terpenuhi".
 
     Dua perbedaan yang disengaja dari GraderService lama tetap berlaku, dan
     keduanya membuat penilaian lebih ketat, bukan lebih longgar.
@@ -1224,12 +1235,14 @@ def _tentukan_grade(kriteria: list[dict], ada, rate, m, total, wilayah_ada) -> i
         if _cocok_kriteria(k, ada, rate, trusted_rate):
             return k["grade_id"]
 
-    if ada["nama"]:
-        e1 = ada["tanggal_lahir"] and ada["jenis_kelamin"]
-        e2 = ada["tempat_lahir"] and ada["tanggal_lahir"]
-        e3 = ada["tempat_lahir"] and ada["nama_ibu"]
-        e4 = ada["tanggal_lahir"] and bool(wilayah_ada)
-        if e1 or e2 or e3 or e4:
+    def hadir(elemen: str) -> bool:
+        return bool(wilayah_ada) if elemen == "wilayah" else bool(ada.get(elemen))
+
+    # Bawaan (keempat kombinasi GraderService lama) semuanya memuat nama, jadi
+    # "semua kolom satu kombinasi ada" sama persis dengan aturan lama
+    # "nama ada DAN salah satu pasangan ada".
+    for kombinasi in (kombinasi_e if kombinasi_e is not None else KOMBINASI_E):
+        if kombinasi and all(hadir(e) for e in kombinasi):
             return 5  # E
 
     return 6  # F
@@ -1458,6 +1471,10 @@ def susun_hasil(s: dict) -> dict:
         # mengejutkan hampir mustahil ditelusuri.
         "normalization": _ringkas_normalisasi(s),
         "caseFlags": s["case_flags"],
+        # Tambahan di luar spesifikasi: versi konfigurasi (kriteria, pita,
+        # kombinasi E, bobot mutu) yang dipakai grading ini. Isinya:
+        # GET /api/v1/config/versions/{configVersion}.
+        "configVersion": s.get("config_version"),
     }
 
 

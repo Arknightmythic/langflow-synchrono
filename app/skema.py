@@ -89,15 +89,42 @@ class MuatanAturan(BaseModel):
     tidak punya konsep path.
     """
 
+    model_config = {"json_schema_extra": {"examples": [
+        {
+            "criteria": {"minCompleteness": {"tempat_lahir": 0.75}},
+            "score": {"min": 72},
+            "updatedBy": "reno",
+            "dryRun": True,
+        },
+        {
+            "matching": {
+                "weights": {"nama": 70, "nama_ibu": 30},
+                "reviewMissingCount": None,
+                "nameCleaning": {"titles": True},
+            },
+            "updatedBy": "reno",
+            "dryRun": True,
+        },
+    ]}}
+
+    criteria: dict[str, Any] | None = None
+    score: dict[str, Any] | None = None
+    matching: dict[str, Any] | None = None
+    updatedBy: str | None = None
+    dryRun: bool = False
+
+
+class MuatanGlobal(BaseModel):
+    """Perubahan nilai global. `null` pada sebuah field = kembali ke env/bawaan."""
+
     model_config = {"json_schema_extra": {"examples": [{
-        "criteria": {"minCompleteness": {"tempat_lahir": 0.75}},
-        "score": {"min": 72},
+        "grading": {"scoreWeights": {"kelengkapan": 0.5, "nik_tepercaya": 0.5}},
+        "matching": {"conflictEpsilon": 0.5},
         "updatedBy": "reno",
         "dryRun": True,
     }]}}
 
-    criteria: dict[str, Any] | None = None
-    score: dict[str, Any] | None = None
+    grading: dict[str, Any] | None = None
     matching: dict[str, Any] | None = None
     updatedBy: str | None = None
     dryRun: bool = False

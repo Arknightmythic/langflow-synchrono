@@ -69,25 +69,24 @@ import urllib.error
 import urllib.request
 
 import _reasoning
+from _config import HURUF, aturan_matching, rekam_versi
 from _grading import pasang_endpoint_s3
 from _jobs import CALLBACK_PERCOBAAN, CALLBACK_TIMEOUT, q
 from _nama import sql_bersih
-from _shared import (SQL_KLASIFIKASI, SQL_VIEW_MASTER, buka_koneksi,
-                     sql_missing, sql_skor, sql_view_incoming)
+from _shared import (BOBOT_BAWAAN, SQL_KLASIFIKASI, buka_koneksi, kolom_kurang,
+                     sql_missing, sql_skor, sql_view_incoming, sql_view_master)
 
 # DB PORTAL tempat hasil disuntikkan (opsi B). Terpisah dari PG_DSN milik
 # engine, dan sengaja TIDAK punya nilai bawaan: menyuntik ke database yang
 # salah jauh lebih buruk daripada gagal dengan pesan yang jelas.
 PORTAL_PG_DSN = os.getenv("PORTAL_PG_DSN", "").strip()
 
-# Selisih skor dua kandidat teratas yang masih dianggap SERI. Bawaan 0: hanya
-# seri persis. Spesifikasi menyebut "seri/sangat dekat" tanpa angka, jadi yang
-# tidak ambigu dipakai lebih dulu.
-EPS_KONFLIK = float(os.getenv("MATCHING_CONFLICT_EPSILON", "0"))
-
-# Ambang Jaro-Winkler untuk nama ibu yang dianggap BERTENTANGAN (aturan 2).
-# Hanya di bawah ini yang dihitung membantah; di atasnya perbedaan ejaan biasa.
-AMBANG_BERTENTANGAN = float(os.getenv("MATCHING_KONTRA_JW", "0.80"))
+# Ambang, bobot, elemen kosong, pembersihan nama, blocking, selisih seri
+# (`matching.conflictEpsilon`), dan ambang nama ibu bertentangan
+# (`matching.contradictionJw`) semuanya KONFIGURASI — dibaca sekali di awal
+# job lewat `_config.aturan_matching()`. Dua yang terakhir dulu hanya env
+# (MATCHING_CONFLICT_EPSILON, MATCHING_KONTRA_JW); env itu kini jadi nilai
+# bawaan selama belum ada setelan di tabel engine_config.
 
 # Ambang pola review.
 AMBANG_NAMA_BEDA_TOTAL = 0.70     # NIK cocok, nama di bawah ini -> NIK_CONFLICT
@@ -221,20 +220,29 @@ def cari_grade(con, job: dict) -> int:
     return int(r[0])
 
 
-def _konfigurasi(con, grade: int) -> tuple[dict, str]:
-    kol = ["auto_missing_max", "auto_score_min", "review_missing_count",
-           "review_score_min", "review_score_max"]
-    r = con.execute(
-        f"SELECT {', '.join(kol)} FROM pg.grade_rules WHERE grade_code = {grade}"
-    ).fetchone()
-    if not r:
-        raise ValueError(f"grade_rules untuk grade {grade} tidak ada")
-    kueri = con.execute(
-        f"SELECT matching_query FROM pg.matching_queries WHERE grade_code = {grade}"
-    ).fetchone()
-    if not kueri:
-        raise ValueError(f"matching_queries untuk grade {grade} tidak ada")
-    return dict(zip(kol, r)), kueri[0]
+def ringkas_aturan(grade: int, aturan: dict, versi: str) -> dict:
+    """
+    Aturan yang DIPAKAI job ini — ditulis ke `blocking_metrics` job portal dan
+    ikut di callback, supaya hasil bisa dijelaskan walau aturannya berubah kelak.
+    Isi lengkapnya bisa diambil lagi lewat GET /api/v1/config/versions/{versi}.
+    """
+    return {
+        "configVersion": versi,
+        "grade": grade,
+        "gradeLetter": HURUF.get(grade),
+        "thresholds": {
+            "autoMissingMax": aturan["auto_missing_max"],
+            "autoScoreMin": aturan["auto_score_min"],
+            "reviewMissingCount": aturan["review_missing_count"],
+            "reviewScoreMin": aturan["review_score_min"],
+            "reviewScoreMax": aturan["review_score_max"],
+        },
+        "weights": {f: b for f, b in aturan["bobot"]},
+        "missingElements": aturan["elemen_kosong"],
+        "nameCleaning": aturan["bersih_nama"],
+        "conflictEpsilon": aturan["epsilon"],
+        "contradictionJw": aturan["kontra_jw"],
+    }
 
 
 def _sql_aturan(a: dict) -> str:
@@ -249,9 +257,13 @@ def _sql_aturan(a: dict) -> str:
 
 # ── Masukan ─────────────────────────────────────────────────────────────────
 
-def muat_masukan(con, sumber: str, master: str) -> int:
+def muat_masukan(con, sumber: str, master: str, bersih: dict | None = None) -> int:
     """
     Incoming dimaterialkan, master TIDAK.
+
+    `bersih` = sakelar pembersihan nama grade berkas (`nameCleaning`),
+    diterapkan sama di kedua sisi — termasuk Pass 1/2 yang membandingkan nama
+    persis, dan blocking yang memakai 3 huruf awal nama.
 
     Incoming kecil dan dibaca berkali-kali (tiga pass, lalu snapshot). Master
     bisa ratusan juta baris; sebagai VIEW, setiap pass MENGALIRKANNYA sebagai
@@ -274,7 +286,7 @@ def muat_masukan(con, sumber: str, master: str) -> int:
     con.execute(f"""
         CREATE OR REPLACE TABLE incoming_semua AS
         SELECT {id_sql} AS id,
-               {sql_view_incoming(kolom - {'id'})}
+               {sql_view_incoming(kolom - {'id'}, bersih)}
         FROM read_parquet('{sumber}', file_row_number = true)
     """)
 
@@ -286,19 +298,22 @@ def muat_masukan(con, sumber: str, master: str) -> int:
             f"id_incoming harus menunjuk tepat satu baris.")
 
     con.execute(f"""CREATE OR REPLACE VIEW master_df AS
-                    SELECT {SQL_VIEW_MASTER} FROM read_parquet('{master}')""")
+                    SELECT {sql_view_master(bersih)} FROM read_parquet('{master}')""")
     return con.execute("SELECT count(*) FROM incoming_semua").fetchone()[0]
 
 
 # ── Pass ────────────────────────────────────────────────────────────────────
 
-def _sql_bertentangan(tanpa_ibu: bool = False) -> str:
+def _sql_bertentangan(tanpa_ibu: bool = False, kontra_jw: float = 0.80) -> str:
     """
     Aturan pengaman 2: atribut yang TERISI di kedua sisi dan saling membantah.
 
     Tempat lahir sengaja TIDAK ikut. Variasinya terlalu besar untuk jadi bukti
     bantahan: "Bogor" dan "Kab. Bogor" adalah tempat yang sama, dan menghitung
     keduanya bertentangan akan menurunkan kecocokan yang sah ke Pass 3.
+
+    `kontra_jw` = ambang Jaro-Winkler nama ibu (`matching.contradictionJw`):
+    hanya di bawah ini yang dihitung membantah; di atasnya perbedaan ejaan biasa.
     """
     syarat = [
         "(i.tanggal_lahir_clean IS NOT NULL AND m.tanggal_lahir_master_clean IS NOT NULL "
@@ -310,11 +325,11 @@ def _sql_bertentangan(tanpa_ibu: bool = False) -> str:
         syarat.append(
             "(nullif(i.nama_ibu_clean, '') IS NOT NULL "
             " AND nullif(m.nama_ibu_master_clean, '') IS NOT NULL "
-            f" AND j(i.nama_ibu_clean, m.nama_ibu_master_clean) < {AMBANG_BERTENTANGAN})")
+            f" AND j(i.nama_ibu_clean, m.nama_ibu_master_clean) < {float(kontra_jw)})")
     return "(" + " OR ".join(syarat) + ")"
 
 
-def pass1(con) -> None:
+def pass1(con, kontra_jw: float = 0.80) -> None:
     """
     NIK tepercaya + nama persis.
 
@@ -327,7 +342,7 @@ def pass1(con) -> None:
         CREATE OR REPLACE TABLE nik_cocok AS
         SELECT i.id, m.nik,
                i.nama_clean = m.nama_master_clean AS nama_persis,
-               {_sql_bertentangan()} AS bertentangan
+               {_sql_bertentangan(kontra_jw=kontra_jw)} AS bertentangan
         FROM incoming_semua i
         JOIN master_df m ON i.nik_trusted AND i.nik = m.nik
     """)
@@ -383,19 +398,38 @@ def pass3(con, grade: int, aturan: dict, kueri: str) -> None:
     pasangannya. Dua teratas sekaligus memberi deteksi seri tanpa pemindaian
     kedua — dan membedakan seri sungguhan (dua NIK berbeda) dari baris master
     ganda (NIK yang sama muncul dua kali), yang bukan konflik.
+
+    Bobot (`bobot`), elemen kosong (`elemen_kosong`), dan selisih seri
+    (`epsilon`) dari konfigurasi grade; yang tidak ada memakai bawaan.
     """
+    skor = sql_skor(grade, aturan.get("bobot"))
+    kosong = sql_missing(grade, aturan.get("elemen_kosong"))
+    eps = float(aturan.get("epsilon", 0.0))
     con.execute("""
         CREATE OR REPLACE VIEW incoming_df AS
         SELECT * FROM incoming_semua
         WHERE id NOT IN (SELECT id FROM p1) AND id NOT IN (SELECT id FROM p2)
     """)
     con.execute(f"CREATE OR REPLACE VIEW joined_df AS {kueri}")
+
+    # Skor dibaca dari KELUARAN kueri blocking. API config menolak bobot pada
+    # elemen yang tidak dikeluarkannya; penjaga ini untuk konfigurasi yang
+    # disunting langsung di basis data — pesan yang jelas, bukan BinderException.
+    ada = {r[0] for r in con.execute("DESCRIBE joined_df").fetchall()}
+    bobot = aturan.get("bobot")
+    kurang = kolom_kurang(ada, BOBOT_BAWAAN[grade] if bobot is None else bobot,
+                          aturan.get("elemen_kosong"))
+    if kurang:
+        raise ValueError(
+            f"Konfigurasi grade {grade} memakai elemen yang tidak dikeluarkan kueri "
+            f"blocking grade itu: {kurang}. Ubah bobot/elemen kosong lewat API config, "
+            f"atau tambahkan kolomnya ke matching_queries (lihat migrasi 007).")
     con.execute(f"""
         CREATE OR REPLACE TABLE p3 AS
         WITH skor AS (
             SELECT incoming_row_id AS id, nik_master,
-                   CASE WHEN nik_master IS NULL THEN 0.0 ELSE {sql_skor(grade)} END AS skor,
-                   CASE WHEN nik_master IS NULL THEN 0 ELSE {sql_missing(grade)} END
+                   CASE WHEN nik_master IS NULL THEN 0.0 ELSE {skor} END AS skor,
+                   CASE WHEN nik_master IS NULL THEN 0 ELSE {kosong} END
                        AS missing_count
             FROM joined_df
         ),
@@ -412,7 +446,7 @@ def pass3(con, grade: int, aturan: dict, kueri: str) -> None:
                    top[2].nik AS nik_2, top[2].skor AS skor_2,
                    (len(top) = 2 AND top[2].nik IS NOT NULL
                     AND top[1].nik <> top[2].nik
-                    AND top[1].skor - top[2].skor <= {EPS_KONFLIK}) AS seri
+                    AND top[1].skor - top[2].skor <= {eps}) AS seri
             FROM agg
         )
         SELECT s.id, s.n_kandidat, s.nik, s.skor, s.seri, s.nik_2, s.skor_2,
@@ -506,9 +540,12 @@ def sql_pola() -> str:
         END"""
 
 
-def susun_pasangan(con, master: str) -> None:
+def susun_pasangan(con, master: str, bersih: dict | None = None) -> None:
     """
     Setiap keputusan berdampingan dengan data incoming dan master-nya.
+
+    `bersih` harus sama dengan yang dipakai `muat_masukan`, supaya nama bersih
+    master yang dibaca reasoning sama dengan yang dibandingkan saat matching.
 
     Satu tabel yang dibaca DUA tahap — reasoning dan snapshot — supaya
     keduanya melihat pasangan yang sama persis. Master diambil lewat semi-join
@@ -524,7 +561,7 @@ def susun_pasangan(con, master: str) -> None:
         -- Dibaca dari parquet mentahnya, bukan dari view `master_df`: view itu
         -- hanya membawa `provinsi` dalam bentuk bersih (huruf kecil), sedangkan
         -- snapshot adalah "data asli" (spesifikasi §4.1).
-        SELECT DISTINCT ON (nik) {SQL_VIEW_MASTER}, provinsi AS provinsi_asli
+        SELECT DISTINCT ON (nik) {sql_view_master(bersih)}, provinsi AS provinsi_asli
         FROM read_parquet('{master}')
         WHERE nik IN (SELECT master_nik FROM keputusan WHERE master_nik IS NOT NULL
                       UNION ALL
@@ -654,7 +691,15 @@ def unggah_parquet(con, job: dict) -> str:
     return kunci
 
 
-def suntik(con, job: dict, kunci: str, m: dict, durasi: dict, rss_mb: int) -> int:
+def _ada_kolom_portal(con, tabel: str, kolom: str) -> bool:
+    return bool(con.execute(f"""
+        SELECT count(*) FROM duckdb_columns()
+         WHERE database_name = 'portal' AND table_name = {q(tabel)}
+           AND column_name = {q(kolom)}""").fetchone()[0])
+
+
+def suntik(con, job: dict, kunci: str, m: dict, durasi: dict, rss_mb: int,
+           aturan_dipakai: dict | None = None) -> int:
     """
     DELETE hasil lama, INSERT dari parquet, UPDATE job — dalam SATU transaksi.
 
@@ -673,6 +718,17 @@ def suntik(con, job: dict, kunci: str, m: dict, durasi: dict, rss_mb: int) -> in
     utuh dan terbaca.
     """
     sumber = f"s3://{job['s3_bucket']}/{kunci}"
+
+    # Aturan yang dipakai -> `blocking_metrics` (spesifikasi: "statistik detail
+    # dari rule blocking yang diterapkan"). Hanya kalau kolomnya ada: DB portal
+    # yang dibuat sebelum kolom itu masuk spesifikasi tidak boleh membuat
+    # seluruh penyuntikan gagal karena catatan tambahan.
+    set_aturan = ""
+    if aturan_dipakai and _ada_kolom_portal(con, "syncrono_matching_job",
+                                            "blocking_metrics"):
+        set_aturan = (f"blocking_metrics = "
+                      f"{q(json.dumps(aturan_dipakai, ensure_ascii=False))}::jsonb,")
+
     con.execute("BEGIN TRANSACTION")
     try:
         _pg(con, f"DELETE FROM syncrono_matching_result "
@@ -710,6 +766,7 @@ def suntik(con, job: dict, kunci: str, m: dict, durasi: dict, rss_mb: int) -> in
                 conflict_count = {m['conflictCount']},
                 result_parquet_key = {q(kunci)},
                 stage_durations = {q(durasi)}::jsonb,
+                {set_aturan}
                 peak_rss_mb = {rss_mb},
                 updated_at = now(), updated_by = {q(AKTOR_ENGINE)}
             WHERE id = {q(job['job_id'])}""")
@@ -796,18 +853,26 @@ def jalankan(job: dict, lapor=lambda t: None) -> dict:
         _tandai(con, job, status="IN_PROGRESS", current_stage="BLOCKING",
                 started_at="now()")
         grade = cari_grade(con, job)
-        aturan, kueri = _konfigurasi(con, grade)
+        # Aturan dibaca SEKALI di sini dan dipakai sampai job selesai: mengubah
+        # konfigurasi lewat API tidak mengganggu job yang sedang berjalan.
+        aturan = aturan_matching(con, grade)
+        versi = rekam_versi(con)
+        dipakai = ringkas_aturan(grade, aturan, versi)
         master = f"s3://{job['s3_bucket']}/{job['master_key']}"
-        n = muat_masukan(con, f"s3://{job['s3_bucket']}/{job['incoming_key']}", master)
+        n = muat_masukan(con, f"s3://{job['s3_bucket']}/{job['incoming_key']}", master,
+                         aturan["bersih_nama"])
         print(f"[M] {job['job_id']} {n:,} baris incoming, grade {grade}, "
-              f"preset {job['rule_preset'] or '-'}")
+              f"preset {job['rule_preset'] or '-'}, konfigurasi {versi}")
+        print(f"[M] {job['job_id']} bobot {dipakai['weights']}, "
+              f"kosong {dipakai['missingElements']}, "
+              f"bersih-nama {aturan['bersih_nama']}")
         jam("prepMs", t)
 
         _cek_batal(con, job)
         _tandai(con, job, current_stage="DETERMINISTIC")
         lapor("M1 pass 1")
         t = time.perf_counter()
-        pass1(con)
+        pass1(con, aturan["kontra_jw"])
         jam("pass1Ms", t)
 
         lapor("M2 pass 2")
@@ -819,7 +884,7 @@ def jalankan(job: dict, lapor=lambda t: None) -> dict:
         _tandai(con, job, current_stage="SCORING")
         lapor("M3 pass 3")
         t = time.perf_counter()
-        pass3(con, grade, aturan, kueri)
+        pass3(con, grade, aturan, aturan["kueri"])
         # Blocking dan scoring Pass 3 berjalan MENYATU: kandidat mengalir dari
         # join langsung ke agregasi tanpa pernah dimaterialkan (lihat N5). Tidak
         # ada titik untuk mengukur blocking sendirian tanpa menjalankannya dua
@@ -831,7 +896,7 @@ def jalankan(job: dict, lapor=lambda t: None) -> dict:
         lapor("M4 klasifikasi")
         t = time.perf_counter()
         gabung(con)
-        susun_pasangan(con, master)
+        susun_pasangan(con, master, aturan["bersih_nama"])
         kelas_ms = time.perf_counter() - t
 
         # Masih tahap CLASSIFYING bagi portal: menambah nilai current_stage
@@ -861,7 +926,7 @@ def jalankan(job: dict, lapor=lambda t: None) -> dict:
         t = time.perf_counter()
         ms["totalMs"] = int((time.perf_counter() - awal) * 1000)
         rss = _rss_puncak_mb()
-        tersuntik = suntik(con, job, kunci, m, ms, rss)
+        tersuntik = suntik(con, job, kunci, m, ms, rss, dipakai)
         jam("duckdbInjectMs", t)
         ms["totalMs"] = int((time.perf_counter() - awal) * 1000)
         # stage_durations di tabel portal ditulis DI DALAM transaksi, sebelum
@@ -873,6 +938,9 @@ def jalankan(job: dict, lapor=lambda t: None) -> dict:
 
     m["stageDurations"] = ms
     m["peakRssMb"] = rss
+    # Tambahan di luar spesifikasi: aturan yang dipakai job ini.
+    m["configVersion"] = versi
+    m["rulesApplied"] = dipakai
     muatan = {
         "jobId": job["job_id"], "fileId": job["file_id"],
         "masterFileId": job["master_file_id"], "status": "COMPLETED",

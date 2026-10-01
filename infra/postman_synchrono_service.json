@@ -36,6 +36,10 @@
     {
       "key": "matching_job_id",
       "value": ""
+    },
+    {
+      "key": "config_version",
+      "value": ""
     }
   ],
   "item": [
@@ -895,6 +899,306 @@
               }
             }
           ]
+        },
+        {
+          "name": "2d. Ubah bobot & pembersihan nama grade C — dryRun",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/run/config-rules-update?stream=false",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "run",
+                "config-rules-update"
+              ],
+              "query": [
+                {
+                  "key": "stream",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "`weights` MENGGANTI seluruh bobot (harus berjumlah 100, persen); `nameCleaning` digabung per sakelar. Lihat `warnings` dan `after.matching.analysis` untuk akibatnya.\n\nNode id `GradingRuleUpdate-ea0f7` — sama dengan Langflow.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"GradingRuleUpdate-ea0f7\": {\n      \"payload\": \"{\\\"gradeId\\\": 3, \\\"updatedBy\\\": \\\"postman\\\", \\\"dryRun\\\": true, \\\"matching\\\": {\\\"weights\\\": {\\\"nama\\\": 60, \\\"tanggal_lahir\\\": 25, \\\"tempat_lahir\\\": 15}, \\\"nameCleaning\\\": {\\\"titles\\\": true}}}\",\n      \"dry_run\": false\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "var r = pm.response.json();",
+                  "if (r.outputs) {",
+                  "  var hasil = JSON.parse(r.outputs[0].outputs[0].results.message.text);",
+                  "  console.log(hasil);",
+                  "  pm.test('isi text: ' + JSON.stringify(hasil).slice(0, 180), function () {});",
+                  "} else {",
+                  "  // Galat komponen: `detail` berisi STRING JSON, persis Langflow.",
+                  "  try { console.log(JSON.parse(r.detail).message); } catch (e) { console.log(r.detail); }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "2e. Nilai global — dryRun",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/run/config-rules-update?stream=false",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "run",
+                "config-rules-update"
+              ],
+              "query": [
+                {
+                  "key": "stream",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Kunci `global` tanpa `gradeId`: bobot skor mutu grading, kombinasi grade E, selisih seri, ambang nama ibu bertentangan. `null` = kembali ke env/bawaan.\n\nNode id `GradingRuleUpdate-ea0f7` — sama dengan Langflow.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"output_type\": \"chat\",\n  \"input_type\": \"text\",\n  \"input_value\": \"\",\n  \"tweaks\": {\n    \"GradingRuleUpdate-ea0f7\": {\n      \"payload\": \"{\\\"global\\\": {\\\"matching\\\": {\\\"conflictEpsilon\\\": 0.5}}, \\\"updatedBy\\\": \\\"postman\\\", \\\"dryRun\\\": true}\",\n      \"dry_run\": false\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "var r = pm.response.json();",
+                  "if (r.outputs) {",
+                  "  var hasil = JSON.parse(r.outputs[0].outputs[0].results.message.text);",
+                  "  console.log(hasil);",
+                  "  pm.test('isi text: ' + JSON.stringify(hasil).slice(0, 180), function () {});",
+                  "} else {",
+                  "  // Galat komponen: `detail` berisi STRING JSON, persis Langflow.",
+                  "  try { console.log(JSON.parse(r.detail).message); } catch (e) { console.log(r.detail); }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "2f. REST — baca semua (+ configVersion)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/config/rules",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "config",
+                "rules"
+              ]
+            },
+            "description": "Sama isinya dengan 2a, tanpa selubung. `configVersion` tersimpan ke variabel untuk 2j."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', function () { pm.response.to.have.status(200); });",
+                  "var d = pm.response.json();",
+                  "if (d.configVersion) pm.collectionVariables.set('config_version', d.configVersion);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "2g. REST — ubah bobot grade C, dryRun",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/config/rules/3",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "config",
+                "rules",
+                "3"
+              ]
+            },
+            "description": "400 kalau bentuknya salah, 409 kalau validasi menolak (mis. bobot tidak berjumlah 100).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"matching\": {\n    \"weights\": {\n      \"nama\": 60,\n      \"tanggal_lahir\": 25,\n      \"tempat_lahir\": 15\n    }\n  },\n  \"updatedBy\": \"postman\",\n  \"dryRun\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "2h. REST — nilai global, dryRun",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/config/global",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "config",
+                "global"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"matching\": {\n    \"conflictEpsilon\": 0.5\n  },\n  \"updatedBy\": \"postman\",\n  \"dryRun\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "2i. REST — riwayat perubahan",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/config/history?limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "config",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Siapa mengubah apa, kapan, dari berapa ke berapa. `gradeId` untuk menyaring satu grade."
+          }
+        },
+        {
+          "name": "2j. REST — isi satu versi konfigurasi",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{api_key}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/config/versions/{{config_version}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "config",
+                "versions",
+                "{{config_version}}"
+              ]
+            },
+            "description": "Konfigurasi lengkap yang dipakai job ber-`configVersion` itu (hasil grading, callback & blocking_metrics matching)."
+          }
         }
       ]
     },

@@ -37,6 +37,8 @@ import os
 import duckdb
 from dotenv import load_dotenv
 
+from _nama import sql_bersih_pilih
+
 load_dotenv()
 
 # ── Konfigurasi koneksi ────────────────────────────────────────────────────
@@ -172,13 +174,33 @@ def _sumber_kolom(baku: str, kolom_ada: set[str]) -> str | None:
     return None
 
 
-def sql_view_incoming(kolom_ada: set[str]) -> str:
+def _bersih_nama(kolom: str, bersih: dict | None) -> str:
+    """
+    Nama (dan nama ibu) untuk dibandingkan.
+
+    Tanpa pembersihan yang dinyalakan, ekspresinya PERSIS `_bersih` — lower dan
+    trim saja, seperti sistem lama. Sakelarnya diatur per grade lewat
+    konfigurasi (`nameCleaning`), dan berlaku di KEDUA sisi: pembersihan yang
+    hanya diterapkan pada incoming justru menjauhkannya dari master yang juga
+    memuat gelar.
+    """
+    b = bersih or {}
+    if not (b.get("titles") or b.get("patronym") or b.get("abbreviations")):
+        return _bersih(kolom)
+    return sql_bersih_pilih(kolom, gelar=bool(b.get("titles")),
+                            patronimik=bool(b.get("patronym")),
+                            singkatan=bool(b.get("abbreviations")))
+
+
+def sql_view_incoming(kolom_ada: set[str], bersih: dict | None = None) -> str:
     """
     Bangun SELECT normalisasi untuk parquet incoming.
 
     Kolom yang tidak ada di file dilewati — sama seperti versi Polars yang
     memakai `if "nama" in df.columns`. File grade 1/2 tidak punya tanggal_lahir,
     dan grade 6 bisa saja tidak memasangkan kolom apa pun.
+
+    `bersih` = sakelar pembersihan nama milik grade berkas (lihat `_bersih_nama`).
     """
     pilih = []
 
@@ -212,7 +234,9 @@ def sql_view_incoming(kolom_ada: set[str]) -> str:
             # Di-alias ke nama baku, supaya query matching tidak perlu tahu
             # berkasnya memakai nama spesifikasi atau nama baku.
             pilih.append(f"{sumber} AS {kol}")
-            pilih.append(f"{_bersih(sumber)} AS {kol}_clean")
+            bersihkan = (_bersih_nama(sumber, bersih) if kol in ("nama", "nama_ibu")
+                         else _bersih(sumber))
+            pilih.append(f"{bersihkan} AS {kol}_clean")
         else:
             pilih.append(f"CAST(NULL AS VARCHAR) AS {kol}")
             pilih.append(f"CAST(NULL AS VARCHAR) AS {kol}_clean")
@@ -265,22 +289,32 @@ def sql_view_incoming(kolom_ada: set[str]) -> str:
     return ",\n        ".join(pilih)
 
 
-SQL_VIEW_MASTER = f"""
+def sql_view_master(bersih: dict | None = None) -> str:
+    """Kolom view master; `bersih` = sakelar pembersihan nama, sama dengan incoming."""
+    return f"""
     nik,
     nama_lengkap,
     tempat_lahir,
     tanggal_lahir,
     jenis_kelamin,
     nama_ibu,
-    {_bersih('nama_lengkap')} AS nama_master_clean,
+    {_bersih_nama('nama_lengkap', bersih)} AS nama_master_clean,
     {_bersih('tempat_lahir')} AS tempat_lahir_master_clean,
     {_bersih('provinsi')}     AS provinsi_master_clean,
     {_bersih('kabupaten')}    AS kabupaten_master_clean,
     {_bersih('kecamatan')}    AS kecamatan_master_clean,
     {_bersih('kelurahan')}    AS kelurahan_master_clean,
     CAST(tanggal_lahir AS DATE) AS tanggal_lahir_master_clean,
-    {_bersih('jenis_kelamin')} AS jenis_kelamin_master_clean,
-    {_bersih('nama_ibu')}      AS nama_ibu_master_clean,
+    -- DINORMALISASI PERSIS SEPERTI INCOMING ('l'/'p'), bukan sekadar lower():
+    -- master berisi 'LAKI-LAKI'/'PEREMPUAN' sementara incoming 'L'/'P' menjadi
+    -- 'l' <> 'laki-laki' — Pass 1/2 menganggap SEMUA pasangan bertentangan, dan
+    -- blocking grade C/D yang menyambung lewat jenis kelamin tidak menemukan
+    -- satu kandidat pun (terukur 28 Sep 2026 pada master server 2 juta baris).
+    CASE
+        {_sql_daftar('jenis_kelamin', GENDER_L, 'l')}
+        {_sql_daftar('jenis_kelamin', GENDER_P, 'p')}
+        ELSE NULL END AS jenis_kelamin_master_clean,
+    {_bersih_nama('nama_ibu', bersih)}      AS nama_ibu_master_clean,
     CASE
         {_sql_daftar('status_kematian', HIDUP, 'h')}
         {_sql_daftar('status_kematian', MATI, 'm')}
@@ -288,18 +322,56 @@ SQL_VIEW_MASTER = f"""
 """
 
 
-# ── Skor & klasifikasi ─────────────────────────────────────────────────────
-# Bobot disalin dari ScoringService.compute_similarity_score().
+# Tanpa pembersihan nama — dipakai matching lama (n1..n7) dan sebagai bawaan.
+SQL_VIEW_MASTER = sql_view_master()
 
-BOBOT = {
-    1: [("nama", 1.0)],
-    2: [("nama", 0.8), ("tempat_lahir", 0.1), ("nama_ibu", 0.1)],
-    3: [("nama", 0.6), ("tempat_lahir", 0.2), ("tanggal_lahir", 0.2)],
-    4: [("nama", 0.6), ("tanggal_lahir", 0.3), ("tempat_lahir", 0.05), ("nama_ibu", 0.05)],
-    # grade 5 ditangani khusus: ada komponen rata-rata wilayah
+
+# ── Skor & klasifikasi ─────────────────────────────────────────────────────
+#
+# Bobot, elemen yang dihitung "kosong", dan pembersihan nama adalah
+# KONFIGURASI per grade — kolom `bobot`, `elemen_kosong`, dan `bersih_nama` di
+# tabel `grade_rules`, diubah lewat API config (lib/_config.py). Nilai di
+# bawah ini hanya BAWAAN: disalin dari ScoringService.compute_similarity_score()
+# sistem lama, dipakai kalau kolomnya kosong dan oleh matching lama (n1..n7).
+#
+# Bobot ditulis dalam PERSEN dan BERURUTAN. Urutannya bukan kosmetik: skor
+# adalah jumlah pecahan biner, dan 0.6 + 0.3 tidak persis 0.9. Urutan suku yang
+# berbeda bisa menggeser skor di digit terakhir, tepat di ambang — grade D
+# "nama & tanggal persis, tempat & ibu kosong" bernilai 89,999…, jadi REVIEW,
+# bukan 90 dan AUTO. Urutan bawaan = urutan rumus lama, jadi hasilnya identik.
+
+# Elemen yang boleh diberi bobot / dihitung kosong. NIK sengaja tidak ada: NIK
+# dipakai untuk blocking dan Pass 1 (cocok persis), bukan untuk skor kemiripan.
+ELEMEN_SKOR = ["nama", "tempat_lahir", "tanggal_lahir", "jenis_kelamin",
+               "nama_ibu", "wilayah"]
+
+BOBOT_BAWAAN = {
+    1: [("nama", 100)],
+    2: [("nama", 80), ("tempat_lahir", 10), ("nama_ibu", 10)],
+    3: [("nama", 60), ("tempat_lahir", 20), ("tanggal_lahir", 20)],
+    4: [("nama", 60), ("tanggal_lahir", 30), ("tempat_lahir", 5), ("nama_ibu", 5)],
+    5: [("nama", 50), ("wilayah", 30), ("nama_ibu", 10), ("tanggal_lahir", 10)],
 }
 
+# Bentuk lama (pecahan, grade 1-4) — untuk alat yang menghitung ulang skor di
+# Python (beban/uji_hibrida.py).
+BOBOT = {g: [(f, b / 100) for f, b in isi]
+         for g, isi in BOBOT_BAWAAN.items() if g != 5}
+
 WILAYAH = ["provinsi", "kabupaten", "kecamatan", "kelurahan"]
+
+# count_missing_attributes(): grade 1 & 3 selalu 0. `wilayah` dihitung kosong
+# hanya kalau KEEMPAT tingkatnya kosong.
+MISSING = {
+    1: [],
+    2: ["nama", "tempat_lahir", "nama_ibu"],
+    3: [],
+    4: ["tanggal_lahir", "tempat_lahir", "nama_ibu"],
+    5: ["nama", "tanggal_lahir", "wilayah", "nama_ibu"],
+}
+
+# Pembersihan nama sebelum dibandingkan — mati semua, seperti sistem lama.
+BERSIH_NAMA_BAWAAN = {"titles": False, "patronym": False, "abbreviations": False}
 
 
 def _pasangan(field: str) -> tuple[str, str]:
@@ -309,54 +381,87 @@ def _pasangan(field: str) -> tuple[str, str]:
     return kiri, kanan
 
 
-def sql_skor(grade: int) -> str:
-    """Ekspresi SQL yang menghasilkan skor 0-100."""
-    if grade == 5:
-        cabang = "\n                ".join(
+def _suku_skor(field: str) -> str:
+    """Kemiripan satu elemen, 0-1. Sisi yang kosong bernilai 0 (macro `j`)."""
+    if field == "wilayah":
+        # Rata-rata tingkat yang terisi DI KEDUA SISI; tidak ada satu pun -> 0.
+        cabang = ", ".join(
             f"CASE WHEN nullif({w}_clean, '') IS NOT NULL "
             f"AND nullif({w}_master_clean, '') IS NOT NULL "
-            f"THEN j({w}_clean, {w}_master_clean) END,"
+            f"THEN j({w}_clean, {w}_master_clean) END"
             for w in WILAYAH
-        ).rstrip(",")
-        return f"""(
-              j(nama_clean, nama_master_clean) * 0.5
-            + COALESCE(list_avg(list_filter([
-                {cabang}
-              ], x -> x IS NOT NULL)), 0.0) * 0.3
-            + j(nama_ibu_clean, nama_ibu_master_clean) * 0.1
-            + j(CAST(tanggal_lahir_clean AS VARCHAR),
-                CAST(tanggal_lahir_master_clean AS VARCHAR)) * 0.1
-        ) * 100"""
+        )
+        return (f"COALESCE(list_avg(list_filter([{cabang}], "
+                f"x -> x IS NOT NULL)), 0.0)")
+    kiri, kanan = _pasangan(field)
+    if field == "tanggal_lahir":
+        kiri = f"CAST({kiri} AS VARCHAR)"
+        kanan = f"CAST({kanan} AS VARCHAR)"
+    return f"j({kiri}, {kanan})"
 
-    suku = []
-    for field, bobot in BOBOT[grade]:
-        kiri, kanan = _pasangan(field)
-        if field == "tanggal_lahir":
-            kiri = f"CAST({kiri} AS VARCHAR)"
-            kanan = f"CAST({kanan} AS VARCHAR)"
-        suku.append(f"j({kiri}, {kanan}) * {bobot}")
+
+def kolom_elemen(elemen: str, sisi: str) -> list[str]:
+    """Kolom `joined_df` yang dibaca rumus skor untuk satu elemen. sisi: 'i' / 'm'."""
+    if elemen == "wilayah":
+        return [f"{w}_clean" if sisi == "i" else f"{w}_master_clean" for w in WILAYAH]
+    kiri, kanan = _pasangan(elemen)
+    return [kiri if sisi == "i" else kanan]
+
+
+def kolom_kurang(kolom_ada, bobot, elemen_kosong) -> dict[str, list[str]]:
+    """
+    Elemen yang kolomnya TIDAK dikeluarkan kueri blocking -> kolom yang kurang.
+
+    Skor Pass 3 dihitung dari keluaran kueri blocking, bukan dari tabel asal —
+    elemen berbobot butuh kolom kedua sisi, elemen "kosong" hanya sisi incoming.
+    `bobot` = [(elemen, persen), ...]; elemen berbobot 0 tidak dibutuhkan.
+    """
+    kurang: dict[str, list[str]] = {}
+    for elemen, persen in bobot or []:
+        if persen:
+            k = [c for c in kolom_elemen(elemen, "i") + kolom_elemen(elemen, "m")
+                 if c not in kolom_ada]
+            if k:
+                kurang[elemen] = k
+    for elemen in elemen_kosong or []:
+        k = [c for c in kolom_elemen(elemen, "i") if c not in kolom_ada]
+        if k:
+            kurang.setdefault(elemen, k)
+    return kurang
+
+
+def _pecahan(persen) -> str:
+    """60 -> '0.6': literal yang sama persis dengan yang tertulis di rumus lama."""
+    return repr(float(persen) / 100)
+
+
+def sql_skor(grade: int, bobot: list | None = None) -> str:
+    """
+    Ekspresi SQL skor 0-100: jumlah kemiripan elemen x bobotnya.
+
+    `bobot` = [(elemen, persen), ...] dari konfigurasi grade; None = bawaan.
+    Elemen berbobot 0 dilewati.
+    """
+    isi = BOBOT_BAWAAN[grade] if bobot is None else bobot
+    suku = [f"{_suku_skor(f)} * {_pecahan(b)}" for f, b in isi if b]
+    if not suku:
+        return "0.0"
     return "(" + " + ".join(suku) + ") * 100"
 
 
-# count_missing_attributes(): grade 1 & 3 selalu 0.
-MISSING = {
-    1: [],
-    2: ["nama", "tempat_lahir", "nama_ibu"],
-    3: [],
-    4: ["tanggal_lahir", "tempat_lahir", "nama_ibu"],
-    5: ["nama", "tanggal_lahir", "__wilayah__", "nama_ibu"],
-}
+def sql_missing(grade: int, elemen: list | None = None) -> str:
+    """
+    Jumlah elemen yang kosong di sisi incoming.
 
-
-def sql_missing(grade: int) -> str:
-    """Jumlah atribut yang kosong di sisi incoming."""
-    field = MISSING[grade]
+    `elemen` = daftar dari konfigurasi grade; None = bawaan.
+    """
+    field = MISSING[grade] if elemen is None else elemen
     if not field:
         return "0"
 
     suku = []
     for f in field:
-        if f == "__wilayah__":
+        if f == "wilayah":
             # Dihitung kosong hanya kalau KEEMPAT kolom wilayah kosong.
             isi = " OR ".join(f"nullif({w}_clean, '') IS NOT NULL" for w in WILAYAH)
             suku.append(f"CASE WHEN {isi} THEN 0 ELSE 1 END")

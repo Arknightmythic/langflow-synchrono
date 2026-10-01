@@ -6,7 +6,9 @@ service ini **tanpa mengubah satu baris kode pun**: cara mendapatkan API key,
 bentuk permintaan, `tweaks` dan node id-nya, selubung balasan, sampai kode
 status dan teks galatnya sama.
 
-Deploy ke server: [DEPLOY.md](DEPLOY.md).
+Deploy ke server: [DEPLOY.md](DEPLOY.md). Cara kerja matching & fuzzy match
+per grade: [MATCHING.md](MATCHING.md). Melihat & mengubah ambang, bobot, elemen
+kosong, dan pembersihan nama lewat API: [KONFIGURASI.md](KONFIGURASI.md).
 
 ---
 
@@ -99,6 +101,9 @@ docker compose up -d --build
 - Kunci tetap untuk skrip & benchmark: `synchrono-bench-key`.
 - Dokumentasi API otomatis: <http://localhost:8000/docs>.
 - Perubahan di `lib/`, `components/`, atau `app/`: **`docker restart synchrono-service`**.
+  Kalau ada migrasi baru di `infra/skema/db/migrasi/` (mis. `006_config_dinamis`),
+  jalankan dulu `python infra/skema/migrate.py && python infra/skema/seed.py`
+  (dari folder `infra/skema`, `PG_DSN` menunjuk PostgreSQL engine), baru restart.
 - Dump `.sql` MySQL/MariaDB, `.mdf`, `.dmp` butuh konverternya sendiri, di balik
   profil: `docker compose --profile mysql up -d --build konverter-mysql`
   (atau `mssql` / `oracle`). Tanpa itu unggahan format tersebut gagal dengan
@@ -131,7 +136,9 @@ Bentuk lama service pembanding, tetap jalan untuk `beban/` dan
 | `POST /api/v1/grading/jobs` | kirim job — kini lewat komponen `GradingDispatch` yang sama, jadi ikut menolak format di depan |
 | `GET /api/v1/grading/jobs/{fileId}`, `/by-id/{jobId}` | status |
 | `POST /api/v1/grading/run` | grading sinkron |
-| `GET/PATCH /api/v1/config/rules[/{gradeId}]` | aturan grade |
+| `GET/PATCH /api/v1/config/rules[/{gradeId}]` | aturan grade: kriteria, pita, ambang, bobot, elemen kosong, pembersihan nama |
+| `PATCH /api/v1/config/global` | nilai global: bobot skor mutu, kombinasi grade E, selisih seri, ambang nama ibu |
+| `GET /api/v1/config/history`, `/versions/{versi}` | riwayat perubahan konfigurasi & isi satu versi — **boleh dipakai portal** ([KONFIGURASI.md](KONFIGURASI.md)) |
 | `POST /api/v1/matching/run` | matching **lama** (n1..n7, tanpa pass & reasoning) — bukan pipeline spesifikasi |
 
 Kode statusnya bermakna (202, 400, 401, 404, 409, 422, 503), badan balasannya
@@ -146,6 +153,10 @@ JSON langsung tanpa selubung. Perbandingan kinerja lama: [PERBANDINGAN.md](PERBA
 - Hanya enam flow di atas. API pengelolaan Langflow lainnya (`/api/v1/flows`,
   `/api/v1/all`, kanvas) tidak ada; flow matching lama ber-UUID juga tidak.
 - `/health` membawa kunci tambahan; `db` di `/health_check` adalah PostgreSQL engine.
+- `config-rules` membawa bagian tambahan (`matching.weights`, `missingElements`,
+  `nameCleaning`, `blocking`, `analysis`, `global`, `configVersion`), dan
+  `config-rules-update` menerima kunci `global`. Semua field lama tetap ada
+  dengan bentuk yang sama — sejak 30 Sep 2026, lihat KONFIGURASI.md.
 - Pemeriksaan kunci selalu aktif, kecuali `SERVICE_AUTH=off` (hanya mesin lokal).
   Dulu `SERVICE_API_KEY` kosong berarti mati — kini kosong berarti "hanya kunci
   dari basis data".
@@ -184,6 +195,8 @@ docker-compose.yml         lokal, berdiri sendiri
 docker-compose.server.yml  server, berdiri sendiri — `.env` di folder ini
 docker-compose.infra.yml   PostgreSQL + SeaweedFS untuk server yang belum punya
 .env.server.example        contoh `.env` server
+MATCHING.md                cara kerja matching per grade, dan bedanya dengan sistem lama
+KONFIGURASI.md             API konfigurasi: ambang, bobot, elemen kosong, riwayat, versi
 compose.langflow-lokal.yml override Langflow lokal (hanya untuk membandingkan)
 ```
 
