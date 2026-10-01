@@ -119,10 +119,19 @@ diurutkan dari yang paling masuk akal:
 1. NIK yang berbeda **≤ 2 digit** dari NIK berkas, di posisi yang sama
    (`BEDA_DIGIT_NIK` di `lib/_matching.py`; panjang NIK harus sama) —
    kemungkinan salah ketik;
-2. tempat lahir sama persis;
-3. NIK terkecil (supaya hasilnya tetap sama setiap dijalankan).
+2. **kesamaan kata** tempat lahir: bagian kata yang dimiliki keduanya dari
+   yang lebih pendek. "PROV. ACEH" vs "ACEH" = 1, vs "JAWA TIMUR" = 0;
+3. Jaro-Winkler tempat lahir, untuk salah ketik ("BOGR" vs "BOGOR");
+4. NIK terkecil (supaya hasilnya tetap sama setiap dijalankan).
 
-Kandidat kedua disebut di reasoning. Statusnya tetap `CONFLICT`.
+Jaro-Winkler saja tidak dipakai sebagai kunci kedua: ia menilai awalan
+"PROV."/"KAB." sebagai beda besar. Pada data uji D, ia menaruh JAWA TIMUR di
+atas ACEH untuk berkas bertempat lahir "PROV. ACEH".
+
+Statusnya tetap `CONFLICT`. Hingga **5 kandidat** teratas (`MAKS_KANDIDAT` di
+`lib/_shared.py`) disebut di reasoning beserta tempat lahirnya; jumlah
+seluruhnya tetap disebut kalau lebih dari 5. Master data uji memuat 43
+kelompok berisi 3 orang identik dan 1 kelompok berisi 4 orang.
 
 **Aturan pengaman 1.** Pass 2 bisa menemukan orang X lewat identitasnya,
 padahal NIK di berkas terdaftar atas nama orang lain di master. Barisnya bisa X
@@ -151,9 +160,14 @@ Hanya untuk baris yang belum ketemu di Pass 1/2.
    nama sama dan hari/bulan lahir sama). Tujuannya membatasi perbandingan.
 2. **Skor**: setiap pasangan diberi skor 0–100 dengan rumus grade itu (§5).
    Baris tanpa kandidat mendapat skor 0.
-3. **Pemenang**: dua kandidat teratas per baris. Kalau keduanya NIK berbeda dan
-   selisih skornya ≤ `MATCHING_CONFLICT_EPSILON` (bawaan **0**, artinya hanya
-   seri persis), baris itu **seri**.
+3. **Pemenang**: kandidat berskor tertinggi (NIK terkecil kalau sama). Semua
+   kandidat ber-NIK berbeda yang selisih skornya dari yang tertinggi ≤
+   `MATCHING_CONFLICT_EPSILON` (bawaan **0**, artinya hanya seri persis) adalah
+   kandidat **seri**. Kalau ada dua atau lebih, baris itu seri. Seri dihitung
+   dari 10 skor teratas (NIK ganda di master dihitung sekali), dan hingga 5
+   di antaranya disebut di reasoning beserta tempat lahir, tanggal lahir, dan
+   skornya. Sebelumnya hanya dua teratas yang dilihat, jadi seri 4 orang
+   (ada di data uji C dan D) tercatat sebagai 2.
 4. **Klasifikasi**: ambang grade (§4):
 
 | Kondisi | Status |
@@ -379,6 +393,17 @@ disusun deterministik dari perbandingan per elemen. Kalau
 per **pola** baru, bukan per baris, dan hasilnya disimpan di cache
 `reasoning_patterns`. LLM tidak pernah menerima nilai data. Kegagalan reasoning
 hanya mengosongkan kolom itu; matching tetap selesai.
+
+Untuk `CONFLICT`, reasoning menyebut setiap kandidat (hingga 5), karena kartu
+portal hanya membandingkan baris dengan kandidat pertama. Contoh (data uji C):
+
+> Ditemukan 3 kandidat master dengan nama lengkap, tanggal lahir, dan nama ibu
+> kandung identik: Kandidat 1 NIK 7468144311051845 (SITI, tempat lahir SULAWESI
+> TENGGARA), Kandidat 2 NIK 3326084311057613 (SITI, tempat lahir JAWA TENGAH),
+> dan Kandidat 3 NIK 3584124311051346 (SITI, tempat lahir JAWA TIMUR). Sistem
+> tidak memilih salah satunya secara otomatis.
+
+CONFLICT dari Pass 3 menambahkan tanggal lahir dan skor tiap kandidat.
 
 ### Keluaran
 

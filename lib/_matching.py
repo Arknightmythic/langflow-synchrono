@@ -73,8 +73,9 @@ from _config import HURUF, aturan_matching, rekam_versi
 from _grading import pasang_endpoint_s3
 from _jobs import CALLBACK_PERCOBAAN, CALLBACK_TIMEOUT, q
 from _nama import sql_bersih
-from _shared import (BOBOT_BAWAAN, SQL_KLASIFIKASI, buka_koneksi, kolom_kurang,
-                     sql_missing, sql_skor, sql_view_incoming, sql_view_master)
+from _shared import (BOBOT_BAWAAN, MAKS_KANDIDAT, SQL_KLASIFIKASI, buka_koneksi,
+                     kolom_kurang, sql_missing, sql_skor, sql_view_incoming,
+                     sql_view_master)
 
 # DB PORTAL tempat hasil disuntikkan (opsi B). Terpisah dari PG_DSN milik
 # engine, dan sengaja TIDAK punya nilai bawaan: menyuntik ke database yang
@@ -347,9 +348,10 @@ def pass1(con, kontra_jw: float = 0.80) -> None:
         FROM incoming_semua i
         JOIN master_df m ON i.nik_trusted AND i.nik = m.nik
     """)
-    con.execute("""
+    con.execute(f"""
         CREATE OR REPLACE TABLE p1 AS
-        SELECT id, count(DISTINCT nik) AS n_kandidat, min(nik) AS nik
+        SELECT id, count(DISTINCT nik) AS n_kandidat, min(nik) AS nik,
+               list_sort(list_distinct(list(nik)))[1:{MAKS_KANDIDAT}] AS calon
         FROM nik_cocok WHERE nama_persis AND NOT bertentangan
         GROUP BY id
     """)
@@ -360,6 +362,12 @@ def pass1(con, kontra_jw: float = 0.80) -> None:
 BEDA_DIGIT_NIK = 2
 
 
+def _sql_kata(kolom: str) -> str:
+    """Kata-kata unik sebuah teks bersih: 'prov. aceh' -> ['prov', 'aceh']."""
+    return (f"list_distinct(list_filter(string_split(regexp_replace("
+            f"COALESCE({kolom}, ''), '[^a-z0-9]+', ' ', 'g'), ' '), w -> w <> ''))")
+
+
 def pass2(con) -> None:
     """
     Nama + tanggal lahir + nama ibu persis, untuk yang belum ketemu.
@@ -368,11 +376,20 @@ def pass2(con) -> None:
     nama ibu identik: CONFLICT, manusia yang memilih. NIK yang hanya mirip
     TIDAK memecah seri — NIK yang tidak persis sama bukan bukti.
 
-    Kandidat diurutkan dari yang paling masuk akal — NIK berbeda <=
-    BEDA_DIGIT_NIK digit dari NIK berkas, lalu tempat lahir sama, lalu NIK —
-    karena portal hanya membandingkan baris dengan kandidat pertama
-    (`master_nik`/`master_snapshot`). Tanpa urutan ini yang tampil adalah NIK
-    terkecil, yang bisa saja orang dengan tempat lahir berbeda.
+    Kandidat diurutkan dari yang paling dekat dengan berkas — ketiga kunci
+    identitasnya sudah sama, jadi hanya atribut sisa yang membedakan:
+
+      1. NIK berbeda <= BEDA_DIGIT_NIK digit dari NIK berkas;
+      2. kesamaan KATA tempat lahir: bagian kata yang dimiliki keduanya dari
+         yang lebih pendek. "prov. aceh" vs "aceh" = 1, vs "jawa timur" = 0.
+         Jaro-Winkler saja menilai awalan "prov."/"kab." sebagai beda besar,
+         dan pernah menaruh JAWA TIMUR di atas ACEH untuk "PROV. ACEH";
+      3. Jaro-Winkler tempat lahir (salah ketik: "bogr" vs "bogor");
+      4. NIK, supaya urutannya sama setiap dijalankan.
+
+    Yang pertama menjadi `master_nik` — portal hanya membandingkan baris dengan
+    kandidat itu — dan MAKS_KANDIDAT teratas disimpan untuk reasoning.
+    `n_kandidat` tetap jumlah seluruhnya.
     """
     con.execute(f"""
         CREATE OR REPLACE TABLE p2 AS
@@ -389,8 +406,9 @@ def pass2(con) -> None:
                    CASE WHEN length(i.nik) = length(m.nik)
                         THEN hamming(i.nik, m.nik) <= {BEDA_DIGIT_NIK}
                         ELSE FALSE END AS nik_dekat,
-                   COALESCE(nullif(i.tempat_lahir_clean, '')
-                            = m.tempat_lahir_master_clean, FALSE) AS tempat_sama
+                   {_sql_kata('i.tempat_lahir_clean')} AS kata_i,
+                   {_sql_kata('m.tempat_lahir_master_clean')} AS kata_m,
+                   j(i.tempat_lahir_clean, m.tempat_lahir_master_clean) AS mirip_tempat
             FROM incoming_semua i
             JOIN master_df m
               ON  i.nama_clean = m.nama_master_clean
@@ -403,7 +421,11 @@ def pass2(con) -> None:
         ),
         -- Satu baris per (incoming, NIK): master bisa memuat NIK yang sama dua kali.
         per_nik AS (
-            SELECT id, nik, bool_or(nik_dekat) AS dekat, bool_or(tempat_sama) AS tempat_sama,
+            SELECT id, nik, bool_or(nik_dekat) AS dekat,
+                   max(CASE WHEN least(len(kata_i), len(kata_m)) = 0 THEN 0.0
+                            ELSE len(list_intersect(kata_i, kata_m))
+                                 / least(len(kata_i), len(kata_m)) END) AS kata_tempat,
+                   max(mirip_tempat) AS mirip_tempat,
                    bool_or(nik_milik_lain) AS nik_milik_lain
             FROM cocok
             WHERE NOT bertentangan
@@ -411,13 +433,14 @@ def pass2(con) -> None:
         ),
         urut AS (
             SELECT id, count(*) AS n_kandidat,
-                   list(nik ORDER BY dekat DESC, tempat_sama DESC, nik) AS calon,
+                   list(nik ORDER BY dekat DESC, kata_tempat DESC, mirip_tempat DESC, nik)
+                       AS calon,
                    bool_or(nik_milik_lain) AS nik_milik_lain
             FROM per_nik GROUP BY id
         )
         SELECT id, n_kandidat,
                calon[1] AS nik,
-               calon[2] AS nik_2,   -- kandidat kedua, bila CONFLICT
+               calon[1:{MAKS_KANDIDAT}] AS calon,   -- rincian CONFLICT
                nik_milik_lain
         FROM urut
     """)
@@ -431,11 +454,13 @@ def pass3(con, grade: int, aturan: dict, kueri: str) -> None:
     dibatasi ke baris yang tersisa, jadi query-nya berjalan tanpa diubah satu
     huruf pun — ia tidak tahu dirinya sedang jadi pass ketiga.
 
-    Pemenang dipilih dengan AGREGASI (`arg_min(..., 2)`), bukan window
-    function: memorinya dua kandidat per baris incoming, berapa pun jumlah
-    pasangannya. Dua teratas sekaligus memberi deteksi seri tanpa pemindaian
-    kedua — dan membedakan seri sungguhan (dua NIK berbeda) dari baris master
-    ganda (NIK yang sama muncul dua kali), yang bukan konflik.
+    Pemenang dipilih dengan AGREGASI (`arg_min(..., n)`), bukan window
+    function: memorinya n kandidat per baris incoming, berapa pun jumlah
+    pasangannya. Yang teratas sekaligus memberi deteksi seri tanpa pemindaian
+    kedua. NIK yang muncul lebih dari sekali (baris master ganda) disisakan
+    satu dulu — itu bukan konflik. Semua yang skornya dalam `epsilon` dari skor
+    tertinggi adalah kandidat seri: dua atau lebih = CONFLICT. Seri dihitung
+    dari 2 x MAKS_KANDIDAT teratas, jadi `n_seri` paling besar sebanyak itu.
 
     Bobot (`bobot`), elemen kosong (`elemen_kosong`), dan selisih seri
     (`epsilon`) dari konfigurasi grade; yang tidak ada memakai bawaan.
@@ -474,20 +499,28 @@ def pass3(con, grade: int, aturan: dict, kueri: str) -> None:
         agg AS (
             SELECT id,
                    arg_min({{'nik': nik_master, 'skor': skor, 'miss': missing_count}},
-                           {{'a': -skor, 'b': nik_master}}, 2) AS top,
+                           {{'a': -skor, 'b': nik_master}}, {2 * MAKS_KANDIDAT}) AS top,
                    count(nik_master) AS n_kandidat
             FROM skor GROUP BY id
+        ),
+        unik AS (
+            -- Kemunculan pertama tiap NIK; urutannya (skor turun, NIK) tetap.
+            SELECT id, n_kandidat,
+                   list_filter(top, (x, i) -> NOT list_contains(
+                       list_transform(top[1:i - 1], y -> y.nik), x.nik)) AS top
+            FROM agg
         ),
         s AS (
             SELECT id, n_kandidat,
                    top[1].nik AS nik, top[1].skor AS skor, top[1].miss AS missing_count,
-                   top[2].nik AS nik_2, top[2].skor AS skor_2,
-                   (len(top) = 2 AND top[2].nik IS NOT NULL
-                    AND top[1].nik <> top[2].nik
-                    AND top[1].skor - top[2].skor <= {eps}) AS seri
-            FROM agg
+                   list_filter(top, x -> x.nik IS NOT NULL
+                                         AND top[1].skor - x.skor <= {eps}) AS seri_daftar
+            FROM unik
         )
-        SELECT s.id, s.n_kandidat, s.nik, s.skor, s.seri, s.nik_2, s.skor_2,
+        SELECT s.id, s.n_kandidat, s.nik, s.skor,
+               len(s.seri_daftar) > 1 AS seri,
+               len(s.seri_daftar) AS n_seri,
+               s.seri_daftar[1:{MAKS_KANDIDAT}] AS calon,
                CASE WHEN s.nik IS NULL THEN 3 ELSE {SQL_KLASIFIKASI} END AS kelas
         FROM s CROSS JOIN ({_sql_aturan(aturan)}) r
     """)
@@ -503,23 +536,29 @@ def gabung(con) -> None:
     yang salah. Skornya tetap disimpan. `rank_conflict` pun FALSE untuk
     UNMATCH: dua kandidat yang seri di bawah ambang tetap sama-sama ditolak.
 
-    `nik_2`/`skor_2`: kandidat kedua untuk CONFLICT, bahan reasoning.
+    Khusus CONFLICT: `n_seri` = jumlah kandidat yang seri, `kandidat` =
+    MAKS_KANDIDAT teratas di antaranya (NIK + skor), urut seperti yang
+    ditampilkan — yang pertama adalah `master_nik`. Bahan reasoning.
     """
-    con.execute("""
+    tipe = "STRUCT(nik VARCHAR, skor DOUBLE)[]"
+    con.execute(f"""
         CREATE OR REPLACE TABLE keputusan AS
         SELECT id, nik AS master_nik, 100.0 AS skor,
                CASE WHEN n_kandidat > 1 THEN 'CONFLICT' ELSE 'AUTO' END AS status,
                'PASS1_NIK_NAMA' AS method, n_kandidat > 1 AS rank_conflict,
                n_kandidat, FALSE AS nik_milik_lain,
-               CAST(NULL AS VARCHAR) AS nik_2, CAST(NULL AS DOUBLE) AS skor_2
+               CASE WHEN n_kandidat > 1 THEN n_kandidat END AS n_seri,
+               CASE WHEN n_kandidat > 1 THEN CAST(list_transform(
+                   calon, x -> {{'nik': x, 'skor': 100.0}}) AS {tipe}) END AS kandidat
         FROM p1
         UNION ALL
         SELECT id, nik, 100.0,
                CASE WHEN n_kandidat > 1 THEN 'CONFLICT'
                     WHEN nik_milik_lain THEN 'REVIEW' ELSE 'AUTO' END,
                'PASS2_NAMA_TGL_IBU', n_kandidat > 1, n_kandidat, nik_milik_lain,
-               CASE WHEN n_kandidat > 1 THEN nik_2 END,
-               CASE WHEN n_kandidat > 1 THEN 100.0 END
+               CASE WHEN n_kandidat > 1 THEN n_kandidat END,
+               CASE WHEN n_kandidat > 1 THEN CAST(list_transform(
+                   calon, x -> {{'nik': x, 'skor': 100.0}}) AS {tipe}) END
         FROM p2
         UNION ALL
         SELECT id,
@@ -529,8 +568,9 @@ def gabung(con) -> None:
                     WHEN seri THEN 'CONFLICT'
                     WHEN kelas = 1 THEN 'AUTO' ELSE 'REVIEW' END,
                'SCORING', seri AND NOT tolak, n_kandidat, FALSE,
-               CASE WHEN seri AND NOT tolak THEN nik_2 END,
-               CASE WHEN seri AND NOT tolak THEN round(skor_2, 2) END
+               CASE WHEN seri AND NOT tolak THEN n_seri END,
+               CASE WHEN seri AND NOT tolak THEN CAST(list_transform(
+                   calon, x -> {{'nik': x.nik, 'skor': round(x.skor, 2)}}) AS {tipe}) END
         FROM (SELECT *, nik IS NULL OR kelas = 3 AS tolak FROM p3)
         UNION ALL
         -- Jaring pengaman: query grade yang memakai INNER JOIN tidak memancarkan
@@ -587,8 +627,11 @@ def susun_pasangan(con, master: str, bersih: dict | None = None) -> None:
 
     Satu tabel yang dibaca DUA tahap — reasoning dan snapshot — supaya
     keduanya melihat pasangan yang sama persis. Master diambil lewat semi-join
-    pada NIK pemenang dan kandidat kedua saja: satu pemindaian master dengan
+    pada NIK pemenang dan kandidat CONFLICT saja: satu pemindaian master dengan
     daftar NIK kecil sebagai filter, bukan join penuh.
+
+    `kand`: rincian kandidat CONFLICT (NIK, skor, nama, tempat & tanggal lahir
+    master) sesuai urutan `keputusan.kandidat`, untuk reasoning.
     """
     con.execute(f"""
         CREATE OR REPLACE TABLE master_terpilih AS
@@ -603,12 +646,28 @@ def susun_pasangan(con, master: str, bersih: dict | None = None) -> None:
         FROM read_parquet('{master}')
         WHERE nik IN (SELECT master_nik FROM keputusan WHERE master_nik IS NOT NULL
                       UNION ALL
-                      SELECT nik_2 FROM keputusan WHERE nik_2 IS NOT NULL)
+                      SELECT unnest(list_transform(kandidat, x -> x.nik))
+                      FROM keputusan WHERE kandidat IS NOT NULL)
+    """)
+    con.execute(f"""
+        CREATE OR REPLACE TABLE kandidat_rinci AS
+        SELECT u.id,
+               list({{'nik': u.nik, 'skor': u.skor, 'nama': m.nama_lengkap,
+                      'tempat': m.tempat_lahir, 'tgl': m.tanggal_lahir_master_clean}}
+                    ORDER BY u.urut) AS kand
+        FROM (SELECT k.id, r.urut, k.kandidat[r.urut].nik AS nik,
+                     k.kandidat[r.urut].skor AS skor
+              FROM keputusan k
+              JOIN (SELECT unnest(range(1, {MAKS_KANDIDAT} + 1)) AS urut) r
+                ON r.urut <= len(k.kandidat)
+              WHERE k.kandidat IS NOT NULL) u
+        LEFT JOIN master_terpilih m ON m.nik = u.nik
+        GROUP BY u.id
     """)
     con.execute(f"""
         CREATE OR REPLACE TABLE pasangan AS
         SELECT k.id, k.master_nik, k.skor, k.status, k.method, k.rank_conflict,
-               k.n_kandidat, k.nik_2, k.skor_2,
+               k.n_kandidat, k.n_seri, kd.kand,
                CASE WHEN k.status IN ('REVIEW', 'CONFLICT') THEN {sql_pola()} END
                    AS pattern_group,
                -- NIK berkas ini milik SESEORANG di master (hanya NIK tepercaya
@@ -628,12 +687,11 @@ def susun_pasangan(con, master: str, bersih: dict | None = None) -> None:
                m.jenis_kelamin AS m_jk,
                m.nama_ibu AS m_ibu, m.nama_ibu_master_clean AS m_ibu_clean,
                m.tempat_lahir AS m_tmp, m.tempat_lahir_master_clean AS m_tmp_clean,
-               m.provinsi_asli AS m_provinsi,
-               m2.nama_lengkap AS k2_nama, m2.tanggal_lahir_master_clean AS k2_tgl
+               m.provinsi_asli AS m_provinsi
         FROM keputusan k
         JOIN incoming_semua i ON i.id = k.id
         LEFT JOIN master_terpilih m ON m.nik = k.master_nik
-        LEFT JOIN master_terpilih m2 ON m2.nik = k.nik_2
+        LEFT JOIN kandidat_rinci kd ON kd.id = k.id
     """)
 
 

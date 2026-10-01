@@ -118,7 +118,7 @@ di halaman "Parameter Koneksi" (grading), dan `MATCHING_SERVICE_URL` +
 ## 7. REDEPLOY
 
 ```bash
-cd ~/syncrono/service/synchrono-service && git pull
+cd ~/syncrono/service/engine/synchrono-service && git pull
 ```
 
 | Yang berubah | Perintah |
@@ -150,6 +150,18 @@ dc restart synchrono-service      # lib/ di-mount: cukup restart
 
 Tidak mengubah hasil apa pun sampai `matching.dateMatch` dipasang lewat API
 (KONFIGURASI.md).
+
+**Kandidat CONFLICT (1 Okt 2026)** — `lib/` saja, tanpa migrasi:
+
+```bash
+git pull && dc restart synchrono-service
+```
+
+Status tidak berubah. Kandidat pertama CONFLICT kini yang paling dekat dengan
+berkas (NIK, lalu tempat lahir), reasoning menyebut hingga 5 kandidat beserta
+tempat lahirnya, dan seri Pass 3 lebih dari dua orang kini terdeteksi
+(MATCHING.md §3). Berlaku untuk matching berikutnya — hasil lama tidak ikut
+berubah sampai berkasnya di-match ulang.
 
 **Pembaruan konfigurasi dinamis (30 Sep 2026)** mengubah `lib/`, `app/`,
 `components/`, dan menambah migrasi `006_config_dinamis` dan

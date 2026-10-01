@@ -76,7 +76,7 @@ from collections import Counter
 from _jobs import q
 from _llm import _lokal
 from _nama import sql_bersih
-from _shared import GENDER_L, GENDER_P, _sql_daftar
+from _shared import GENDER_L, GENDER_P, MAKS_KANDIDAT, _sql_daftar
 
 BASE_URL = os.getenv("REASONING_AI_BASE_URL", "").strip().strip('"')
 MODEL = os.getenv("REASONING_AI_MODEL", "").strip() or "gemma3:12b"
@@ -144,14 +144,20 @@ NILAI = {
     "{master.nama_ibu}": _teks("m_ibu"),
     "{incoming.tempat_lahir}": _teks("i_tmp"),
     "{master.tempat_lahir}": _teks("m_tmp"),
-    "{kandidat2.nik}": _teks("nik_2"),
-    "{kandidat2.nama}": _teks("k2_nama"),
-    "{kandidat2.tanggal_lahir}": _iso("k2_tgl"),
     "{skor}": "CAST(skor AS VARCHAR)",
-    "{skor2}": "CAST(skor_2 AS VARCHAR)",
     "{jw_nama}": "CAST(round(j(i_nama_clean, m_nama_clean) * 100, 1) AS VARCHAR)",
     "{n_kandidat}": "CAST(n_kandidat AS VARCHAR)",
+    "{n_seri}": "CAST(n_seri AS VARCHAR)",
 }
+# Kandidat CONFLICT ke-n, dari `pasangan.kand` (lihat _matching.susun_pasangan).
+for _n in range(1, MAKS_KANDIDAT + 1):
+    NILAI |= {
+        f"{{kandidat{_n}.nik}}": _teks(f"kand[{_n}].nik"),
+        f"{{kandidat{_n}.nama}}": _teks(f"kand[{_n}].nama"),
+        f"{{kandidat{_n}.tempat_lahir}}": _teks(f"kand[{_n}].tempat"),
+        f"{{kandidat{_n}.tanggal_lahir}}": _iso(f"kand[{_n}].tgl"),
+        f"{{kandidat{_n}.skor}}": f"CAST(kand[{_n}].skor AS VARCHAR)",
+    }
 
 
 # ── Vonis & signature (SQL) ─────────────────────────────────────────────────
@@ -224,12 +230,11 @@ def sql_tanda(ada: dict[str, bool]) -> str:
         WHEN status = 'UNMATCH' THEN concat_ws('|', 'status=UNMATCH',
             'sebab=' || CASE WHEN n_kandidat = 0 THEN 'NO_CANDIDATE' ELSE 'SCORED' END,
             {rangkai(_keadaan_incoming)})
-        WHEN status = 'CONFLICT' AND method = 'SCORING' THEN concat_ws('|',
-            'status=CONFLICT', 'metode=SCORING',
-            'k2tgl=' || CASE WHEN m_tgl IS NULL OR k2_tgl IS NULL THEN 'NA'
-                             WHEN m_tgl = k2_tgl THEN 'SAME' ELSE 'DIFFERENT' END)
+        -- tampil = berapa kandidat yang dirinci (<= MAKS_KANDIDAT); lebih = ada
+        -- kandidat seri lain yang tidak ikut dirinci.
         WHEN status = 'CONFLICT' THEN concat_ws('|', 'status=CONFLICT', 'metode=' || method,
-            'jumlah=' || CASE WHEN n_kandidat > 2 THEN 'BANYAK' ELSE 'DUA' END)
+            'tampil=' || CAST(COALESCE(len(kand), 0) AS VARCHAR),
+            'lebih=' || CASE WHEN n_seri > COALESCE(len(kand), 0) THEN 'YA' ELSE 'TIDAK' END)
         ELSE concat_ws('|', 'status=' || status, 'metode=' || method,
             'pola=' || COALESCE(pattern_group, '-'),
             {rangkai(_vonis_master)})
@@ -370,27 +375,31 @@ def _templat_cocok(s: dict) -> str:
 
 
 def _templat_konflik(s: dict) -> str:
-    if s["metode"] == "SCORING":
-        # n_kandidat di sini menghitung SEMUA kandidat hasil blocking, bukan
-        # yang seri — jadi tidak disebut. Yang pasti seri hanya dua teratas.
-        buka = ("Dua kandidat teratas memiliki skor seimbang: Kandidat 1 NIK {master.nik} "
-                "({master.nama}, {skor}%) dan Kandidat 2 NIK {kandidat2.nik} "
-                "({kandidat2.nama}, {skor2}%)")
-        if s.get("k2tgl") == "SAME":
-            buka += ", dengan tanggal lahir sama ({master.tanggal_lahir})"
-        elif s.get("k2tgl") == "DIFFERENT":
-            buka += (", dengan tanggal lahir berbeda ({master.tanggal_lahir} vs "
-                     "{kandidat2.tanggal_lahir})")
+    """
+    Semua kandidat yang dirinci disebut, dengan tempat lahirnya — atribut yang
+    paling sering membedakan orang-orang yang identik di kunci pencocokan.
+    Pass 3 menambahkan tanggal lahir dan skor: di sana kandidat seri belum
+    tentu identik.
+    """
+    skor = s["metode"] == "SCORING"
+
+    def rinci(n: int) -> str:
+        k = f"kandidat{n}"
+        isi = f"{{{k}.nama}}, tempat lahir {{{k}.tempat_lahir}}"
+        if skor:
+            isi += f", tanggal lahir {{{k}.tanggal_lahir}}, skor {{{k}.skor}}%"
+        return f"Kandidat {n} NIK {{{k}.nik}} ({isi})"
+
+    if skor:
+        buka = "Sebanyak {n_seri} kandidat teratas memiliki skor seimbang"
     else:
         kriteria = ("NIK dan nama lengkap" if s["metode"] == "PASS1_NIK_NAMA"
                     else "nama lengkap, tanggal lahir, dan nama ibu kandung")
-        pasangan = ("Kandidat 1 NIK {master.nik} ({master.nama}) dan Kandidat 2 NIK "
-                    "{kandidat2.nik} ({kandidat2.nama})")
-        if s.get("jumlah") == "BANYAK":
-            buka = (f"Ditemukan {{n_kandidat}} kandidat master dengan {kriteria} identik, "
-                    f"antara lain {pasangan}")
-        else:
-            buka = f"Ditemukan 2 kandidat master dengan {kriteria} identik: {pasangan}"
+        buka = f"Ditemukan {{n_seri}} kandidat master dengan {kriteria} identik"
+    tampil = int(s.get("tampil", "0"))
+    if tampil >= 2:
+        buka += f"; {tampil} di antaranya" if s.get("lebih") == "YA" else ""
+        buka += ": " + _daftar([rinci(n) for n in range(1, tampil + 1)])
     return buka + ". Sistem tidak memilih salah satunya secara otomatis."
 
 

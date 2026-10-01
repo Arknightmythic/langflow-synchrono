@@ -394,6 +394,10 @@ def _pasangan(field: str) -> tuple[str, str]:
 #               "hampir sama", melainkan dua hari yang berbeda.
 COCOK_TANGGAL = ("similarity", "exact")
 
+# Kandidat CONFLICT yang disimpan dan disebut di reasoning, per baris. Jumlah
+# seluruhnya tetap dihitung dan disebut; hanya rinciannya yang dibatasi.
+MAKS_KANDIDAT = 5
+
 
 def _suku_skor(field: str, cocok_tanggal: str = "similarity") -> str:
     """Kemiripan satu elemen, 0-1. Sisi yang kosong bernilai 0 (macro `j`)."""
