@@ -1,6 +1,6 @@
 x-engine: &engine
   image: synchrono-service-starrocks:${IMAGE_TAG:-dev}
-  build: .
+  pull_policy: never
   restart: unless-stopped
   env_file: ${ENV_FILE:-.env}
   environment:
@@ -21,6 +21,8 @@ services:
 
   schema:
     <<: *engine
+    build: .
+    pull_policy: build
     container_name: ${PREFIX:-synchrono-sr}-schema
     restart: "no"
     command: ["python", "schema/apply.py"]
