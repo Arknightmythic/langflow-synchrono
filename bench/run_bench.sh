@@ -14,6 +14,7 @@ RESULTS=$NEW/bench/results
 RUN_ID=${RUN_ID:-$TARGET-$(date +%Y%m%d-%H%M%S)}
 NET=${SHARED_NETWORK:-synchrono-shared}
 mkdir -p "$RESULTS"
+chmod a+rwx "$RESULTS" 2>/dev/null || true
 
 if [ "$TARGET" = old ]; then
   bash "$HERE/stack.sh" stop-new
