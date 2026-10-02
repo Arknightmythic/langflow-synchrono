@@ -52,7 +52,9 @@ def ensure() -> dict | None:
         if "result" in _state and (_state["result"] or time.monotonic() - _state["at"] < 300):
             return _state["result"]
         result = None
-        if cfg.UDF_JAR_URL and jar_version():
+        if cfg.UDF_JAR_URL and not jar_version():
+            print(f"[UDF] jar not found at {JAR_PATH}, scoring stays in DuckDB", flush=True)
+        elif cfg.UDF_JAR_URL:
             fn = names()
             try:
                 if not _works(fn):
