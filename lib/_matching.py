@@ -505,8 +505,12 @@ def pass3(con, grade: int, aturan: dict, kueri: str) -> None:
         ),
         unik AS (
             -- Kemunculan pertama tiap NIK; urutannya (skor turun, NIK) tetap.
+            -- `x.nik IS NULL` dipertahankan: itu baris tanpa kandidat (LEFT JOIN
+            -- grade 1-3), dan list_contains(..., NULL) bernilai NULL — tanpa
+            -- penjaga ini barisnya terbuang, skornya NULL, dan penyuntikan ke
+            -- portal gagal (kolom score NOT NULL).
             SELECT id, n_kandidat,
-                   list_filter(top, (x, i) -> NOT list_contains(
+                   list_filter(top, (x, i) -> x.nik IS NULL OR NOT list_contains(
                        list_transform(top[1:i - 1], y -> y.nik), x.nik)) AS top
             FROM agg
         ),
