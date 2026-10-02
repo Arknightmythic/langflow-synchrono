@@ -1,0 +1,55 @@
+x-engine: &engine
+  image: synchrono-service-starrocks:${IMAGE_TAG:-dev}
+  build: .
+  restart: unless-stopped
+  env_file: ${ENV_FILE:-.env}
+  environment:
+    CELERY_BROKER_URL: redis://valkey:6379/0
+    WORK_DIR: /work
+    DUCKDB_TEMP_DIR: /work/spill
+  volumes:
+    - ${WORK_VOLUME:-work}:/work
+
+services:
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: ${PREFIX:-synchrono-sr}-valkey
+    restart: unless-stopped
+    command: ["valkey-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - valkey:/data
+
+  schema:
+    <<: *engine
+    container_name: ${PREFIX:-synchrono-sr}-schema
+    restart: "no"
+    command: ["python", "schema/apply.py"]
+
+  api:
+    <<: *engine
+    container_name: ${PREFIX:-synchrono-sr}-api
+    ports:
+      - "${API_PORT:-7870}:8000"
+    depends_on:
+      valkey:
+        condition: service_started
+      schema:
+        condition: service_completed_successfully
+
+  worker-grading:
+    <<: *engine
+    container_name: ${PREFIX:-synchrono-sr}-worker-grading
+    command: ["celery", "-A", "worker.celery_app", "worker", "-Q", "grading",
+              "-c", "${GRADING_CONCURRENCY:-${GRADING_MAX_CONCURRENT:-2}}", "-n", "grading@%h", "--loglevel", "INFO"]
+    depends_on: [valkey, schema]
+
+  worker-matching:
+    <<: *engine
+    container_name: ${PREFIX:-synchrono-sr}-worker-matching
+    command: ["celery", "-A", "worker.celery_app", "worker", "-Q", "matching",
+              "-c", "${MATCHING_CONCURRENCY:-${MATCHING_MAX_CONCURRENT:-1}}", "-n", "matching@%h", "--loglevel", "INFO"]
+    depends_on: [valkey, schema]
+
+volumes:
+  valkey:
+  work:

@@ -1,0 +1,55 @@
+CREATE TABLE IF NOT EXISTS ${DB_PORTAL}.matching_jobs (
+    id                     VARCHAR(64)   NOT NULL,
+    file_id                VARCHAR(255)  NOT NULL,
+    master_file_id         VARCHAR(255)  NOT NULL,
+    status                 VARCHAR(32)   NOT NULL,
+    current_stage          VARCHAR(32),
+    started_at             DATETIME,
+    completed_at           DATETIME,
+    failed_at              DATETIME,
+    last_error             VARCHAR(65533),
+    total_incoming         BIGINT,
+    total_candidates       BIGINT,
+    avg_candidates_per_row DOUBLE,
+    pass1_count            BIGINT,
+    pass2_count            BIGINT,
+    scoring_count          BIGINT,
+    auto_count             BIGINT,
+    review_count           BIGINT,
+    unmatch_count          BIGINT,
+    conflict_count         BIGINT,
+    stage_durations        JSON,
+    blocking_metrics       JSON,
+    peak_rss_mb            INT,
+    result_parquet_key     VARCHAR(512),
+    created_at             DATETIME      NOT NULL,
+    created_by             VARCHAR(255),
+    updated_at             DATETIME,
+    updated_by             VARCHAR(255)
+) PRIMARY KEY (id)
+DISTRIBUTED BY HASH(id) BUCKETS 1
+PROPERTIES ("replication_num" = "${REPLICATION}");
+
+CREATE TABLE IF NOT EXISTS ${DB_PORTAL}.matching_results (
+    id                VARCHAR(64)    NOT NULL,
+    csv_file_id       VARCHAR(255)   NOT NULL,
+    master_file_id    VARCHAR(255)   NOT NULL,
+    job_id            VARCHAR(64)    NOT NULL,
+    id_incoming       VARCHAR(255)   NOT NULL,
+    master_nik        VARCHAR(64),
+    score             DOUBLE         NOT NULL,
+    status            VARCHAR(32)    NOT NULL,
+    method            VARCHAR(32)    NOT NULL,
+    rank_conflict     BOOLEAN        NOT NULL,
+    pattern_group     VARCHAR(64),
+    reasoning         VARCHAR(65533),
+    incoming_snapshot JSON           NOT NULL,
+    master_snapshot   JSON,
+    review_decision   VARCHAR(32),
+    created_at        DATETIME       NOT NULL,
+    updated_at        DATETIME       NOT NULL,
+    created_by        VARCHAR(255)   NOT NULL,
+    updated_by        VARCHAR(255)   NOT NULL
+) PRIMARY KEY (id)
+DISTRIBUTED BY HASH(id) BUCKETS ${BUCKETS}
+PROPERTIES ("replication_num" = "${REPLICATION}", "enable_persistent_index" = "true");

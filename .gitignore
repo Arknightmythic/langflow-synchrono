@@ -1,0 +1,6 @@
+.env
+bench/.data/
+bench/results/
+__pycache__/
+*.pyc
+.env.bench

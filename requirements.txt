@@ -1,0 +1,8 @@
+duckdb==1.5.5
+pyarrow==23.0.1
+rapidfuzz==3.14.5
+pytz==2025.2
+PyMySQL>=1.1,<2
+fastapi==0.121.2
+uvicorn[standard]==0.41.0
+celery[redis]>=5.5,<6

@@ -1,0 +1,15 @@
+# Benchmark only: attach the service to the network shared with the bench stack (bench/stack.sh).
+services:
+  api:
+    networks: [default, shared]
+  worker-grading:
+    networks: [default, shared]
+  worker-matching:
+    networks: [default, shared]
+  schema:
+    networks: [default, shared]
+
+networks:
+  shared:
+    name: ${SHARED_NETWORK:-synchrono-shared}
+    external: true
