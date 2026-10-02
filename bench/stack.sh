@@ -92,6 +92,10 @@ new_env() {
       -e "s|^NORMALISASI_AI_BASE_URL=.*|NORMALISASI_AI_BASE_URL=|" \
       -e "s|^REASONING_AI_BASE_URL=.*|REASONING_AI_BASE_URL=|" \
       "$NEW/.env.example" > "$NEW/.env.bench"
+  local host=${UDF_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}
+  if [ -n "$host" ]; then
+    sed -i "s|^UDF_JAR_URL=.*|UDF_JAR_URL=http://$host:$NEW_PORT/udf/synchrono-udf.jar|" "$NEW/.env.bench"
+  fi
 }
 
 compose_new() {

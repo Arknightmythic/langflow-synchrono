@@ -99,4 +99,6 @@ CONVERTER_URLS = {
 }
 CONVERTER_TIMEOUT = env_int("KONVERTER_BATAS_DETIK", 2100)
 
+UDF_JAR_URL = env("UDF_JAR_URL")
+
 ENGINE_ACTOR = "DataScienceMatchingEngine"

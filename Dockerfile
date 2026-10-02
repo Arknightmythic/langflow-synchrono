@@ -1,3 +1,7 @@
+FROM eclipse-temurin:17-jdk AS udf
+COPY udf/src /udf/src
+RUN mkdir -p /udf/classes && javac --release 11 -d /udf/classes $(find /udf/src -name '*.java')
+
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -15,6 +19,8 @@ COPY app ./app
 COPY worker ./worker
 COPY schema ./schema
 COPY tools ./tools
+COPY --from=udf /udf/classes /tmp/udf-classes
+RUN python tools/build_udf_jar.py /tmp/udf-classes /srv/udf/synchrono-udf.jar && rm -rf /tmp/udf-classes
 
 EXPOSE 8000
 

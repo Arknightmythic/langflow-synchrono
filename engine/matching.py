@@ -2,7 +2,7 @@ import hashlib
 import resource
 import time
 
-from . import duck, grading, master, names, reasoning, rules, sr
+from . import duck, grading, master, names, reasoning, rules, sr, udf
 from . import settings as cfg
 from .jobs import post_json
 from .sql import now_text, sjson, sq
@@ -453,6 +453,189 @@ def pass3(w: Work, con, rules_: dict, file_id: str, master_id: str, nv: str, mv:
     return {"pairs": pairs, "rows": con.execute("SELECT count(*) FROM p3").fetchone()[0]}
 
 
+MASTER_SIDE = {"nik_master": "nik", "nama_master_clean": "{nv}", "nama_master_full": "name_v3",
+               "tempat_lahir_master_clean": "pob_c", "tanggal_lahir_master_clean": "tanggal_lahir",
+               "jenis_kelamin_master_clean": "sex_c", "nama_ibu_master_clean": "{mv}",
+               "provinsi_master_clean": "prov_c", "kabupaten_master_clean": "kab_c",
+               "kecamatan_master_clean": "kec_c", "kelurahan_master_clean": "kel_c"}
+INCOMING_SIDE = {"nik_incoming": "nik", "nama_clean": "{nv}", "nama_full": "name_v3",
+                 "tempat_lahir_clean": "pob_c", "tanggal_lahir_clean": "dob",
+                 "jenis_kelamin_clean": "sex_c", "nama_ibu_clean": "{mv}", "provinsi_clean": "prov_c",
+                 "kabupaten_clean": "kab_c", "kecamatan_clean": "kec_c", "kelurahan_clean": "kel_c"}
+
+
+def _double(value) -> str:
+    return "CAST(NULL AS DOUBLE)" if value is None else f"CAST({float(value)!r} AS DOUBLE)"
+
+
+def _jw(fn: dict, a: str, b: str) -> str:
+    return (f"(CASE WHEN {a} IS NULL OR {b} IS NULL OR {a} = '' OR {b} = '' "
+            f"THEN CAST(0.0 AS DOUBLE) ELSE {fn['jw']}({a}, {b}) END)")
+
+
+def _term_columns(fn: dict, weights: list, date_match: str) -> dict[str, str]:
+    terms = {}
+    for field, share in weights:
+        if not share:
+            continue
+        if field == "wilayah":
+            for w in REGIONS:
+                terms[f"t_{w}"] = (f"CASE WHEN nullif({w}_clean, '') IS NOT NULL AND "
+                                   f"nullif({w}_master_clean, '') IS NOT NULL THEN "
+                                   f"{_jw(fn, f'{w}_clean', f'{w}_master_clean')} END")
+            continue
+        left = f"{field}_clean"
+        right = "nama_master_clean" if field == "nama" else f"{field}_master_clean"
+        if field == "tanggal_lahir" and date_match == "exact":
+            terms[f"t_{field}"] = (f"CASE WHEN CAST({left} AS DATE) = CAST({right} AS DATE) "
+                                   f"THEN CAST(1.0 AS DOUBLE) ELSE CAST(0.0 AS DOUBLE) END")
+        elif field == "tanggal_lahir":
+            terms[f"t_{field}"] = _jw(fn, f"CAST({left} AS VARCHAR)", f"CAST({right} AS VARCHAR)")
+        else:
+            terms[f"t_{field}"] = _jw(fn, left, right)
+    return terms
+
+
+def _score_expr(weights: list) -> str:
+    parts = []
+    for field, share in weights:
+        if not share:
+            continue
+        if field == "wilayah":
+            values = [f"t_{w}" for w in REGIONS]
+            total = " + ".join(f"COALESCE({v}, CAST(0.0 AS DOUBLE))" for v in values)
+            count = " + ".join(f"(CASE WHEN {v} IS NULL THEN 0 ELSE 1 END)" for v in values)
+            term = (f"COALESCE(({total}) / CAST(nullif({count}, 0) AS DOUBLE), "
+                    f"CAST(0.0 AS DOUBLE))")
+        else:
+            term = f"t_{field}"
+        parts.append(f"{term} * {_double(float(share) / 100)}")
+    return f"({' + '.join(parts)}) * CAST(100 AS DOUBLE)" if parts else "CAST(0.0 AS DOUBLE)"
+
+
+def _classify(rules_: dict) -> str:
+    amax, rcnt = rules_["auto_missing_max"], rules_["review_missing_count"]
+    auto_n = "TRUE" if amax is None else f"miss <= {int(amax)}"
+    review_n = "TRUE" if rcnt is None else f"miss = {int(rcnt)}"
+    return (f"CASE WHEN ({auto_n}) AND skor >= {_double(rules_['auto_score_min'])} THEN 1 "
+            f"WHEN ({review_n}) AND skor >= {_double(rules_['review_score_min'])} "
+            f"AND skor < {_double(rules_['review_score_max'])} THEN 2 ELSE 3 END")
+
+
+def blocking_sr_sql(w: Work, blocking: dict, file_id: str, master_id: str, nv: str, mv: str) -> str:
+    remaining = (f"(SELECT * FROM {KL}.records WHERE file_id = {sq(file_id)} "
+                 f"AND row_id NOT IN (SELECT id FROM {w.t('p1')}) "
+                 f"AND row_id NOT IN (SELECT id FROM {w.t('dec')}))")
+    persons = f"(SELECT * FROM {MASTER}.persons WHERE master_id = {sq(master_id)})"
+    master_cols = ", ".join(f"m.{c.format(nv=nv, mv=mv)} AS {alias}"
+                            for alias, c in MASTER_SIDE.items())
+    join = "LEFT JOIN" if blocking.get("join") == "left" else "JOIN"
+    branches = [f"SELECT i.row_id AS incoming_row_id, {master_cols} FROM {remaining} i {join} "
+                f"{persons} m ON {cond.replace('{name}', nv).replace('{mother}', mv)}"
+                for cond in blocking["branches"]]
+    union = " UNION ALL ".join(branches)
+    core = f"SELECT DISTINCT * FROM ({union}) u" if blocking.get("distinct") else union
+    incoming_cols = ", ".join(f"i.{c.format(nv=nv, mv=mv)} AS {alias}"
+                              for alias, c in INCOMING_SIDE.items())
+    return (f"SELECT b.*, {incoming_cols} FROM ({core}) b "
+            f"JOIN (SELECT * FROM {KL}.records WHERE file_id = {sq(file_id)}) i "
+            f"ON i.row_id = b.incoming_row_id")
+
+
+def pass3_starrocks(w: Work, fn: dict, rules_: dict, file_id: str, master_id: str, nv: str,
+                    mv: str, timings: dict) -> dict:
+    terms = _term_columns(fn, rules_["weights"], rules_["date_match"])
+    term_select = "".join(f", {expr} AS {name}" for name, expr in terms.items())
+    eps = _double(rules_["epsilon"])
+    rnd = fn["round"]
+    k_pivot = ", ".join(f"max(CASE WHEN kk = {k} THEN nik_master END) AS k{k}_nik, "
+                        f"max(CASE WHEN kk = {k} THEN skor END) AS k{k}_skor"
+                        for k in range(1, MAX_CANDIDATES + 1))
+    name_jw = _jw(fn, "c.nama_clean", "c.nama_master_clean")
+    pattern = f"""CASE WHEN NOT f.rejected AND (f.tie OR f.class = 2) THEN
+            CASE WHEN c.nik_incoming = f.nik AND {name_jw} < {_double(NAME_TOTAL_MISMATCH)}
+                     THEN 'NIK_CONFLICT'
+                 WHEN c.nama_clean <> c.nama_master_clean AND c.nama_full = c.nama_master_full
+                     THEN 'TITLE_DEGREE'
+                 WHEN c.dob_i IS NOT NULL AND c.dob_m IS NOT NULL
+                      AND CAST(c.dob_i AS DATE) <> CAST(c.dob_m AS DATE)
+                      AND day(c.dob_i) = month(c.dob_m) AND month(c.dob_i) = day(c.dob_m)
+                     THEN 'SWAPPED_DOB'
+                 WHEN c.nama_clean <> c.nama_master_clean
+                      AND {name_jw} >= {_double(SPELLING_THRESHOLD)} THEN 'SPELLING_NAME'
+                 ELSE 'GENERAL_REVIEW' END END"""
+    winner = "f.tie AND NOT f.rejected"
+    candidates = ", ".join(f"CASE WHEN {winner} THEN f.k{k}_nik END AS k{k}_nik, "
+                           f"CASE WHEN {winner} AND f.k{k}_nik IS NOT NULL "
+                           f"THEN {rnd}(f.k{k}_skor, 2) END AS k{k}_score"
+                           for k in range(1, MAX_CANDIDATES + 1))
+    t = time.perf_counter()
+    sr.execute(f"DROP TABLE IF EXISTS {w.t('p3')} FORCE")
+    sr.execute(f"""
+        CREATE TABLE {w.t('p3')} {PROPS} AS
+        WITH joined AS ({blocking_sr_sql(w, rules_['blocking'], file_id, master_id, nv, mv)}),
+        terms AS (
+            SELECT incoming_row_id AS id, nik_master, nik_incoming, nama_clean, nama_master_clean,
+                   nama_full, nama_master_full, tanggal_lahir_clean AS dob_i,
+                   tanggal_lahir_master_clean AS dob_m,
+                   {missing_sql(rules_['missing_elements'])} AS miss_all{term_select}
+              FROM joined),
+        scored AS (
+            SELECT *, CASE WHEN nik_master IS NULL THEN CAST(0.0 AS DOUBLE)
+                           ELSE {_score_expr(rules_['weights'])} END AS skor,
+                      CASE WHEN nik_master IS NULL THEN 0 ELSE miss_all END AS miss
+              FROM terms),
+        ranked AS (
+            SELECT id, nik_master, skor, miss,
+                   row_number() OVER (PARTITION BY id ORDER BY skor DESC,
+                                      nik_master ASC NULLS LAST) AS rn,
+                   count(nik_master) OVER (PARTITION BY id) AS n_candidates
+              FROM scored),
+        uniq AS (
+            SELECT * FROM (
+                SELECT r.*, row_number() OVER (PARTITION BY id, nik_master ORDER BY rn) AS k
+                  FROM ranked r WHERE rn <= {2 * MAX_CANDIDATES}) x
+             WHERE k = 1),
+        head AS (SELECT id, nik_master AS nik, skor, miss, n_candidates FROM uniq WHERE rn = 1),
+        tied AS (
+            SELECT u.id, u.nik_master, u.skor,
+                   row_number() OVER (PARTITION BY u.id ORDER BY u.rn) AS kk
+              FROM uniq u JOIN head h ON h.id = u.id
+             WHERE u.nik_master IS NOT NULL AND h.skor - u.skor <= {eps}),
+        tie_stats AS (SELECT id, count(*) AS n_tie, {k_pivot} FROM tied GROUP BY id),
+        decided AS (
+            SELECT h.*, COALESCE(s.n_tie, 0) AS n_tie, COALESCE(s.n_tie, 0) > 1 AS tie,
+                   {', '.join(f's.k{k}_nik, s.k{k}_skor' for k in range(1, MAX_CANDIDATES + 1))},
+                   CASE WHEN h.nik IS NULL THEN 3 ELSE {_classify(rules_)} END AS class
+              FROM head h LEFT JOIN tie_stats s ON s.id = h.id),
+        flagged AS (SELECT d.*, (d.nik IS NULL OR d.class = 3) AS rejected FROM decided d),
+        picked AS (
+            SELECT * FROM (
+                SELECT s.id, s.nik_incoming, s.nama_clean, s.nama_master_clean, s.nama_full,
+                       s.nama_master_full, s.dob_i, s.dob_m,
+                       row_number() OVER (PARTITION BY s.id ORDER BY
+                           s.nama_master_clean ASC NULLS LAST, s.nama_master_full ASC NULLS LAST,
+                           s.dob_m ASC NULLS LAST) AS pick
+                  FROM scored s JOIN flagged f ON f.id = s.id AND s.nik_master = f.nik
+                 WHERE NOT f.rejected) x
+             WHERE pick = 1)
+        SELECT f.id, CASE WHEN f.rejected THEN NULL ELSE f.nik END AS master_nik,
+               {rnd}(f.skor, 2) AS score,
+               CASE WHEN f.rejected THEN 'UNMATCH' WHEN f.tie THEN 'CONFLICT'
+                    WHEN f.class = 1 THEN 'AUTO' ELSE 'REVIEW' END AS status,
+               'SCORING' AS method, ({winner}) AS rank_conflict,
+               CAST(f.n_candidates AS BIGINT) AS n_candidates, FALSE AS owned,
+               CAST(CASE WHEN {winner} THEN f.n_tie END AS INT) AS n_tie,
+               {pattern} AS pattern_group,
+               CASE WHEN NOT f.rejected
+                    THEN {rnd}({name_jw} * CAST(100 AS DOUBLE), 1) END AS jw_name,
+               {candidates}
+          FROM flagged f LEFT JOIN picked c ON c.id = f.id""")
+    timings["blockingMs"] = int((time.perf_counter() - t) * 1000)
+    timings["candidatePullMs"] = 0
+    return {"engine": "starrocks", "rows": sr.scalar(f"SELECT count(*) FROM {w.t('p3')}")}
+
+
 def _load_decisions(w: Work, con, table: str, candidates: str) -> None:
     if con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]:
         select = ", ".join(f"CAST({c} AS INTEGER)" if c in ("rank_conflict", "owned") else c
@@ -464,39 +647,37 @@ def _load_decisions(w: Work, con, table: str, candidates: str) -> None:
                              w.name("cand"), CANDIDATE_COLUMNS)
 
 
-def assemble(w: Work, job: dict, master_id: str, n: int) -> int:
-    file_id = job["file_id"]
-    sr.execute(f"""
-        INSERT INTO {w.t('dec')}
-        SELECT id, nik, 100.0, CASE WHEN n_candidates > 1 THEN 'CONFLICT' ELSE 'AUTO' END,
-               'PASS1_NIK_NAMA', n_candidates > 1, n_candidates, FALSE,
-               CASE WHEN n_candidates > 1 THEN n_candidates END,
-               CASE WHEN n_candidates > 1 THEN 'GENERAL_REVIEW' END, 100.0
-          FROM {w.t('p1')}""")
-    sr.execute(f"INSERT INTO {w.t('cand')} " + " UNION ALL ".join(
-        f"SELECT id, {k}, candidates[{k}], 100.0 FROM {w.t('p1')} "
+def _records(file_id: str) -> str:
+    return f"(SELECT * FROM {KL}.records WHERE file_id = {sq(file_id)})"
+
+
+def decisions_cte(w: Work, file_id: str, p3: bool = False) -> str:
+    p1 = (f"SELECT id, nik, CAST(100.0 AS DOUBLE), "
+          f"CASE WHEN n_candidates > 1 THEN 'CONFLICT' ELSE 'AUTO' END, 'PASS1_NIK_NAMA', "
+          f"n_candidates > 1, CAST(n_candidates AS BIGINT), FALSE, "
+          f"CAST(CASE WHEN n_candidates > 1 THEN n_candidates END AS INT), "
+          f"CASE WHEN n_candidates > 1 THEN 'GENERAL_REVIEW' END, CAST(100.0 AS DOUBLE) "
+          f"FROM {w.t('p1')}")
+    unmatched = (f"SELECT row_id, CAST(NULL AS VARCHAR), CAST(0.0 AS DOUBLE), 'UNMATCH', 'SCORING', "
+                 f"FALSE, CAST(0 AS BIGINT), FALSE, CAST(NULL AS INT), CAST(NULL AS VARCHAR), "
+                 f"CAST(NULL AS DOUBLE) FROM {_records(file_id)} r WHERE r.row_id NOT IN "
+                 f"(SELECT id FROM {w.t('dec')} UNION ALL SELECT id FROM {w.t('p1')}"
+                 + (f" UNION ALL SELECT id FROM {w.t('p3')}" if p3 else "") + ")")
+    scored = f" UNION ALL SELECT {', '.join(DECISION_COLUMNS)} FROM {w.t('p3')}" if p3 else ""
+    return (f"dec AS (SELECT {', '.join(DECISION_COLUMNS)} FROM {w.t('dec')} "
+            f"UNION ALL {p1}{scored} UNION ALL {unmatched})")
+
+
+def result_ctes(w: Work, job: dict, master_id: str, flags: dict) -> str:
+    file_id, nv, mv = job["file_id"], job["_nv"], job["_mv"]
+    p1_candidates = " UNION ALL ".join(
+        f"SELECT id, CAST({k} AS INT), candidates[{k}], CAST(100.0 AS DOUBLE) FROM {w.t('p1')} "
         f"WHERE n_candidates > 1 AND array_length(candidates) >= {k}"
-        for k in range(1, MAX_CANDIDATES + 1)))
-    sr.execute(f"""
-        INSERT INTO {w.t('dec')}
-        SELECT row_id, NULL, 0.0, 'UNMATCH', 'SCORING', FALSE, 0, FALSE, NULL, NULL, NULL
-          FROM {KL}.records
-         WHERE file_id = {sq(file_id)} AND row_id NOT IN (SELECT id FROM {w.t('dec')})""")
-    total = sr.scalar(f"SELECT count(*) FROM {w.t('dec')}")
-    if total != n:
-        raise RuntimeError(f"Hasil memuat {total:,} baris untuk {n:,} baris incoming. "
-                           f"Setiap baris incoming harus punya tepat satu baris hasil.")
-    sr.execute(f"DROP TABLE IF EXISTS {w.t('mp')} FORCE")
-    sr.execute(f"""
-        CREATE TABLE {w.t('mp')} {PROPS} AS
-        SELECT * FROM (
-            SELECT m.*, row_number() OVER (PARTITION BY m.nik ORDER BY m.name_v0, m.mother_v0,
-                                           m.pob_c, m.tanggal_lahir) AS rn
-              FROM {MASTER}.persons m
-             WHERE m.master_id = {sq(master_id)}
-               AND m.nik IN (SELECT master_nik FROM {w.t('dec')} WHERE master_nik IS NOT NULL
-                             UNION SELECT nik FROM {w.t('cand')})) t
-         WHERE rn = 1""")
+        for k in range(1, MAX_CANDIDATES + 1))
+    if job.get("_p3_sr"):
+        p1_candidates += "".join(
+            f" UNION ALL SELECT id, CAST({k} AS INT), k{k}_nik, k{k}_score FROM {w.t('p3')} "
+            f"WHERE k{k}_nik IS NOT NULL" for k in range(1, MAX_CANDIDATES + 1))
     pivot = ", ".join(
         f"max(CASE WHEN c.rk = {k} THEN c.nik END) AS k{k}_nik, "
         f"max(CASE WHEN c.rk = {k} THEN m.nama_lengkap END) AS k{k}_name, "
@@ -504,36 +685,78 @@ def assemble(w: Work, job: dict, master_id: str, n: int) -> int:
         f"max(CASE WHEN c.rk = {k} THEN m.tanggal_lahir END) AS k{k}_dob, "
         f"max(CASE WHEN c.rk = {k} THEN c.score END) AS k{k}_score"
         for k in range(1, MAX_CANDIDATES + 1))
-    sr.execute(f"DROP TABLE IF EXISTS {w.t('kand')} FORCE")
-    sr.execute(f"CREATE TABLE {w.t('kand')} {PROPS} AS SELECT c.id, {pivot} "
-               f"FROM {w.t('cand')} c LEFT JOIN {w.t('mp')} m ON m.nik = c.nik GROUP BY c.id")
-    nv, mv = job["_nv"], job["_mv"]
-    sr.execute(f"DROP TABLE IF EXISTS {w.t('pairs')} FORCE")
-    sr.execute(f"""
-        CREATE TABLE {w.t('pairs')} {PROPS} AS
-        SELECT d.*, i.nik AS i_nik, i.nik_trusted AS i_nik_trusted, i.nama AS i_nama,
-               i.tanggal_lahir AS i_tgl_raw, i.dob AS i_dob, i.jenis_kelamin AS i_jk,
-               i.nama_ibu AS i_ibu, i.tempat_lahir AS i_tmp, i.provinsi AS i_provinsi,
-               i.{nv} AS i_name_c, i.name_v3 AS i_name_full, i.{mv} AS i_mother_c,
-               i.pob_c AS i_pob_c,
-               m.nik AS m_nik, m.nama_lengkap AS m_nama, m.tanggal_lahir AS m_tgl,
-               m.jenis_kelamin AS m_jk, m.nama_ibu AS m_ibu, m.tempat_lahir AS m_tmp,
-               m.provinsi AS m_provinsi, m.{nv} AS m_name_c, m.name_v3 AS m_name_full,
-               m.{mv} AS m_mother_c, m.pob_c AS m_pob_c,
-               {', '.join(f'k.k{k}_nik, k.k{k}_name, k.k{k}_pob, k.k{k}_dob, k.k{k}_score'
-                          for k in range(1, MAX_CANDIDATES + 1))},
-               (o.id IS NOT NULL) AS nik_in_master
-          FROM {w.t('dec')} d
-          JOIN (SELECT * FROM {KL}.records WHERE file_id = {sq(file_id)}) i ON i.row_id = d.id
-          LEFT JOIN {w.t('mp')} m ON m.nik = d.master_nik
-          LEFT JOIN {w.t('kand')} k ON k.id = d.id
-          LEFT JOIN (SELECT DISTINCT id FROM {w.t('nik')}) o ON o.id = d.id""")
-    present = sr.query(f"SELECT {reasoning.present_sql()} FROM {w.t('pairs')}")[0]
-    flags = {k: bool(v) for k, v in present.items()}
-    with_signature = (f"(SELECT *, {reasoning.signature_sql(flags)} AS signature "
-                      f"FROM {w.t('pairs')}) p")
+    return f"""WITH {decisions_cte(w, file_id, bool(job.get("_p3_sr")))},
+        cand AS (SELECT id, rk, nik, score FROM {w.t('cand')} UNION ALL {p1_candidates}),
+        mp AS (
+            SELECT * FROM (
+                SELECT m.nik, m.nama_lengkap, m.tanggal_lahir, m.jenis_kelamin, m.nama_ibu,
+                       m.tempat_lahir, m.provinsi, m.{nv} AS name_c, m.name_v3 AS name_full,
+                       m.{mv} AS mother_c, m.pob_c,
+                       row_number() OVER (PARTITION BY m.nik ORDER BY m.name_v0, m.mother_v0,
+                                          m.pob_c, m.tanggal_lahir) AS rn
+                  FROM {MASTER}.persons m
+                 WHERE m.master_id = {sq(master_id)}
+                   AND m.nik IN (SELECT master_nik FROM dec WHERE master_nik IS NOT NULL
+                                 UNION SELECT nik FROM cand)) t
+             WHERE rn = 1),
+        kand AS (SELECT c.id, {pivot} FROM cand c LEFT JOIN mp m ON m.nik = c.nik GROUP BY c.id),
+        pairs AS (
+            SELECT d.*, i.nik AS i_nik, i.nik_trusted AS i_nik_trusted, i.nama AS i_nama,
+                   i.tanggal_lahir AS i_tgl_raw, i.dob AS i_dob, i.jenis_kelamin AS i_jk,
+                   i.nama_ibu AS i_ibu, i.tempat_lahir AS i_tmp, i.provinsi AS i_provinsi,
+                   i.{nv} AS i_name_c, i.name_v3 AS i_name_full, i.{mv} AS i_mother_c,
+                   i.pob_c AS i_pob_c,
+                   m.nik AS m_nik, m.nama_lengkap AS m_nama, m.tanggal_lahir AS m_tgl,
+                   m.jenis_kelamin AS m_jk, m.nama_ibu AS m_ibu, m.tempat_lahir AS m_tmp,
+                   m.provinsi AS m_provinsi, m.name_c AS m_name_c, m.name_full AS m_name_full,
+                   m.mother_c AS m_mother_c, m.pob_c AS m_pob_c,
+                   {', '.join(f'k.k{k}_nik, k.k{k}_name, k.k{k}_pob, k.k{k}_dob, k.k{k}_score'
+                              for k in range(1, MAX_CANDIDATES + 1))},
+                   (o.id IS NOT NULL) AS nik_in_master
+              FROM dec d
+              JOIN {_records(file_id)} i ON i.row_id = d.id
+              LEFT JOIN mp m ON m.nik = d.master_nik
+              LEFT JOIN kand k ON k.id = d.id
+              LEFT JOIN (SELECT DISTINCT id FROM {w.t('nik')}) o ON o.id = d.id),
+        signed AS (SELECT *, {reasoning.signature_sql(flags)} AS signature FROM pairs)"""
+
+
+def present_flags(file_id: str) -> dict:
+    row = sr.query(f"SELECT {reasoning.present_sql()} FROM (SELECT nik AS i_nik, nama AS i_nama, "
+                   f"tanggal_lahir AS i_tgl_raw, jenis_kelamin AS i_jk, nama_ibu AS i_ibu, "
+                   f"tempat_lahir AS i_tmp FROM {_records(file_id)} r) t")[0]
+    return {k: bool(v) for k, v in row.items()}
+
+
+def decision_metrics(w: Work, file_id: str, n: int, p3: bool = False) -> dict:
+    r = sr.query(f"""
+        WITH {decisions_cte(w, file_id, p3)}
+        SELECT count(*) AS total, count(DISTINCT id) AS ids, sum(n_candidates) AS candidates,
+               sum(CASE WHEN method = 'PASS1_NIK_NAMA' THEN 1 ELSE 0 END) AS p1,
+               sum(CASE WHEN method = 'PASS2_NAMA_TGL_IBU' THEN 1 ELSE 0 END) AS p2,
+               sum(CASE WHEN method = 'SCORING' THEN 1 ELSE 0 END) AS p3,
+               sum(CASE WHEN status = 'AUTO' THEN 1 ELSE 0 END) AS auto,
+               sum(CASE WHEN status = 'REVIEW' THEN 1 ELSE 0 END) AS review,
+               sum(CASE WHEN status = 'UNMATCH' THEN 1 ELSE 0 END) AS unmatch,
+               sum(CASE WHEN status = 'CONFLICT' THEN 1 ELSE 0 END) AS conflict
+          FROM dec""")[0]
+    total, candidates = int(r["total"]), int(r["candidates"] or 0)
+    if total != n or int(r["ids"]) != n:
+        raise RuntimeError(f"Hasil memuat {total:,} baris untuk {n:,} baris incoming. "
+                           f"Setiap baris incoming harus punya tepat satu baris hasil.")
+    return {"totalIncoming": total, "totalCandidates": candidates,
+            "avgCandidatesPerRow": round(candidates / total, 2) if total else 0.0,
+            "pass1Count": int(r["p1"]), "pass2Count": int(r["p2"]), "scoringCount": int(r["p3"]),
+            "autoCount": int(r["auto"]), "reviewCount": int(r["review"]),
+            "unmatchCount": int(r["unmatch"]), "conflictCount": int(r["conflict"])}
+
+
+def assemble(w: Work, job: dict, master_id: str, n: int) -> tuple[int, dict]:
+    file_id = job["file_id"]
+    metrics = decision_metrics(w, file_id, n, bool(job.get("_p3_sr")))
+    ctes = result_ctes(w, job, master_id, present_flags(file_id))
     patterns = [(r["signature"], int(r["n"]), r["sample"]) for r in sr.query(
-        f"SELECT signature, count(*) AS n, min(id) AS sample FROM {with_signature} "
+        f"{ctes} SELECT signature, count(*) AS n, min(id) AS sample FROM signed "
         f"WHERE signature IS NOT NULL GROUP BY signature ORDER BY n DESC, signature")]
     base = {sig: reasoning.template(sig) for sig, _, _ in patterns}
     templates = dict(base)
@@ -558,35 +781,18 @@ def assemble(w: Work, job: dict, master_id: str, n: int) -> int:
         "CASE WHEN master_nik IS NULL THEN NULL ELSE json_object('nama_lengkap', m_nama, "
         "'nik', m_nik, 'tanggal_lahir', date_format(m_tgl, '%Y-%m-%d'), 'jenis_kelamin', m_jk, "
         "'nama_ibu', m_ibu, 'tempat_lahir', m_tmp, 'provinsi', m_provinsi) END")
-    sr.execute(f"DELETE FROM {PORTAL}.matching_results WHERE csv_file_id = {sq(file_id)} "
-               f"AND master_file_id = {sq(job['master_file_id'])}")
+    previous = (f"csv_file_id = {sq(file_id)} AND master_file_id = {sq(job['master_file_id'])}")
+    if sr.query(f"SELECT 1 FROM {PORTAL}.matching_results WHERE {previous} LIMIT 1"):
+        sr.execute(f"DELETE FROM {PORTAL}.matching_results WHERE {previous}")
     sr.execute(f"""
         INSERT INTO {PORTAL}.matching_results
+        {ctes}
         SELECT uuid(), {sq(file_id)}, {sq(job['master_file_id'])}, {sq(job['job_id'])}, id,
                master_nik, score, status, method, rank_conflict, pattern_group,
                {reasoning.reasoning_sql(templates)}, {incoming_snapshot}, {master_snapshot},
                NULL, now(), now(), {actor}, {actor}
-          FROM {with_signature}""")
-    return len(patterns)
-
-
-def metrics(w: Work) -> dict:
-    r = sr.query(f"""
-        SELECT count(*) AS total, sum(n_candidates) AS candidates,
-               sum(CASE WHEN method = 'PASS1_NIK_NAMA' THEN 1 ELSE 0 END) AS p1,
-               sum(CASE WHEN method = 'PASS2_NAMA_TGL_IBU' THEN 1 ELSE 0 END) AS p2,
-               sum(CASE WHEN method = 'SCORING' THEN 1 ELSE 0 END) AS p3,
-               sum(CASE WHEN status = 'AUTO' THEN 1 ELSE 0 END) AS auto,
-               sum(CASE WHEN status = 'REVIEW' THEN 1 ELSE 0 END) AS review,
-               sum(CASE WHEN status = 'UNMATCH' THEN 1 ELSE 0 END) AS unmatch,
-               sum(CASE WHEN status = 'CONFLICT' THEN 1 ELSE 0 END) AS conflict
-          FROM {w.t('dec')}""")[0]
-    total, candidates = int(r["total"]), int(r["candidates"] or 0)
-    return {"totalIncoming": total, "totalCandidates": candidates,
-            "avgCandidatesPerRow": round(candidates / total, 2) if total else 0.0,
-            "pass1Count": int(r["p1"]), "pass2Count": int(r["p2"]), "scoringCount": int(r["p3"]),
-            "autoCount": int(r["auto"]), "reviewCount": int(r["review"]),
-            "unmatchCount": int(r["unmatch"]), "conflictCount": int(r["conflict"])}
+          FROM signed""")
+    return len(patterns), metrics
 
 
 def run(job: dict, report=lambda stage: None) -> dict:
@@ -640,17 +846,21 @@ def run(job: dict, report=lambda stage: None) -> dict:
         check_cancelled(job)
         mark(job["job_id"], current_stage="SCORING")
         report("M3 pass 3")
-        p3 = pass3(w, con, rules_, job["file_id"], master_id, nv, mv, timings)
-        t = time.perf_counter()
-        _load_decisions(w, con, "p3_decisions", "p3_candidates")
-        clock("decisionLoadMs", t)
+        fn = udf.ensure()
+        job["_p3_sr"] = bool(fn)
+        if fn:
+            p3 = pass3_starrocks(w, fn, rules_, job["file_id"], master_id, nv, mv, timings)
+        else:
+            p3 = pass3(w, con, rules_, job["file_id"], master_id, nv, mv, timings)
+            t = time.perf_counter()
+            _load_decisions(w, con, "p3_decisions", "p3_candidates")
+            clock("decisionLoadMs", t)
 
         check_cancelled(job)
         mark(job["job_id"], current_stage="CLASSIFYING")
         report("M4 assemble results in StarRocks")
         t = time.perf_counter()
-        signatures = assemble(w, job, master_id, n)
-        m = metrics(w)
+        signatures, m = assemble(w, job, master_id, n)
         clock("classificationMs", t)
         timings["totalMs"] = int((time.perf_counter() - started) * 1000)
         rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024)

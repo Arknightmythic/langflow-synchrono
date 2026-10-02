@@ -17,9 +17,10 @@ worker matching:
   Pass 1   cek nama ibu bertentangan (Jaro-Winkler)       DuckDB (hanya pasangan yang ibunya beda)
   Pass 2   kandidat nama + tanggal lahir + nama ibu       StarRocks
            urutan kandidat (NIK dekat, tempat lahir)      DuckDB
-  Pass 3   blocking per grade                             StarRocks (dimaterialkan)
-           skor Jaro-Winkler, seri, klasifikasi, pola     DuckDB (kandidat ditarik bertahap)
-  Hasil    snapshot, signature, reasoning, tabel portal   StarRocks (INSERT … SELECT)
+  Pass 3   blocking + skor Jaro-Winkler + 10 teratas,     StarRocks, satu kueri (UDF Java)
+           seri, klasifikasi, pola
+           — tanpa UDF_JAR_URL: kandidat ditarik ke DuckDB dan dinilai di sana
+  Hasil    snapshot, signature, reasoning, tabel portal   StarRocks (CTE, INSERT … SELECT)
 ```
 
 Master **dibersihkan sekali** saat dimuat (semua varian pembersihan nama dihitung
@@ -109,8 +110,12 @@ dimuat ulang otomatis saat job pertama yang membutuhkannya.
 
 ## Batas yang diketahui
 
-- Pass 3 menarik pasangan kandidat ke DuckDB untuk Jaro-Winkler. Pada berkas tanpa NIK
-  (grade C/D/E) jumlahnya bisa jutaan; di jaringan lambat ini jadi leher botol. Langkah
-  berikutnya: UDF Java Jaro-Winkler di StarRocks (jar di-host di sisi server), sehingga
-  Pass 3 sepenuhnya di StarRocks.
+- UDF Jaro-Winkler (`udf/`, jar dibangun di Dockerfile) disajikan oleh api di
+  `/udf/synchrono-udf.jar` dan didaftarkan worker matching ke StarRocks. FE dan BE harus bisa
+  mengunduhnya dari `UDF_JAR_URL`; kalau tidak bisa, Pass 3 otomatis kembali ke DuckDB.
+  Hasil Java-nya identik bit per bit dengan `jaro_winkler_similarity` dan `round` DuckDB
+  (diuji 3 juta pasangan). Nama fungsi (`synchrono_jw_<kunci>`) diturunkan dari isi jar dan
+  `UDF_JAR_URL`, jadi tiap deployment memakai fungsinya sendiri; BE yang restart mengunduh
+  ulang jar dari URL itu, sehingga api harus tetap hidup. Fungsi lama tidak dihapus otomatis:
+  `SHOW FUNCTIONS FROM synchrono_service`, lalu `DROP FUNCTION` bila perlu.
 - Penyusunan hasil tidak satu transaksi (DELETE lalu INSERT).

@@ -35,6 +35,7 @@ nano .env
 | `REASONING_AI_*` | AI penghalusan reasoning — salin dari `.env` service lama |
 | `WILAYAH_PARQUET`, `WILAYAH_KECAMATAN_TEGAS` | rujukan wilayah NIK (bawaan sama dengan service lama) |
 | `KONVERTER_*_URL` | layanan konversi dump `.sql/.mdf/.dmp` (bila dipasang) |
+| `UDF_JAR_URL` | `http://192.168.2.107:7870/udf/synchrono-udf.jar` — alamat jar UDF yang bisa dijangkau StarRocks; kosong = skor Pass 3 di DuckDB |
 
 Cara cepat menyalin bagian yang sama dari service lama (baris yang ditambahkan belakangan menimpa yang di atasnya):
 
@@ -89,4 +90,6 @@ python3 bench/summarize.py                  # ringkasan -> bench/results/summary
   kalau terpakai.
 - Benchmark memakai CPU & memori host yang sama dengan produksi dan StarRocks —
   jalankan di luar jam sibuk.
+- `stack.sh new` mengisi `UDF_JAR_URL` dengan IP host (`hostname -I`); tetapkan sendiri
+  dengan `UDF_HOST=192.168.2.107` bila IP pertama host bukan alamat yang dijangkau StarRocks.
 - Bersihkan semuanya: `bash bench/stack.sh clean`.

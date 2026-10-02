@@ -7,10 +7,10 @@ from urllib.parse import parse_qs
 
 from fastapi import (APIRouter, Body, Depends, FastAPI, HTTPException, Path, Query,
                      Request, Response, status)
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from engine import auth, config, master, sr
+from engine import auth, config, master, sr, udf
 from engine import settings as cfg
 from engine.sql import sq
 from worker.celery_app import app as celery
@@ -60,6 +60,13 @@ def health_db() -> dict:
     n = sr.scalar(f"SELECT count(*) FROM {cfg.DB_SERVICE}.grading_jobs")
     return {"status": "ok", "gradingJobs": n,
             "roundtripMs": round((time.perf_counter() - started) * 1000, 2)}
+
+
+@app.get("/udf/synchrono-udf.jar", tags=["health"], include_in_schema=False)
+def udf_jar():
+    if not udf.jar_version():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "UDF jar not built into this image")
+    return FileResponse(udf.JAR_PATH, media_type="application/java-archive")
 
 
 @app.get("/health_check", tags=["health"])
