@@ -1,0 +1,16 @@
+name: synchrono-config-ui
+
+services:
+  config-ui:
+    build: .
+    image: synchrono-config-ui:1.0.0
+    container_name: synchrono-config-ui
+    restart: unless-stopped
+    ports:
+      - "${UI_PORT:-7880}:80"
+    environment:
+      SERVICE_TARGETS: ${SERVICE_TARGETS:?isi SERVICE_TARGETS di .env}
+      SERVICE_API_KEYS: ${SERVICE_API_KEYS:-}
+      UI_USER: ${UI_USER:-admin}
+      UI_PASSWORD: ${UI_PASSWORD:-}
+      UI_ALLOW_NO_LOGIN: ${UI_ALLOW_NO_LOGIN:-}

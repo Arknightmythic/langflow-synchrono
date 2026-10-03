@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Konfigurasi Synchrono</title>
+  <meta name="description" content="Lihat dan ubah aturan grading A–F dan matching synchrono-service.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23256abf'/%3E%3Cpath d='M9 11h14M9 16h10M9 21h14' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/app.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Langsung ke isi</a>
+  <header class="app-header">
+    <a class="brand" href="#/ringkasan">
+      <strong>Konfigurasi Synchrono</strong>
+      <span>Grading A–F &amp; matching</span>
+    </a>
+    <div class="header-tools">
+      <label class="visually-hidden" for="target-select">Service</label>
+      <select id="target-select" hidden></select>
+      <span id="status" class="status" role="status"><span class="dot"></span><span class="text">Memuat…</span></span>
+      <button id="reload-button" class="btn btn--icon btn--ghost" type="button" title="Muat ulang konfigurasi" aria-label="Muat ulang konfigurasi"></button>
+      <button id="key-button" class="btn" type="button">API key</button>
+      <button id="theme-button" class="btn btn--icon btn--ghost" type="button" aria-label="Ganti tema"></button>
+    </div>
+  </header>
+  <div class="layout">
+    <nav class="sidebar" aria-label="Menu utama"><ul id="nav"></ul></nav>
+    <main id="main" tabindex="-1"><div class="loading">Memuat…</div></main>
+  </div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
+  <noscript>UI ini membutuhkan JavaScript.</noscript>
+</body>
+</html>

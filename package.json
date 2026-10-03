@@ -1,0 +1,8 @@
+{
+  "name": "synchrono-config-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "cek-analisis": "node tools/cek-analisis.mjs"
+  }
+}
