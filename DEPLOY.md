@@ -228,3 +228,149 @@ python3 bench/summarize.py
   `docker logs srb-new-worker-matching 2>&1 | grep UDF` menyebut sebabnya.
 - Selesai: `bash bench/stack.sh clean` (kontainer uji saja; database `synchrono_*` di
   StarRocks tetap ada).
+
+## D. Uji setara di server kosong (ai-master-db, 172.16.13.158)
+
+Kedua versi diuji bergantian di server yang sama (16 vCPU, 31 GB RAM): fase 1 DuckDB,
+server dibersihkan, lalu fase 2 StarRocks. Data, skrip, dan jumlah putaran sama
+(master 2 juta: 3 putaran; 100 juta: 1 putaran). Memori memakai bawaan mesin datanya,
+setara 80% RAM: DuckDB `OLD_MEMORY=25GB`, BE StarRocks `mem_limit = 80%`.
+`run_bench.sh new` mencatat proses FE/BE di host sebagai `sr-fe`/`sr-be` (core dan MB,
+sama dengan kontainer). `total` di ringkasan adalah jumlah semua komponen service.
+
+### Fase 1: DuckDB
+
+```bash
+docker --version || curl -fsSL https://get.docker.com | sh
+mkdir -p /opt/synchrono-uji/bench-data && cd /opt/synchrono-uji
+git clone -b service-master https://github.com/Arknightmythic/langflow-synchrono.git synchrono-service
+git clone -b service-starrocks https://github.com/Arknightmythic/langflow-synchrono.git synchrono-service-starrocks
+(cd synchrono-service && docker build -t synchrono-service:2.0.0 .)
+(cd synchrono-service-starrocks && docker build -t synchrono-service-starrocks:dev .)
+# laptop: scp uji-master-ae/ dan master 2 juta ke /opt/synchrono-uji/bench-data/
+
+cd /opt/synchrono-uji/synchrono-service-starrocks
+cp .env.example .env.bench && mkdir -p bench/results
+export TEST_DATA=/opt/synchrono-uji/bench-data/uji-master-ae
+export MASTER_PARQUET=/opt/synchrono-uji/bench-data/1790325476460_23223dc0_master.parquet
+export OLD_MEMORY=25GB
+bash bench/stack.sh storage && bash bench/stack.sh harness && bash bench/stack.sh old && bash bench/stack.sh data
+nohup bash -c 'bash bench/run_bench.sh old A,B,C,D,E 3; python3 bench/summarize.py' > bench/results/duckdb-2m.log 2>&1 &
+# selesai: cp bench/results/summary.json bench/results/summary-duckdb-2m.json
+
+docker run --rm -v /opt/synchrono-uji/bench-data:/d -v "$PWD/bench:/bench:ro" synchrono-service:2.0.0 \
+  python /bench/make_master.py /d/1790325476460_23223dc0_master.parquet /d/master-100m.parquet 100000000
+export MASTER_PARQUET=/opt/synchrono-uji/bench-data/master-100m.parquet
+bash bench/stack.sh data
+nohup bash -c 'bash bench/run_bench.sh old A,B,C,D,E 1; python3 bench/summarize.py' > bench/results/duckdb-100m.log 2>&1 &
+# selesai: cp bench/results/summary.json bench/results/summary-duckdb-100m.json
+```
+
+Sebelum server dibersihkan, catat versi dan sidik berkas, lalu salin hasilnya ke laptop:
+
+```bash
+cd /opt/synchrono-uji
+{ date; nproc; free -g; df -h /opt
+  git -C synchrono-service log --oneline -1
+  git -C synchrono-service-starrocks log --oneline -1
+  docker run --rm synchrono-service:2.0.0 python -c "import duckdb; print('duckdb', duckdb.__version__)"
+  sha256sum bench-data/*.parquet
+} > synchrono-service-starrocks/bench/results/fase1-info.txt 2>&1
+# laptop: scp -r root@172.16.13.158:/opt/synchrono-uji/synchrono-service-starrocks/bench/results <tujuan>/duckdb
+```
+
+### Fase 2: StarRocks
+
+Server dibersihkan lalu di-reboot, supaya memori dan cache mulai dari nol seperti fase 1.
+Swap (7 GB) dibiarkan seperti fase 1, walaupun StarRocks menyarankan swap dimatikan.
+
+**1. Paket dan StarRocks 4.0.8** (tarball yang sama dengan kantor; bila tidak bisa,
+`wget https://releases.starrocks.io/starrocks/StarRocks-4.0.8-ubuntu-amd64.tar.gz`)
+
+```bash
+docker --version || curl -fsSL https://get.docker.com | sh
+apt-get update && apt-get install -y openjdk-17-jdk-headless mysql-client
+scp root@172.16.12.98:/root/StarRocks-4.0.8-ubuntu-amd64.tar.gz /root/
+mkdir -p /opt/starrocks
+tar -xzf /root/StarRocks-4.0.8-ubuntu-amd64.tar.gz -C /opt/starrocks --strip-components=1
+mkdir -p /opt/starrocks/fe/meta /opt/starrocks/be/storage
+
+cat >> /opt/starrocks/fe/conf/fe.conf <<'CONF'
+
+# uji setara ai-master-db
+JAVA_HOME = /usr/lib/jvm/java-17-openjdk-amd64
+priority_networks = 172.16.13.0/24
+enable_udf = true
+CONF
+cat >> /opt/starrocks/be/conf/be.conf <<'CONF'
+
+# uji setara ai-master-db: 80% RAM, setara bawaan DuckDB di fase 1
+JAVA_HOME = /usr/lib/jvm/java-17-openjdk-amd64
+priority_networks = 172.16.13.0/24
+mem_limit = 80%
+CONF
+
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ulimit -n 655350
+/opt/starrocks/fe/bin/start_fe.sh --daemon
+sleep 40
+mysql -h127.0.0.1 -P9030 -uroot -e 'SHOW FRONTENDS\G' | grep -E ' IP:|Alive:|Version:'
+mysql -h127.0.0.1 -P9030 -uroot -e 'ALTER SYSTEM ADD BACKEND "172.16.13.158:9050"'
+/opt/starrocks/be/bin/start_be.sh --daemon
+sleep 40
+mysql -h127.0.0.1 -P9030 -uroot -e 'SHOW BACKENDS\G' | grep -E ' IP:|Alive:|CpuCores:|MemLimit:'
+grep -m1 libjvm /proc/$(pgrep -f lib/starrocks_be | head -1)/maps    # harus dari /usr/lib/jvm/...
+
+# password root: huruf dan angka saja (dipakai sed di stack.sh)
+read -rsp 'Password baru root StarRocks: ' STARROCKS_PASSWORD; echo; export STARROCKS_PASSWORD
+mysql -h127.0.0.1 -P9030 -uroot -e "ALTER USER root IDENTIFIED BY '$STARROCKS_PASSWORD'"
+export MYSQL_PWD="$STARROCKS_PASSWORD"
+mysql -h127.0.0.1 -P9030 -uroot -e 'SELECT current_version()'
+```
+
+FE/BE tidak dipasang sebagai service systemd: setelah reboot, jalankan lagi kedua
+`start_*.sh --daemon` di atas (dengan `JAVA_HOME` dan `ulimit` yang sama).
+
+**2. Kode, image, dan data** (`synchrono-service` dikunci ke commit fase 1, karena
+`make_master.py` harus menghasilkan master 100 juta yang sama persis)
+
+```bash
+mkdir -p /opt/synchrono-uji/bench-data && cd /opt/synchrono-uji
+git clone -b service-master https://github.com/Arknightmythic/langflow-synchrono.git synchrono-service
+git clone -b service-starrocks https://github.com/Arknightmythic/langflow-synchrono.git synchrono-service-starrocks
+git -C synchrono-service checkout e993bb3                  # commit fase 1 (fase1-info.txt)
+(cd synchrono-service && docker build -t synchrono-service:2.0.0 .)     # hanya alat uji; srb-old tidak dinyalakan
+# laptop: scp uji-master-ae/ dan master 2 juta ke /opt/synchrono-uji/bench-data/ (sama dengan fase 1)
+```
+
+**3. Jalankan** (satu sesi shell; sesi baru = `read`/`export` diulang)
+
+```bash
+cd /opt/synchrono-uji/synchrono-service-starrocks
+export STARROCKS_HOST=172.16.13.158 STARROCKS_PORT=9030 STARROCKS_USER=root
+export STARROCKS_STREAM_LOAD_URL=http://172.16.13.158:8040 UDF_HOST=172.16.13.158
+export TEST_DATA=/opt/synchrono-uji/bench-data/uji-master-ae
+export MASTER_PARQUET=/opt/synchrono-uji/bench-data/1790325476460_23223dc0_master.parquet
+mkdir -p bench/results
+bash bench/stack.sh storage && bash bench/stack.sh harness && bash bench/stack.sh new
+bash bench/stack.sh data && bash bench/stack.sh master
+curl -s -o /dev/null -w '%{http_code}\n' http://172.16.13.158:58102/udf/synchrono-udf.jar   # 200
+
+nohup bash -c 'bash bench/run_bench.sh new A,B,C,D,E 3; python3 bench/summarize.py' > bench/results/starrocks-2m.log 2>&1 &
+# selesai: cp bench/results/summary.json bench/results/summary-starrocks-2m.json
+grep -o "candidatePullMs': [0-9]*" bench/results/starrocks-2m.log | sort | uniq -c   # semua 0 = UDF terpakai
+
+docker run --rm -v /opt/synchrono-uji/bench-data:/d -v "$PWD/bench:/bench:ro" synchrono-service:2.0.0 \
+  python /bench/make_master.py /d/1790325476460_23223dc0_master.parquet /d/master-100m.parquet 100000000
+sha256sum /opt/synchrono-uji/bench-data/master-100m.parquet     # fase 1: 0c47cfe6...ae879c24
+export MASTER_PARQUET=/opt/synchrono-uji/bench-data/master-100m.parquet
+bash bench/stack.sh data
+nohup bash bench/stack.sh master > bench/results/load-master-100m.log 2>&1 &
+# selesai bila log memuat "rows": 100000000; cek sisa disk: df -h /opt
+nohup bash -c 'bash bench/run_bench.sh new A,B,C,D,E 1; python3 bench/summarize.py' > bench/results/starrocks-100m.log 2>&1 &
+# selesai: cp bench/results/summary.json bench/results/summary-starrocks-100m.json
+```
+
+Terakhir, catat `fase2-info.txt` seperti fase 1, ditambah `SELECT current_version()`,
+`MemLimit` dari `SHOW BACKENDS`, dan `java -version`. Setelah itu salin `bench/results`
+ke laptop.

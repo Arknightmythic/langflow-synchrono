@@ -21,16 +21,20 @@ if [ "$TARGET" = old ]; then
   docker start srb-old >/dev/null
   BASE=http://srb-old:8000
   WATCH="srb-old srb-s3"
+  PROCS=""
 else
   bash "$HERE/stack.sh" stop-old
   bash "$HERE/stack.sh" new >/dev/null
   BASE=http://srb-new-api:8000
   WATCH="srb-new-api srb-new-worker-grading srb-new-worker-matching srb-new-valkey srb-s3"
+  # A StarRocks installed on this host (not in Docker) is sampled per process, in cores and MB.
+  PROCS=${SAMPLE_PROCESSES:-sr-fe=com.starrocks.StarRocksFE,sr-be=lib/starrocks_be}
 fi
 sleep 10
 
 docker rm -f srb-sampler srb-k6 >/dev/null 2>&1 || true
-docker run -d --name srb-sampler --network "$NET" --env-file "$NEW/.env.bench" \
+docker run -d --name srb-sampler --network "$NET" --pid=host --env-file "$NEW/.env.bench" \
+  -e SAMPLE_PROCESSES="$PROCS" \
   -v /var/run/docker.sock:/var/run/docker.sock -v "$NEW:/srv:ro" -v "$RESULTS:/results" \
   synchrono-service-starrocks:dev python /srv/bench/sampler.py \
   "/results/sampler-$TARGET-$RUN_ID.csv" $WATCH >/dev/null

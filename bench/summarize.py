@@ -9,6 +9,8 @@ import sys
 
 RESULTS = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), "results")
 FILES = ["A", "B", "C", "D", "E"]
+# SHOW BACKENDS percentages; every other sampler source is CPU % of one core and memory in MB.
+PERCENT_SOURCES = {"starrocks-be"}
 
 
 def latest(pattern: str) -> str | None:
@@ -88,12 +90,25 @@ def resources(target: str) -> dict:
                 series.setdefault(row["source"], []).append(
                     (float(row["ts"]), float(row["cpu_pct"]), float(row["mem_mb_or_pct"])))
     summary = {}
+    totals: dict[float, list[float]] = {}
     for source, points in series.items():
         cpu = [p[1] for p in points]
         mem = [p[2] for p in points]
         summary[source] = {"samples": len(points), "cpuAvg": round(statistics.mean(cpu), 1),
                            "cpuMax": round(max(cpu), 1), "memAvg": round(statistics.mean(mem), 1),
                            "memMax": round(max(mem), 1)}
+        if source not in PERCENT_SOURCES:
+            for ts, c, m in points:
+                total = totals.setdefault(ts, [0.0, 0.0])
+                total[0] += c
+                total[1] += m
+    if totals:
+        # Sum of all sources read in the same sampler round: the whole service under test.
+        cpu = [t[0] for t in totals.values()]
+        mem = [t[1] for t in totals.values()]
+        summary["total"] = {"samples": len(totals), "cpuAvg": round(statistics.mean(cpu), 1),
+                            "cpuMax": round(max(cpu), 1), "memAvg": round(statistics.mean(mem), 1),
+                            "memMax": round(max(mem), 1)}
     return summary
 
 
