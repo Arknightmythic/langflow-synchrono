@@ -233,7 +233,7 @@ python3 bench/summarize.py
 
 Kedua versi diuji bergantian di server yang sama (16 vCPU, 31 GB RAM): fase 1 DuckDB,
 server dibersihkan, lalu fase 2 StarRocks. Data, skrip, dan jumlah putaran sama
-(master 2 juta: 3 putaran; 100 juta: 1 putaran). Memori memakai bawaan mesin datanya,
+(master 2, 20, dan 30 juta: 3 putaran; 100 juta: 1 putaran). Memori memakai bawaan mesin datanya,
 setara 80% RAM: DuckDB `OLD_MEMORY=25GB`, BE StarRocks `mem_limit = 80%`.
 `run_bench.sh new` mencatat proses FE/BE di host sebagai `sr-fe`/`sr-be` (core dan MB,
 sama dengan kontainer). `total` di ringkasan adalah jumlah semua komponen service.
@@ -264,6 +264,20 @@ export MASTER_PARQUET=/opt/synchrono-uji/bench-data/master-100m.parquet
 bash bench/stack.sh data
 nohup bash -c 'bash bench/run_bench.sh old A,B,C,D,E 1; python3 bench/summarize.py' > bench/results/duckdb-100m.log 2>&1 &
 # selesai: cp bench/results/summary.json bench/results/summary-duckdb-100m.json
+
+# master 20 dan 30 juta, berurutan dalam satu proses
+nohup bash -c '
+set -e
+for n in 20 30; do
+  docker run --rm -v /opt/synchrono-uji/bench-data:/d -v "$PWD/bench:/bench:ro" synchrono-service:2.0.0 \
+    python /bench/make_master.py /d/1790325476460_23223dc0_master.parquet /d/master-${n}m.parquet ${n}000000
+  export MASTER_PARQUET=/opt/synchrono-uji/bench-data/master-${n}m.parquet
+  bash bench/stack.sh data
+  bash bench/run_bench.sh old A,B,C,D,E 3
+  python3 bench/summarize.py
+  cp bench/results/summary.json bench/results/summary-duckdb-${n}m.json
+done
+echo SELESAI' > bench/results/duckdb-20m-30m.log 2>&1 &
 ```
 
 Sebelum server dibersihkan, catat versi dan sidik berkas, lalu salin hasilnya ke laptop:
@@ -332,7 +346,7 @@ FE/BE tidak dipasang sebagai service systemd: setelah reboot, jalankan lagi kedu
 `start_*.sh --daemon` di atas (dengan `JAVA_HOME` dan `ulimit` yang sama).
 
 **2. Kode, image, dan data** (`synchrono-service` dikunci ke commit fase 1, karena
-`make_master.py` harus menghasilkan master 100 juta yang sama persis)
+`make_master.py` harus menghasilkan master 20, 30, dan 100 juta yang sama persis)
 
 ```bash
 mkdir -p /opt/synchrono-uji/bench-data && cd /opt/synchrono-uji
@@ -347,6 +361,7 @@ git -C synchrono-service checkout e993bb3                  # commit fase 1 (fase
 
 ```bash
 cd /opt/synchrono-uji/synchrono-service-starrocks
+export MYSQL_PWD="$STARROCKS_PASSWORD"       # sesi baru: jalankan dulu baris read di langkah 1
 export STARROCKS_HOST=172.16.13.158 STARROCKS_PORT=9030 STARROCKS_USER=root
 export STARROCKS_STREAM_LOAD_URL=http://172.16.13.158:8040 UDF_HOST=172.16.13.158
 export TEST_DATA=/opt/synchrono-uji/bench-data/uji-master-ae
@@ -360,11 +375,32 @@ nohup bash -c 'bash bench/run_bench.sh new A,B,C,D,E 3; python3 bench/summarize.
 # selesai: cp bench/results/summary.json bench/results/summary-starrocks-2m.json
 grep -o "candidatePullMs': [0-9]*" bench/results/starrocks-2m.log | sort | uniq -c   # semua 0 = UDF terpakai
 
+# Master 20 dan 30 juta. Tabel master dikosongkan sebelum setiap muat, supaya tiap ukuran
+# mulai dari tabel bersih seperti DuckDB yang membaca parquet baru (DELETE di load_master
+# meninggalkan baris lama di disk sampai compaction). sha256 di log harus sama dengan fase 1:
+# 20 juta 0007e4bf...44fc3ac4, 30 juta 59ec02af...60e71f99.
+nohup bash -c '
+set -e
+for n in 20 30; do
+  docker run --rm -v /opt/synchrono-uji/bench-data:/d -v "$PWD/bench:/bench:ro" synchrono-service:2.0.0 \
+    python /bench/make_master.py /d/1790325476460_23223dc0_master.parquet /d/master-${n}m.parquet ${n}000000
+  sha256sum /opt/synchrono-uji/bench-data/master-${n}m.parquet
+  export MASTER_PARQUET=/opt/synchrono-uji/bench-data/master-${n}m.parquet
+  bash bench/stack.sh data
+  mysql -h127.0.0.1 -P9030 -uroot -e "TRUNCATE TABLE synchrono_master.persons"
+  bash bench/stack.sh master
+  bash bench/run_bench.sh new A,B,C,D,E 3
+  python3 bench/summarize.py
+  cp bench/results/summary.json bench/results/summary-starrocks-${n}m.json
+done
+echo SELESAI' > bench/results/starrocks-20m-30m.log 2>&1 &
+
 docker run --rm -v /opt/synchrono-uji/bench-data:/d -v "$PWD/bench:/bench:ro" synchrono-service:2.0.0 \
   python /bench/make_master.py /d/1790325476460_23223dc0_master.parquet /d/master-100m.parquet 100000000
 sha256sum /opt/synchrono-uji/bench-data/master-100m.parquet     # fase 1: 0c47cfe6...ae879c24
 export MASTER_PARQUET=/opt/synchrono-uji/bench-data/master-100m.parquet
 bash bench/stack.sh data
+mysql -h127.0.0.1 -P9030 -uroot -e 'TRUNCATE TABLE synchrono_master.persons'
 nohup bash bench/stack.sh master > bench/results/load-master-100m.log 2>&1 &
 # selesai bila log memuat "rows": 100000000; cek sisa disk: df -h /opt
 nohup bash -c 'bash bench/run_bench.sh new A,B,C,D,E 1; python3 bench/summarize.py' > bench/results/starrocks-100m.log 2>&1 &
