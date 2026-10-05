@@ -93,3 +93,97 @@ python3 bench/summarize.py                  # ringkasan -> bench/results/summary
 - `stack.sh new` mengisi `UDF_JAR_URL` dengan IP host (`hostname -I`); tetapkan sendiri
   dengan `UDF_HOST=192.168.2.107` bila IP pertama host bukan alamat yang dijangkau StarRocks.
 - Bersihkan semuanya: `bash bench/stack.sh clean`.
+
+## C. Benchmark di server kantor (serverai, 172.16.12.98)
+
+StarRocks kantor (4.0.8, 24 core, ±70 GB untuk BE) dipakai setiap hari; database
+`synchrono` di sana milik aplikasi lain. Uji ini hanya membuat dan memakai
+`synchrono_service`, `synchrono_kl`, `synchrono_portal`, `synchrono_master`.
+
+### 1. Cara StarRocks dipasang (hanya membaca)
+
+```bash
+ls /opt/starrocks
+docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' | grep -i -E 'star|fe|be'
+ps -ef | grep -E 'StarRocksFE|starrocks_be' | grep -v grep
+grep -n -i -A12 starrocks /opt/docker-compose.yml /opt/starrocks/docker-compose.yml 2>/dev/null
+```
+
+Ada kontainer StarRocks → pakai 2b. Tidak ada kontainer tetapi ada proses
+`StarRocksFE` dari `/opt/starrocks/fe` → pakai 2a.
+
+### 2. Nyalakan Java UDF (sekali)
+
+`enable_udf` tidak bisa diubah saat jalan: FE harus di-restart. Selama ±1 menit
+aplikasi lain tidak bisa query; data tidak terpengaruh dan BE tidak perlu restart.
+Lakukan di luar jam sibuk. Tanpa UDF, service tetap benar tetapi skor Pass 3
+dihitung di DuckDB (kandidat ditarik keluar dari StarRocks — lambat untuk C/D/E).
+
+2a. Terpasang langsung di host (jalankan sebagai pemilik `/opt/starrocks`; bila FE
+dijalankan systemd/supervisor, restart lewat itu):
+
+```bash
+cp /opt/starrocks/fe/conf/fe.conf /opt/starrocks/fe/conf/fe.conf.bak-$(date +%F)
+grep -q '^enable_udf' /opt/starrocks/fe/conf/fe.conf || echo 'enable_udf = true' >> /opt/starrocks/fe/conf/fe.conf
+/opt/starrocks/fe/bin/stop_fe.sh
+/opt/starrocks/fe/bin/start_fe.sh --daemon
+```
+
+2b. Di Docker (`FE` = nama kontainer FE dari langkah 1). Bila `fe.conf` di-mount dari
+host (`docker inspect $FE --format '{{json .Mounts}}'`), ubah berkas di host itu saja;
+perubahan di dalam kontainer hilang bila kontainernya dibuat ulang:
+
+```bash
+FE=nama-kontainer-fe
+docker exec $FE sh -c "cp /opt/starrocks/fe/conf/fe.conf /opt/starrocks/fe/conf/fe.conf.bak && (grep -q '^enable_udf' /opt/starrocks/fe/conf/fe.conf || echo 'enable_udf = true' >> /opt/starrocks/fe/conf/fe.conf)"
+docker restart $FE
+```
+
+### 3. Kode, image, dan data uji
+
+```bash
+mkdir -p /opt/synchrono-uji/bench-data && cd /opt/synchrono-uji
+git clone -b service-master https://github.com/Arknightmythic/langflow-synchrono.git synchrono-service
+git clone -b service-starrocks https://github.com/Arknightmythic/langflow-synchrono.git synchrono-service-starrocks
+cd synchrono-service && docker build -t synchrono-service:2.0.0 . && cd ..
+ss -ltn | grep -E ':(58101|58102)\b'      # kosong = port bebas; bila terpakai, export OLD_PORT/NEW_PORT
+```
+
+Dari laptop (Git Bash), salin data uji dan master 2 juta:
+
+```bash
+scp -r /d/ISGS/PROJECT/synchrono/test-data-csv/uji-master-ae root@172.16.12.98:/opt/synchrono-uji/bench-data/
+scp /d/ISGS/PROJECT/synchrono/1790325476460_23223dc0_master.parquet root@172.16.12.98:/opt/synchrono-uji/bench-data/
+```
+
+### 4. Jalankan
+
+Semua di satu sesi shell (variabel dipakai ulang oleh `run_bench.sh`):
+
+```bash
+cd /opt/synchrono-uji/synchrono-service-starrocks
+read -rsp 'Password root StarRocks: ' STARROCKS_PASSWORD; echo; export STARROCKS_PASSWORD
+export STARROCKS_HOST=172.16.12.98 STARROCKS_PORT=9030 STARROCKS_USER=root
+export STARROCKS_STREAM_LOAD_URL=http://172.16.12.98:8040   # BE langsung: BE terdaftar sebagai 127.0.0.1
+export UDF_HOST=172.16.12.98
+export TEST_DATA=/opt/synchrono-uji/bench-data/uji-master-ae
+export MASTER_PARQUET=/opt/synchrono-uji/bench-data/1790325476460_23223dc0_master.parquet
+
+bash bench/stack.sh all       # S3, Postgres, harness, service DuckDB & StarRocks, unggah data uji
+bash bench/stack.sh master    # master 2 juta -> synchrono_master (um-master)
+
+# kesetaraan baris per baris dengan service DuckDB
+P="docker run --rm --network synchrono-shared --env-file .env.bench -e WORK_DIR=/work -e DUCKDB_TEMP_DIR=/work/spill -v $PWD:/srv:ro -v $PWD/bench/.data/work-new:/work -w /srv synchrono-service-starrocks:dev python"
+$P bench/parity_grading.py
+$P bench/parity_matching.py A B C D E
+
+# kecepatan, bergantian
+bash bench/run_bench.sh new A,B,C,D,E 3
+bash bench/run_bench.sh old A,B,C,D,E 3
+python3 bench/summarize.py
+```
+
+- UDF terpakai bila callback matching memuat `candidatePullMs: 0`; bila gagal,
+  `docker logs srb-new-worker-matching 2>&1 | grep UDF` menyebut sebabnya.
+- Selesai: `bash bench/stack.sh clean` (kontainer uji saja; database `synchrono_*` di
+  StarRocks tetap ada).

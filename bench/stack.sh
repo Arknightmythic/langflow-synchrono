@@ -92,6 +92,14 @@ new_env() {
       -e "s|^NORMALISASI_AI_BASE_URL=.*|NORMALISASI_AI_BASE_URL=|" \
       -e "s|^REASONING_AI_BASE_URL=.*|REASONING_AI_BASE_URL=|" \
       "$NEW/.env.example" > "$NEW/.env.bench"
+  # Another cluster than the .env.example default (e.g. the office server):
+  # export these before running stack.sh / run_bench.sh.
+  local key
+  for key in STARROCKS_HOST STARROCKS_PORT STARROCKS_USER STARROCKS_STREAM_LOAD_URL; do
+    if [ -n "${!key:-}" ]; then
+      sed -i "s|^$key=.*|$key=${!key}|" "$NEW/.env.bench"
+    fi
+  done
   local host=${UDF_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}
   if [ -n "$host" ]; then
     sed -i "s|^UDF_JAR_URL=.*|UDF_JAR_URL=http://$host:$NEW_PORT/udf/synchrono-udf.jar|" "$NEW/.env.bench"
