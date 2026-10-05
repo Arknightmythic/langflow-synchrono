@@ -100,44 +100,48 @@ StarRocks kantor (4.0.8, 24 core, ±70 GB untuk BE) dipakai setiap hari; databas
 `synchrono` di sana milik aplikasi lain. Uji ini hanya membuat dan memakai
 `synchrono_service`, `synchrono_kl`, `synchrono_portal`, `synchrono_master`.
 
-### 1. Cara StarRocks dipasang (hanya membaca)
+### 1. Cara StarRocks dipasang
 
-```bash
-ls /opt/starrocks
-docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' | grep -i -E 'star|fe|be'
-ps -ef | grep -E 'StarRocksFE|starrocks_be' | grep -v grep
-grep -n -i -A12 starrocks /opt/docker-compose.yml /opt/starrocks/docker-compose.yml 2>/dev/null
-```
-
-Ada kontainer StarRocks → pakai 2b. Tidak ada kontainer tetapi ada proses
-`StarRocksFE` dari `/opt/starrocks/fe` → pakai 2a.
+Langsung di host, `/opt/starrocks/fe` dan `/opt/starrocks/be`, dijalankan root.
+Saat boot, `starrocks.service` (oneshot) menjalankan `start_fe.sh --daemon` lalu
+`start_be.sh --daemon`. BE sudah memuat JVM (`libjvm.so`, folder `udf`,
+`udf-runtime`, `jni-packages`), jadi Java UDF hanya perlu diizinkan di FE.
+Unit `starrocks-fe.service` / `starrocks-be.service` tidak aktif — **jangan
+dinyalakan** (`Restart=always`, akan membuat FE/BE dobel).
 
 ### 2. Nyalakan Java UDF (sekali)
 
 `enable_udf` tidak bisa diubah saat jalan: FE harus di-restart. Selama ±1 menit
-aplikasi lain tidak bisa query; data tidak terpengaruh dan BE tidak perlu restart.
+aplikasi lain tidak bisa query; data tidak terpengaruh dan BE tidak di-restart.
 Lakukan di luar jam sibuk. Tanpa UDF, service tetap benar tetapi skor Pass 3
 dihitung di DuckDB (kandidat ditarik keluar dari StarRocks — lambat untuk C/D/E).
 
-2a. Terpasang langsung di host (jalankan sebagai pemilik `/opt/starrocks`; bila FE
-dijalankan systemd/supervisor, restart lewat itu):
-
 ```bash
-cp /opt/starrocks/fe/conf/fe.conf /opt/starrocks/fe/conf/fe.conf.bak-$(date +%F)
-grep -q '^enable_udf' /opt/starrocks/fe/conf/fe.conf || echo 'enable_udf = true' >> /opt/starrocks/fe/conf/fe.conf
-/opt/starrocks/fe/bin/stop_fe.sh
-/opt/starrocks/fe/bin/start_fe.sh --daemon
+CONF=/opt/starrocks/fe/conf/fe.conf
+cp $CONF $CONF.bak-$(date +%F)
+if grep -q '^[[:space:]]*enable_udf' $CONF; then
+  sed -i 's/^[[:space:]]*enable_udf.*/enable_udf = true/' $CONF
+else
+  printf '\nenable_udf = true\n' >> $CONF
+fi
+grep -n 'enable_udf' $CONF
+
+# restart FE saja, dengan perintah yang sama dengan starrocks.service
+cd /opt/starrocks/fe/bin
+./stop_fe.sh
+sleep 5
+ps -ef | grep StarRocksFE | grep -v grep     # harus kosong sebelum start
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+./start_fe.sh --daemon
+
+sleep 40
+ps -ef | grep StarRocksFE | grep -v grep
+ss -ltn | grep -E ':(9030|8030|9010)\b'
+tail -n 20 /opt/starrocks/fe/log/fe.warn.log
 ```
 
-2b. Di Docker (`FE` = nama kontainer FE dari langkah 1). Bila `fe.conf` di-mount dari
-host (`docker inspect $FE --format '{{json .Mounts}}'`), ubah berkas di host itu saja;
-perubahan di dalam kontainer hilang bila kontainernya dibuat ulang:
-
-```bash
-FE=nama-kontainer-fe
-docker exec $FE sh -c "cp /opt/starrocks/fe/conf/fe.conf /opt/starrocks/fe/conf/fe.conf.bak && (grep -q '^enable_udf' /opt/starrocks/fe/conf/fe.conf || echo 'enable_udf = true' >> /opt/starrocks/fe/conf/fe.conf)"
-docker restart $FE
-```
+Bila FE tidak naik: kembalikan `cp $CONF.bak-<tanggal> $CONF`, lalu jalankan lagi
+`./start_fe.sh --daemon`.
 
 ### 3. Kode, image, dan data uji
 
