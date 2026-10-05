@@ -104,10 +104,11 @@ StarRocks kantor (4.0.8, 24 core, ±70 GB untuk BE) dipakai setiap hari; databas
 
 Langsung di host, `/opt/starrocks/fe` dan `/opt/starrocks/be`, dijalankan root.
 Saat boot, `starrocks.service` (oneshot) menjalankan `start_fe.sh --daemon` lalu
-`start_be.sh --daemon`. BE sudah memuat JVM (`libjvm.so`, folder `udf`,
-`udf-runtime`, `jni-packages`), jadi Java UDF hanya perlu diizinkan di FE.
-Unit `starrocks-fe.service` / `starrocks-be.service` tidak aktif — **jangan
-dinyalakan** (`Restart=always`, akan membuat FE/BE dobel).
+`start_be.sh --daemon` tanpa `JAVA_HOME`. Akibatnya BE memakai `libjvm.so` pengganti
+di `be/lib` dan semua fitur Java-nya, termasuk UDF, mati ("env 'JAVA_HOME' is not
+set"). Java UDF butuh dua hal: diizinkan di FE (langkah 2) dan `JAVA_HOME` di BE
+(langkah 2b). Unit `starrocks-fe.service` / `starrocks-be.service` tidak aktif —
+**jangan dinyalakan** (`Restart=always`, akan membuat FE/BE dobel).
 
 ### 2. Nyalakan Java UDF (sekali)
 
@@ -125,6 +126,11 @@ else
   printf '\nenable_udf = true\n' >> $CONF
 fi
 grep -n 'enable_udf' $CONF
+# FE jalan di Java 21: CREATE FUNCTION memasang SecurityManager, yang sejak Java 18
+# harus diizinkan; tanpa ini muncul "The Security Manager is deprecated ..."
+grep -q 'java.security.manager=allow' $CONF || \
+  sed -i '/^JAVA_OPTS.*udf_security\.policy/ s|udf_security\.policy|udf_security.policy -Djava.security.manager=allow|' $CONF
+grep -n '^JAVA_OPTS' $CONF
 
 # restart FE saja, dengan perintah yang sama dengan starrocks.service
 cd /opt/starrocks/fe/bin
@@ -135,10 +141,38 @@ export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 ./start_fe.sh --daemon
 
 sleep 40
-ps -ef | grep StarRocksFE | grep -v grep
+ps -ef | grep StarRocksFE | grep -v grep | grep -o 'java.security.manager=allow'
 ss -ltn | grep -E ':(9030|8030|9010)\b'
 tail -n 20 /opt/starrocks/fe/log/fe.warn.log
 ```
+
+### 2b. `JAVA_HOME` untuk BE (sekali; BE di-restart)
+
+Selama BE restart (±1 menit) semua kueri dan load gagal; data aman. Lakukan di luar
+jam sibuk. `JAVA_HOME` di `be.conf` ikut terbaca saat boot oleh `starrocks.service`.
+
+```bash
+BECONF=/opt/starrocks/be/conf/be.conf
+cp $BECONF $BECONF.bak-$(date +%F)
+grep -q '^[[:space:]]*JAVA_HOME' $BECONF || printf '\nJAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64\n' >> $BECONF
+grep -n 'JAVA_HOME' $BECONF
+
+cd /opt/starrocks/be/bin
+./stop_be.sh
+sleep 10
+ps -ef | grep 'lib/starrocks_be' | grep -v grep    # harus kosong sebelum start
+./start_be.sh --daemon
+
+sleep 30
+BEPID=$(pgrep -f 'lib/starrocks_be' | head -1)
+tr '\0' '\n' < /proc/$BEPID/environ | grep JAVA_HOME
+grep -m1 libjvm /proc/$BEPID/maps                   # harus dari /usr/lib/jvm/..., bukan be/lib
+ss -ltn | grep -E ':(8040|9060|9050|8060)\b'
+```
+
+Fungsi UDF dibuat otomatis oleh service pada job matching pertama
+(`SHOW FUNCTIONS FROM synchrono_service`). Bila gagal, alasannya ada di
+`docker logs srb-new-worker-matching 2>&1 | grep -i udf`; worker mencoba lagi setelah 5 menit.
 
 Bila FE tidak naik: kembalikan `cp $CONF.bak-<tanggal> $CONF`, lalu jalankan lagi
 `./start_fe.sh --daemon`.
