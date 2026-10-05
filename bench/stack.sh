@@ -95,7 +95,7 @@ new_env() {
   # Another cluster than the .env.example default (e.g. the office server):
   # export these before running stack.sh / run_bench.sh.
   local key
-  for key in STARROCKS_HOST STARROCKS_PORT STARROCKS_USER STARROCKS_STREAM_LOAD_URL; do
+  for key in STARROCKS_HOST STARROCKS_PORT STARROCKS_USER STARROCKS_STREAM_LOAD_URL STARROCKS_QUERY_MEM_LIMIT; do
     if [ -n "${!key:-}" ]; then
       sed -i "s|^$key=.*|$key=${!key}|" "$NEW/.env.bench"
     fi

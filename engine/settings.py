@@ -20,6 +20,19 @@ def env_flag(name: str, default: bool = False, *aliases: str) -> bool:
     return default if not value else value in ("1", "true", "yes", "on")
 
 
+def env_bytes(name: str, default: int = 0) -> int:
+    """'16GB', '512M' or a plain byte count; empty = default."""
+    value = env(name).upper().replace(" ", "")
+    if not value:
+        return default
+    for suffix, factor in (("TB", 1024 ** 4), ("GB", 1024 ** 3), ("MB", 1024 ** 2), ("KB", 1024),
+                           ("T", 1024 ** 4), ("G", 1024 ** 3), ("M", 1024 ** 2), ("K", 1024),
+                           ("B", 1)):
+        if value.endswith(suffix):
+            return int(float(value[: -len(suffix)]) * factor)
+    return int(value)
+
+
 SR_HOST = env("STARROCKS_HOST", "192.168.2.107")
 SR_PORT = env_int("STARROCKS_PORT", 30930)
 SR_USER = env("STARROCKS_USER", "root")
@@ -29,6 +42,8 @@ SR_REPLICATION = env_int("STARROCKS_REPLICATION", 1)
 SR_BUCKETS = env_int("STARROCKS_BUCKETS", 8)
 SR_QUERY_TIMEOUT = env_int("STARROCKS_QUERY_TIMEOUT", 7200)
 SR_ENABLE_SPILL = env("STARROCKS_ENABLE_SPILL", "true").lower() == "true"
+# Per-query memory cap for this service's sessions only; 0 = the BE limit applies.
+SR_QUERY_MEM_LIMIT = env_bytes("STARROCKS_QUERY_MEM_LIMIT")
 
 DB_SERVICE = env("DB_SERVICE", "synchrono_service")
 DB_KL = env("DB_KL", "synchrono_kl")

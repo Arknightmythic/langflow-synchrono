@@ -26,6 +26,8 @@ def _session(conn) -> None:
                   f"SET insert_timeout = {cfg.SR_QUERY_TIMEOUT}"]
     if cfg.SR_ENABLE_SPILL:
         statements += ["SET enable_spill = true", "SET spill_mode = 'auto'"]
+    if cfg.SR_QUERY_MEM_LIMIT:
+        statements.append(f"SET query_mem_limit = {cfg.SR_QUERY_MEM_LIMIT}")
     with conn.cursor() as cur:
         for statement in statements:
             try:

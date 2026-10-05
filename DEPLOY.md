@@ -221,6 +221,9 @@ bash bench/run_bench.sh old A,B,C,D,E 3
 python3 bench/summarize.py
 ```
 
+- Batas memori per kueri untuk service ini saja (aplikasi lain di cluster tidak
+  terpengaruh): `export STARROCKS_QUERY_MEM_LIMIT=16GB` sebelum `stack.sh new` /
+  `run_bench.sh new`. Melewati batas → spill ke disk, bukan langsung gagal.
 - UDF terpakai bila callback matching memuat `candidatePullMs: 0`; bila gagal,
   `docker logs srb-new-worker-matching 2>&1 | grep UDF` menyebut sebabnya.
 - Selesai: `bash bench/stack.sh clean` (kontainer uji saja; database `synchrono_*` di
