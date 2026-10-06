@@ -570,10 +570,25 @@ def blocking_sr_sql(w: Work, blocking: dict, file_id: str, master_id: str, nv: s
             f"ON i.row_id = b.incoming_row_id")
 
 
-def pass3_starrocks(w: Work, fn: dict, rules_: dict, file_id: str, master_id: str, nv: str,
-                    mv: str, timings: dict) -> dict:
+def _scored_ctes(fn: dict, rules_: dict, joined: str) -> str:
     terms = _term_columns(fn, rules_["weights"], rules_["date_match"])
     term_select = "".join(f", {expr} AS {name}" for name, expr in terms.items())
+    return f"""joined AS ({joined}),
+        terms AS (
+            SELECT incoming_row_id AS id, nik_master, nik_incoming, nama_clean, nama_master_clean,
+                   nama_full, nama_master_full, tanggal_lahir_clean AS dob_i,
+                   tanggal_lahir_master_clean AS dob_m,
+                   {missing_sql(rules_['missing_elements'])} AS miss_all{term_select}
+              FROM joined),
+        scored AS (
+            SELECT *, CASE WHEN nik_master IS NULL THEN CAST(0.0 AS DOUBLE)
+                           ELSE {_score_expr(rules_['weights'])} END AS skor,
+                      CASE WHEN nik_master IS NULL THEN 0 ELSE miss_all END AS miss
+              FROM terms)"""
+
+
+def _decision_ctes(fn: dict, rules_: dict) -> str:
+    """The decision per incoming row, from CTEs `scored` and `ranked` (rn and n_candidates per pair)."""
     eps = _double(rules_["epsilon"])
     rnd = fn["round"]
     k_pivot = ", ".join(f"max(CASE WHEN kk = {k} THEN nik_master END) AS k{k}_nik, "
@@ -597,34 +612,7 @@ def pass3_starrocks(w: Work, fn: dict, rules_: dict, file_id: str, master_id: st
                            f"CASE WHEN {winner} AND f.k{k}_nik IS NOT NULL "
                            f"THEN {rnd}(f.k{k}_skor, 2) END AS k{k}_score"
                            for k in range(1, MAX_CANDIDATES + 1))
-    parts, pairs = _pass3_parts(w, rules_["blocking"], file_id, master_id, nv, mv, timings)
-    t = time.perf_counter()
-    for index in range(parts):
-        table = w.t("p3") if index == 0 else w.t("p3_part")
-        joined = blocking_sr_sql(w, rules_["blocking"], file_id, master_id, nv, mv,
-                                 (index, parts) if parts > 1 else None)
-        sr.execute(f"DROP TABLE IF EXISTS {table} FORCE")
-        sr.execute(f"""
-        CREATE TABLE {table} {PROPS} AS
-        WITH joined AS ({joined}),
-        terms AS (
-            SELECT incoming_row_id AS id, nik_master, nik_incoming, nama_clean, nama_master_clean,
-                   nama_full, nama_master_full, tanggal_lahir_clean AS dob_i,
-                   tanggal_lahir_master_clean AS dob_m,
-                   {missing_sql(rules_['missing_elements'])} AS miss_all{term_select}
-              FROM joined),
-        scored AS (
-            SELECT *, CASE WHEN nik_master IS NULL THEN CAST(0.0 AS DOUBLE)
-                           ELSE {_score_expr(rules_['weights'])} END AS skor,
-                      CASE WHEN nik_master IS NULL THEN 0 ELSE miss_all END AS miss
-              FROM terms),
-        ranked AS (
-            SELECT id, nik_master, skor, miss,
-                   row_number() OVER (PARTITION BY id ORDER BY skor DESC,
-                                      nik_master ASC NULLS LAST) AS rn,
-                   count(nik_master) OVER (PARTITION BY id) AS n_candidates
-              FROM scored),
-        uniq AS (
+    return f"""uniq AS (
             SELECT * FROM (
                 SELECT r.*, row_number() OVER (PARTITION BY id, nik_master ORDER BY rn) AS k
                   FROM ranked r WHERE rn <= {2 * MAX_CANDIDATES}) x
@@ -663,7 +651,32 @@ def pass3_starrocks(w: Work, fn: dict, rules_: dict, file_id: str, master_id: st
                CASE WHEN NOT f.rejected
                     THEN {rnd}({name_jw} * CAST(100 AS DOUBLE), 1) END AS jw_name,
                {candidates}
-          FROM flagged f LEFT JOIN picked c ON c.id = f.id""")
+          FROM flagged f LEFT JOIN picked c ON c.id = f.id"""
+
+
+def pass3_sr_query(fn: dict, rules_: dict, joined: str) -> str:
+    """Pass 3 over the blocking pairs in `joined`: one decision row per incoming row."""
+    return f"""
+        WITH {_scored_ctes(fn, rules_, joined)},
+        ranked AS (
+            SELECT id, nik_master, skor, miss,
+                   row_number() OVER (PARTITION BY id ORDER BY skor DESC,
+                                      nik_master ASC NULLS LAST) AS rn,
+                   count(nik_master) OVER (PARTITION BY id) AS n_candidates
+              FROM scored),
+        {_decision_ctes(fn, rules_)}"""
+
+
+def pass3_starrocks(w: Work, fn: dict, rules_: dict, file_id: str, master_id: str, nv: str,
+                    mv: str, timings: dict) -> dict:
+    parts, pairs = _pass3_parts(w, rules_["blocking"], file_id, master_id, nv, mv, timings)
+    t = time.perf_counter()
+    for index in range(parts):
+        table = w.t("p3") if index == 0 else w.t("p3_part")
+        joined = blocking_sr_sql(w, rules_["blocking"], file_id, master_id, nv, mv,
+                                 (index, parts) if parts > 1 else None)
+        sr.execute(f"DROP TABLE IF EXISTS {table} FORCE")
+        sr.execute(f"CREATE TABLE {table} {PROPS} AS {pass3_sr_query(fn, rules_, joined)}")
         if index:
             sr.execute(f"INSERT INTO {w.t('p3')} SELECT * FROM {table}")
     if parts > 1:
