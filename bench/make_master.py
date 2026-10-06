@@ -7,7 +7,9 @@ keys stay valid. Every extra person is synthetic but drawn from the same
 distributions: name and sex from one random original person, mother's name from
 another, birth place and region from a third, a birth date in the same range, and
 the same share of deceased. Their NIKs start with 99, a province code that does
-not exist, so they never equal a NIK in an incoming file. Same input, same output.
+not exist, so they never equal a NIK in an incoming file. Same input, same rows; the
+row order in the file (and so its checksum) differs per run because rows are written
+in parallel, so compare the printed content fingerprint instead.
 """
 import sys
 import time
@@ -46,6 +48,11 @@ COPY (
 ) TO '{target}' (FORMAT parquet, COMPRESSION zstd, ROW_GROUP_SIZE 1000000)
 """)
 
-total, niks = con.execute(f"SELECT count(*), count(DISTINCT nik) FROM read_parquet('{target}')").fetchone()
+total, niks, fingerprint = con.execute(f"""
+    SELECT count(*), count(DISTINCT nik),
+           sum(hash(nik, nama_lengkap, nama_ibu, tempat_lahir, tanggal_lahir, jenis_kelamin,
+                    provinsi, kabupaten, kecamatan, kelurahan, status_kematian))
+    FROM read_parquet('{target}')""").fetchone()
 print(f"[master] wrote {total:,} rows ({niks:,} distinct NIK) to {target} "
       f"in {time.perf_counter() - started:.0f}s", flush=True)
+print(f"[master] content fingerprint {fingerprint} (independent of row order)", flush=True)

@@ -44,6 +44,12 @@ SR_QUERY_TIMEOUT = env_int("STARROCKS_QUERY_TIMEOUT", 7200)
 SR_ENABLE_SPILL = env("STARROCKS_ENABLE_SPILL", "true").lower() == "true"
 # Per-query memory cap for this service's sessions only; 0 = the BE limit applies.
 SR_QUERY_MEM_LIMIT = env_bytes("STARROCKS_QUERY_MEM_LIMIT")
+# Pass 3 runs in parts of about this many blocking pairs, so a part fits in BE memory; 0 = one part.
+SR_PASS3_TARGET_PAIRS = env_int("STARROCKS_PASS3_TARGET_PAIRS", 20_000_000)
+# Every part scans the master again, so Pass 3 is only split above this many pairs.
+SR_PASS3_SPLIT_ABOVE_PAIRS = env_int("STARROCKS_PASS3_SPLIT_ABOVE_PAIRS", 40_000_000)
+# Counting the pairs costs one extra join, so smaller masters always run in one part.
+SR_PASS3_MIN_MASTER_ROWS = env_int("STARROCKS_PASS3_MIN_MASTER_ROWS", 5_000_000)
 
 DB_SERVICE = env("DB_SERVICE", "synchrono_service")
 DB_KL = env("DB_KL", "synchrono_kl")

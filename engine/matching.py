@@ -522,18 +522,46 @@ def _classify(rules_: dict) -> str:
             f"AND skor < {_double(rules_['review_score_max'])} THEN 2 ELSE 3 END")
 
 
-def blocking_sr_sql(w: Work, blocking: dict, file_id: str, master_id: str, nv: str, mv: str) -> str:
-    remaining = (f"(SELECT * FROM {KL}.records WHERE file_id = {sq(file_id)} "
-                 f"AND row_id NOT IN (SELECT id FROM {w.t('p1')}) "
-                 f"AND row_id NOT IN (SELECT id FROM {w.t('dec')}))")
+MAX_PASS3_PARTS = 64
+
+
+def _sr_branches(w: Work, blocking: dict, file_id: str, master_id: str, nv: str, mv: str,
+                 select: str, part: tuple[int, int] | None = None) -> list[str]:
+    where = (f"file_id = {sq(file_id)} AND row_id NOT IN (SELECT id FROM {w.t('p1')}) "
+             f"AND row_id NOT IN (SELECT id FROM {w.t('dec')})")
+    if part:
+        index, parts = part
+        where += f" AND (murmur_hash3_32(row_id) % {parts} + {parts}) % {parts} = {index}"
+    remaining = f"(SELECT * FROM {KL}.records WHERE {where})"
     persons = f"(SELECT * FROM {MASTER}.persons WHERE master_id = {sq(master_id)})"
+    join = "LEFT JOIN" if blocking.get("join") == "left" else "JOIN"
+    return [f"SELECT {select} FROM {remaining} i {join} {persons} m ON "
+            f"{cond.replace('{name}', nv).replace('{mother}', mv)}"
+            for cond in blocking["branches"]]
+
+
+def _pass3_parts(w: Work, blocking: dict, file_id: str, master_id: str, nv: str, mv: str,
+                 timings: dict) -> tuple[int, int | None]:
+    """Parts for Pass 3, split by incoming row: ranking is per row, so the result is the same."""
+    if cfg.SR_PASS3_TARGET_PAIRS <= 0:
+        return 1, None
+    if int((master.status(master_id) or {}).get("row_count") or 0) < cfg.SR_PASS3_MIN_MASTER_ROWS:
+        return 1, None
+    t = time.perf_counter()
+    union = " UNION ALL ".join(_sr_branches(w, blocking, file_id, master_id, nv, mv, "i.row_id"))
+    pairs = int(sr.scalar(f"SELECT count(*) FROM ({union}) u") or 0)
+    timings["pairCountMs"] = int((time.perf_counter() - t) * 1000)
+    if pairs <= cfg.SR_PASS3_SPLIT_ABOVE_PAIRS:
+        return 1, pairs
+    return min(MAX_PASS3_PARTS, max(1, -(-pairs // cfg.SR_PASS3_TARGET_PAIRS))), pairs
+
+
+def blocking_sr_sql(w: Work, blocking: dict, file_id: str, master_id: str, nv: str, mv: str,
+                    part: tuple[int, int] | None = None) -> str:
     master_cols = ", ".join(f"m.{c.format(nv=nv, mv=mv)} AS {alias}"
                             for alias, c in MASTER_SIDE.items())
-    join = "LEFT JOIN" if blocking.get("join") == "left" else "JOIN"
-    branches = [f"SELECT i.row_id AS incoming_row_id, {master_cols} FROM {remaining} i {join} "
-                f"{persons} m ON {cond.replace('{name}', nv).replace('{mother}', mv)}"
-                for cond in blocking["branches"]]
-    union = " UNION ALL ".join(branches)
+    union = " UNION ALL ".join(_sr_branches(w, blocking, file_id, master_id, nv, mv,
+                                            f"i.row_id AS incoming_row_id, {master_cols}", part))
     core = f"SELECT DISTINCT * FROM ({union}) u" if blocking.get("distinct") else union
     incoming_cols = ", ".join(f"i.{c.format(nv=nv, mv=mv)} AS {alias}"
                               for alias, c in INCOMING_SIDE.items())
@@ -569,11 +597,16 @@ def pass3_starrocks(w: Work, fn: dict, rules_: dict, file_id: str, master_id: st
                            f"CASE WHEN {winner} AND f.k{k}_nik IS NOT NULL "
                            f"THEN {rnd}(f.k{k}_skor, 2) END AS k{k}_score"
                            for k in range(1, MAX_CANDIDATES + 1))
+    parts, pairs = _pass3_parts(w, rules_["blocking"], file_id, master_id, nv, mv, timings)
     t = time.perf_counter()
-    sr.execute(f"DROP TABLE IF EXISTS {w.t('p3')} FORCE")
-    sr.execute(f"""
-        CREATE TABLE {w.t('p3')} {PROPS} AS
-        WITH joined AS ({blocking_sr_sql(w, rules_['blocking'], file_id, master_id, nv, mv)}),
+    for index in range(parts):
+        table = w.t("p3") if index == 0 else w.t("p3_part")
+        joined = blocking_sr_sql(w, rules_["blocking"], file_id, master_id, nv, mv,
+                                 (index, parts) if parts > 1 else None)
+        sr.execute(f"DROP TABLE IF EXISTS {table} FORCE")
+        sr.execute(f"""
+        CREATE TABLE {table} {PROPS} AS
+        WITH joined AS ({joined}),
         terms AS (
             SELECT incoming_row_id AS id, nik_master, nik_incoming, nama_clean, nama_master_clean,
                    nama_full, nama_master_full, tanggal_lahir_clean AS dob_i,
@@ -631,9 +664,14 @@ def pass3_starrocks(w: Work, fn: dict, rules_: dict, file_id: str, master_id: st
                     THEN {rnd}({name_jw} * CAST(100 AS DOUBLE), 1) END AS jw_name,
                {candidates}
           FROM flagged f LEFT JOIN picked c ON c.id = f.id""")
+        if index:
+            sr.execute(f"INSERT INTO {w.t('p3')} SELECT * FROM {table}")
+    if parts > 1:
+        sr.execute(f"DROP TABLE IF EXISTS {w.t('p3_part')} FORCE")
     timings["blockingMs"] = int((time.perf_counter() - t) * 1000)
     timings["candidatePullMs"] = 0
-    return {"engine": "starrocks", "rows": sr.scalar(f"SELECT count(*) FROM {w.t('p3')}")}
+    return {"engine": "starrocks", "parts": parts, "pairs": pairs,
+            "rows": sr.scalar(f"SELECT count(*) FROM {w.t('p3')}")}
 
 
 def _load_decisions(w: Work, con, table: str, candidates: str) -> None:

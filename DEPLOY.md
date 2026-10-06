@@ -234,7 +234,8 @@ python3 bench/summarize.py
 Kedua versi diuji bergantian di server yang sama (16 vCPU, 31 GB RAM): fase 1 DuckDB,
 server dibersihkan, lalu fase 2 StarRocks. Data, skrip, dan jumlah putaran sama
 (master 2, 20, dan 30 juta: 3 putaran; 100 juta: 1 putaran). Memori memakai bawaan mesin datanya,
-setara 80% RAM: DuckDB `OLD_MEMORY=25GB`, BE StarRocks `mem_limit = 80%`.
+sama-sama 25 GB (±80% RAM): DuckDB `OLD_MEMORY=25GB`; BE StarRocks `mem_limit = 27777777778`,
+karena BE hanya memakai 90% dari `mem_limit` (`MemLimit` di `SHOW BACKENDS` = 23.283GB = 25 GB).
 `run_bench.sh new` mencatat proses FE/BE di host sebagai `sr-fe`/`sr-be` (core dan MB,
 sama dengan kontainer). `total` di ringkasan adalah jumlah semua komponen service.
 
@@ -280,7 +281,8 @@ done
 echo SELESAI' > bench/results/duckdb-20m-30m.log 2>&1 &
 ```
 
-Sebelum server dibersihkan, catat versi dan sidik berkas, lalu salin hasilnya ke laptop:
+Sebelum server dibersihkan, catat versi (sha256 berkas hanya sebagai catatan; lihat catatan
+`content fingerprint` di fase 2), lalu salin hasilnya ke laptop:
 
 ```bash
 cd /opt/synchrono-uji
@@ -318,10 +320,10 @@ enable_udf = true
 CONF
 cat >> /opt/starrocks/be/conf/be.conf <<'CONF'
 
-# uji setara ai-master-db: 80% RAM, setara bawaan DuckDB di fase 1
+# uji setara ai-master-db: BE memakai 0,9 x mem_limit = 25 GB, sama dengan DuckDB di fase 1
 JAVA_HOME = /usr/lib/jvm/java-17-openjdk-amd64
 priority_networks = 172.16.13.0/24
-mem_limit = 80%
+mem_limit = 27777777778
 CONF
 
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
@@ -332,7 +334,7 @@ mysql -h127.0.0.1 -P9030 -uroot -e 'SHOW FRONTENDS\G' | grep -E ' IP:|Alive:|Ver
 mysql -h127.0.0.1 -P9030 -uroot -e 'ALTER SYSTEM ADD BACKEND "172.16.13.158:9050"'
 /opt/starrocks/be/bin/start_be.sh --daemon
 sleep 40
-mysql -h127.0.0.1 -P9030 -uroot -e 'SHOW BACKENDS\G' | grep -E ' IP:|Alive:|CpuCores:|MemLimit:'
+mysql -h127.0.0.1 -P9030 -uroot -e 'SHOW BACKENDS\G' | grep -E ' IP:|Alive:|CpuCores:|MemLimit:'   # MemLimit: 23.283GB
 grep -m1 libjvm /proc/$(pgrep -f lib/starrocks_be | head -1)/maps    # harus dari /usr/lib/jvm/...
 
 # password root: huruf dan angka saja (dipakai sed di stack.sh)
@@ -377,14 +379,14 @@ grep -o "candidatePullMs': [0-9]*" bench/results/starrocks-2m.log | sort | uniq 
 
 # Master 20 dan 30 juta. Tabel master dikosongkan sebelum setiap muat, supaya tiap ukuran
 # mulai dari tabel bersih seperti DuckDB yang membaca parquet baru (DELETE di load_master
-# meninggalkan baris lama di disk sampai compaction). sha256 di log harus sama dengan fase 1:
-# 20 juta 0007e4bf...44fc3ac4, 30 juta 59ec02af...60e71f99.
+# meninggalkan baris lama di disk sampai compaction). sha256 berkas master berbeda di setiap
+# pembuatan (baris ditulis paralel); isi yang sama terlihat dari "content fingerprint" di log
+# make_master.py dan dari hitungan AUTO/REVIEW/UNMATCH/CONFLICT yang identik dengan fase 1.
 nohup bash -c '
 set -e
 for n in 20 30; do
   docker run --rm -v /opt/synchrono-uji/bench-data:/d -v "$PWD/bench:/bench:ro" synchrono-service:2.0.0 \
     python /bench/make_master.py /d/1790325476460_23223dc0_master.parquet /d/master-${n}m.parquet ${n}000000
-  sha256sum /opt/synchrono-uji/bench-data/master-${n}m.parquet
   export MASTER_PARQUET=/opt/synchrono-uji/bench-data/master-${n}m.parquet
   bash bench/stack.sh data
   mysql -h127.0.0.1 -P9030 -uroot -e "TRUNCATE TABLE synchrono_master.persons"
@@ -397,7 +399,6 @@ echo SELESAI' > bench/results/starrocks-20m-30m.log 2>&1 &
 
 docker run --rm -v /opt/synchrono-uji/bench-data:/d -v "$PWD/bench:/bench:ro" synchrono-service:2.0.0 \
   python /bench/make_master.py /d/1790325476460_23223dc0_master.parquet /d/master-100m.parquet 100000000
-sha256sum /opt/synchrono-uji/bench-data/master-100m.parquet     # fase 1: 0c47cfe6...ae879c24
 export MASTER_PARQUET=/opt/synchrono-uji/bench-data/master-100m.parquet
 bash bench/stack.sh data
 mysql -h127.0.0.1 -P9030 -uroot -e 'TRUNCATE TABLE synchrono_master.persons'
