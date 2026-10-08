@@ -851,8 +851,12 @@ def assemble(w: Work, job: dict, master_id: str, n: int) -> tuple[int, dict]:
     previous = (f"csv_file_id = {sq(file_id)} AND master_file_id = {sq(job['master_file_id'])}")
     if sr.query(f"SELECT 1 FROM {PORTAL}matching_results WHERE {previous} LIMIT 1"):
         sr.execute(f"DELETE FROM {PORTAL}matching_results WHERE {previous}")
+    # The portal adds its own review columns (reviewed_at, reviewed_by), so name ours.
     sr.execute(f"""
         INSERT INTO {PORTAL}matching_results
+            (id, csv_file_id, master_file_id, job_id, id_incoming, master_nik, score, status,
+             method, rank_conflict, pattern_group, reasoning, incoming_snapshot, master_snapshot,
+             review_decision, created_at, updated_at, created_by, updated_by)
         {ctes}
         SELECT uuid(), {sq(file_id)}, {sq(job['master_file_id'])}, {sq(job['job_id'])}, id,
                master_nik, score, status, method, rank_conflict, pattern_group,

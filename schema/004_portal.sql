@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS ${PORTAL}matching_jobs (
     created_at             DATETIME      NOT NULL,
     created_by             VARCHAR(255),
     updated_at             DATETIME,
-    updated_by             VARCHAR(255)
+    updated_by             VARCHAR(255),
+    reviewed_count         BIGINT
 ) PRIMARY KEY (id)
 DISTRIBUTED BY HASH(id) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
@@ -49,7 +50,9 @@ CREATE TABLE IF NOT EXISTS ${PORTAL}matching_results (
     created_at        DATETIME       NOT NULL,
     updated_at        DATETIME       NOT NULL,
     created_by        VARCHAR(255)   NOT NULL,
-    updated_by        VARCHAR(255)   NOT NULL
+    updated_by        VARCHAR(255)   NOT NULL,
+    reviewed_at       DATETIME,
+    reviewed_by       VARCHAR(255)
 ) PRIMARY KEY (id)
 DISTRIBUTED BY HASH(id) BUCKETS ${BUCKETS}
 PROPERTIES ("replication_num" = "${REPLICATION}", "enable_persistent_index" = "true");

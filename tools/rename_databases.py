@@ -4,6 +4,7 @@
   synchrono_service.<table>            -> syncrono_starrock.syncrono_service_<table>
   synchrono_kl.<table>                 -> syncrono_starrock.syncrono_kl_<table>
   synchrono_portal.<table>             -> syncrono_starrock.syncrono_portal_<table>
+  (107 already used the syncrono_ spelling for the same four databases: handled the same way)
 
 python tools/rename_databases.py                     show the plan; changes nothing
 python tools/rename_databases.py --apply             rename the master, create the new tables,
@@ -13,11 +14,13 @@ python tools/rename_databases.py --apply --drop-old  also drop the three old dat
                                                      RECOVER DATABASE works for about a day)
 
 Rows are copied only into new tables that are still empty, so running it again never overwrites
-what the service has written since. Matching work tables (w_*) and the old UDFs are not copied;
-the service makes new ones. No other database is read or changed.
+what the service has written since. Matching work tables (w_*), tables that are not part of the
+schema (shown in the plan) and the old UDFs are not copied; they go with the old database. No
+other database is read or changed.
 """
 import argparse
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -27,8 +30,21 @@ from engine import sr  # noqa: E402
 from schema import apply as schema  # noqa: E402
 
 NEW_DB, NEW_MASTER, OLD_MASTER = "syncrono_starrock", "syncrono_master", "synchrono_master"
-MOVES = {"synchrono_service": cfg.P_SERVICE, "synchrono_kl": cfg.P_KL, "synchrono_portal": cfg.P_PORTAL}
-assert "synchrono" not in (OLD_MASTER, *MOVES)  # the office cluster's own `synchrono` stays untouched
+MOVES = {f"{spelling}_{group}": prefix for spelling in ("synchrono", "syncrono")
+         for group, prefix in (("service", cfg.P_SERVICE), ("kl", cfg.P_KL), ("portal", cfg.P_PORTAL))}
+# Databases of other applications that share these clusters (98: synchrono, 107: syncrono_analytics).
+assert not {"synchrono", "syncrono_analytics", NEW_DB, NEW_MASTER} & {OLD_MASTER, *MOVES}
+
+
+def schema_tables() -> set[str]:
+    found = set()
+    for name in sorted(f for f in os.listdir(schema.FOLDER) if f.endswith(".sql")):
+        with open(os.path.join(schema.FOLDER, name), encoding="utf-8") as fh:
+            for _, sql in schema.statements(schema.render(fh.read())):
+                match = re.match(r"CREATE TABLE IF NOT EXISTS (\S+)", sql)
+                if match:
+                    found.add(match.group(1))
+    return found
 
 
 def databases() -> set[str]:
@@ -60,19 +76,27 @@ def rows_not_in(a: str, b: str, exprs: str) -> int:
 def plan(present: set[str]) -> None:
     if OLD_MASTER in present:
         print(f"rename database {OLD_MASTER} -> {NEW_MASTER}")
+    known = schema_tables()
     for db, prefix in MOVES.items():
         if db in present:
             for t in tables(db):
-                print(f"copy {db}.{t} ({count(f'`{db}`.`{t}`'):,} rows) -> {NEW_DB}.{prefix}{t}")
+                rows = f"{count(f'`{db}`.`{t}`'):,} rows"
+                if f"{NEW_DB}.{prefix}{t}" in known:
+                    print(f"copy {db}.{t} ({rows}) -> {NEW_DB}.{prefix}{t}")
+                else:
+                    print(f"skip {db}.{t} ({rows}): not part of the schema, goes with the old database")
 
 
 def copy_and_check(db: str, prefix: str) -> bool:
-    ok = True
+    ok, known = True, schema_tables()
     for t in tables(db):
         old, new = f"`{db}`.`{t}`", f"`{NEW_DB}`.`{prefix}{t}`"
         old_cols, new_cols = columns(db, t), columns(NEW_DB, prefix + t)
+        if f"{NEW_DB}.{prefix}{t}" not in known:
+            print(f"  skip {db}.{t}: not part of the schema, goes with the old database")
+            continue
         if not new_cols:
-            print(f"  FAIL {db}.{t}: no table {NEW_DB}.{prefix}{t} in the new schema")
+            print(f"  FAIL {db}.{t}: table {NEW_DB}.{prefix}{t} was not created")
             ok = False
             continue
         lost = [c for c in old_cols if c not in new_cols]

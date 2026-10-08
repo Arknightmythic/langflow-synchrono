@@ -38,9 +38,13 @@ def statements(text: str) -> list[tuple[str | None, str]]:
 
 ADDED_COLUMNS = {
     (cfg.DB, cfg.P_KL + "records"): [(c, "VARCHAR(512)") for c in
-                             names.variant_columns("name") + names.variant_columns("mother")],
+                                     names.variant_columns("name") + names.variant_columns("mother")],
     (cfg.DB_MASTER, "persons"): [(c, "VARCHAR(512)") for c in
                                  names.variant_columns("name") + names.variant_columns("mother")],
+    # Filled by the portal when a reviewer decides (as on 107); the service only creates them.
+    (cfg.DB, cfg.P_PORTAL + "matching_jobs"): [("reviewed_count", "BIGINT")],
+    (cfg.DB, cfg.P_PORTAL + "matching_results"): [("reviewed_at", "DATETIME"),
+                                                  ("reviewed_by", "VARCHAR(255)")],
 }
 
 
