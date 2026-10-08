@@ -57,7 +57,7 @@ def health() -> dict:
 @app.get("/health/db", tags=["health"])
 def health_db() -> dict:
     started = time.perf_counter()
-    n = sr.scalar(f"SELECT count(*) FROM {cfg.DB_SERVICE}.grading_jobs")
+    n = sr.scalar(f"SELECT count(*) FROM {cfg.T_SERVICE}grading_jobs")
     return {"status": "ok", "gradingJobs": n,
             "roundtripMs": round((time.perf_counter() - started) * 1000, 2)}
 
@@ -72,7 +72,7 @@ def udf_jar():
 @app.get("/health_check", tags=["health"])
 def health_check():
     try:
-        sr.query(f"SELECT 1 FROM {cfg.DB_SERVICE}.grade_rules LIMIT 1")
+        sr.query(f"SELECT 1 FROM {cfg.T_SERVICE}grade_rules LIMIT 1")
         db = "ok"
     except Exception as e:  # noqa: BLE001
         db = f"error: {type(e).__name__}: {' '.join(str(e).split())[:300]}"
@@ -257,7 +257,7 @@ def matching_job(job_id: str) -> dict:
                     f"completed_at, failed_at, last_error, total_incoming, auto_count, "
                     f"review_count, unmatch_count, conflict_count, "
                     f"CAST(stage_durations AS VARCHAR) AS stage_durations "
-                    f"FROM {cfg.DB_PORTAL}.matching_jobs WHERE id = {sq(job_id)}")
+                    f"FROM {cfg.T_PORTAL}matching_jobs WHERE id = {sq(job_id)}")
     if not rows:
         return {"found": False, "jobId": job_id, "status": "NOT_FOUND"}
     row = rows[0]

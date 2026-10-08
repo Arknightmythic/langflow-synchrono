@@ -13,8 +13,8 @@ OLD = "http://srb-old:8000/api/v1/grading/run"
 FILES = sys.argv[1:] or ["um-A/raw/data.csv", "um-B/raw/data.csv", "um-C/raw/data.csv",
                          "um-D/raw/data.csv", "um-E/raw/data.csv", "fmt-csv/raw/data.csv",
                          "fmt-pq/raw/data.parquet", "fmt-xlsx/raw/data.xlsx"]
-IGNORE = {"gradingDurationMs", "configVersion", "klStorage", "enrichedParquetKey",
-          "parquetSizeBytes", "referenceData", "normalization"}
+IGNORE = {"gradingDurationMs", "configVersion", "klStorage", "enrichedStorage",
+          "enrichedParquetKey", "parquetSizeBytes", "referenceData", "normalization"}
 
 
 def old_grade(file_id: str, key: str) -> dict:
@@ -60,7 +60,7 @@ for key in FILES:
     cols_b = [r[0] for r in con.execute(f"DESCRIBE SELECT * FROM '{b}'").fetchall()]
     rows = con.execute(f"SELECT count(*) FROM (SELECT * FROM '{a}' EXCEPT ALL "
                        f"SELECT * FROM '{b}')").fetchone()[0] if cols_a == cols_b else "n/a"
-    kl = sr.scalar(f"SELECT count(*) FROM {cfg.DB_KL}.records WHERE file_id = '{file_id}'")
+    kl = sr.scalar(f"SELECT count(*) FROM {cfg.T_KL}records WHERE file_id = '{file_id}'")
     print(f"{key:28s} grade old {old['summary']['gradeLetter']} new {new['summary']['gradeLetter']}"
           f" | score {old['summary']['qualityScore']}/{new['summary']['qualityScore']}"
           f" | json diffs {len(problems)} | enriched cols same {cols_a == cols_b}, rows differ {rows}"

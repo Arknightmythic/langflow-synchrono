@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS ${DB_KL}.records (
+CREATE TABLE IF NOT EXISTS ${KL}records (
     file_id        VARCHAR(255)  NOT NULL,
     row_id         VARCHAR(255)  NOT NULL,
     nik            VARCHAR(64),
@@ -45,4 +45,17 @@ CREATE TABLE IF NOT EXISTS ${DB_KL}.records (
 ) DUPLICATE KEY (file_id, row_id)
 PARTITION BY (file_id)
 DISTRIBUTED BY HASH(row_id) BUCKETS ${BUCKETS}
+PROPERTIES ("replication_num" = "${REPLICATION}");
+
+CREATE TABLE IF NOT EXISTS ${KL}enriched (
+    file_id         VARCHAR(255)  NOT NULL,
+    row_no          BIGINT        NOT NULL,
+    nik_trusted     BOOLEAN,
+    is_anomaly      BOOLEAN,
+    anomaly_type    VARCHAR(1024),
+    data            JSON          NOT NULL,
+    grading_job_id  VARCHAR(64)
+) DUPLICATE KEY (file_id, row_no)
+PARTITION BY (file_id)
+DISTRIBUTED BY HASH(row_no) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");

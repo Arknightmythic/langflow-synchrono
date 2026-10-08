@@ -522,7 +522,7 @@ def _write(table: str, key_column: str, key, values: dict) -> None:
             return f"{column} = {sq(R.NIK_FROM_API.get(value, value))}"
         return f"{column} = {sq(value)}"
     parts = ", ".join(expression(c, v) for c, v in values.items())
-    sr.execute(f"UPDATE {cfg.DB_SERVICE}.{table} SET {parts} WHERE {key_column} = {sq(key)}")
+    sr.execute(f"UPDATE {cfg.T_SERVICE}{table} SET {parts} WHERE {key_column} = {sq(key)}")
 
 
 def _diff(before: dict, after: dict) -> list[dict]:
@@ -550,7 +550,7 @@ def _diff(before: dict, after: dict) -> list[dict]:
 
 def _record_history(scope: str, grade_id: int | None, by: str | None, changes: list,
                     version: str | None) -> None:
-    sr.execute(f"INSERT INTO {cfg.DB_SERVICE}.config_history VALUES ("
+    sr.execute(f"INSERT INTO {cfg.T_SERVICE}config_history VALUES ("
                f"{time.time_ns() // 1000}, {sq(now_text())}, {sq(by)}, {sq(scope)}, "
                f"{sq(grade_id)}, {sjson(changes)}, {sq(version)})")
 
@@ -658,10 +658,10 @@ def update_global(patch: dict, by: str | None = None, dry_run: bool = False) -> 
     else:
         for key, value in changes_in.items():
             if value is None:
-                sr.execute(f"DELETE FROM {cfg.DB_SERVICE}.engine_config "
+                sr.execute(f"DELETE FROM {cfg.T_SERVICE}engine_config "
                            f"WHERE config_key = {sq(key)}")
             else:
-                sr.execute(f"INSERT INTO {cfg.DB_SERVICE}.engine_config VALUES ({sq(key)}, "
+                sr.execute(f"INSERT INTO {cfg.T_SERVICE}engine_config VALUES ({sq(key)}, "
                            f"{sjson(value)}, {sq(now_text())}, {sq(by)})")
         after = _shape_global(R.read_global())
 
@@ -683,7 +683,7 @@ def update_global(patch: dict, by: str | None = None, dry_run: bool = False) -> 
 
 def read_version(version: str) -> dict | None:
     rows = sr.query(f"SELECT CAST(content AS VARCHAR) AS content, first_used "
-                    f"FROM {cfg.DB_SERVICE}.config_versions WHERE version = {sq(version)}")
+                    f"FROM {cfg.T_SERVICE}config_versions WHERE version = {sq(version)}")
     if not rows:
         return None
     return {"configVersion": version, "firstUsedAt": R._stamp(rows[0]["first_used"]),
@@ -694,7 +694,7 @@ def history(grade_id: int | None = None, limit: int = 50) -> list[dict]:
     where = f"WHERE grade_id = {int(grade_id)}" if grade_id is not None else ""
     rows = sr.query(f"SELECT id, changed_at, changed_by, scope, grade_id, "
                     f"CAST(changes AS VARCHAR) AS changes, version "
-                    f"FROM {cfg.DB_SERVICE}.config_history {where} "
+                    f"FROM {cfg.T_SERVICE}config_history {where} "
                     f"ORDER BY id DESC LIMIT {max(1, min(int(limit), 500))}")
     return [{"id": r["id"], "at": R._stamp(r["changed_at"]), "by": r["changed_by"],
              "scope": r["scope"], "gradeId": r["grade_id"],

@@ -13,6 +13,7 @@ import pymysql
 import pymysql.cursors
 
 from . import settings as cfg
+from .sql import sq
 
 _local = threading.local()
 
@@ -102,6 +103,20 @@ def drop_tables(database: str, prefix: str) -> None:
     for row in rows:
         name = row.get("table_name") or row.get("TABLE_NAME")
         execute(f"DROP TABLE IF EXISTS {database}.`{name}` FORCE")
+
+
+def drop_file(table: str, file_id: str) -> None:
+    """Remove one file from a table partitioned by file_id, tablets included. A file without
+    rows is fine; FORCE skips the recycle bin, so the disk space comes back at once.
+    StarRocks 4.0.8 needs a current database for DROP PARTITIONS WHERE even when the table name
+    is qualified ('"db" is null'), so this runs on its own connection to that database."""
+    database, name = table.split(".", 1)
+    connection = connect(database)
+    try:
+        with connection.cursor() as cur:
+            cur.execute(f"ALTER TABLE `{name}` DROP PARTITIONS WHERE file_id = {sq(file_id)} FORCE")
+    finally:
+        connection.close()
 
 
 def _auth() -> str:
@@ -194,7 +209,7 @@ def clean_text(expr: str) -> str:
 def attach(duck, database: str | None = None) -> None:
     duck.execute("LOAD mysql")
     dsn = (f"host={cfg.SR_HOST} port={cfg.SR_PORT} user={cfg.SR_USER} "
-           f"password={cfg.SR_PASSWORD} database={database or cfg.DB_SERVICE}")
+           f"password={cfg.SR_PASSWORD} database={database or cfg.DB}")
     duck.execute(f"ATTACH '{dsn}' AS sr (TYPE mysql, READ_ONLY)")
 
 

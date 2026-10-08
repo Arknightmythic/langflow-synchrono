@@ -73,12 +73,12 @@ def _stamp(value) -> str | None:
 
 def criteria() -> list[dict]:
     return sr.query(f"SELECT grade_id, eval_order, nik_column, {', '.join(MIN_COLUMNS)} "
-                    f"FROM {cfg.DB_SERVICE}.grade_criteria WHERE active ORDER BY eval_order")
+                    f"FROM {cfg.T_SERVICE}grade_criteria WHERE active ORDER BY eval_order")
 
 
 def all_criteria() -> list[dict]:
     rows = sr.query(f"SELECT grade_id, eval_order, nik_column, {', '.join(MIN_COLUMNS)}, active, "
-                    f"updated_at, updated_by FROM {cfg.DB_SERVICE}.grade_criteria "
+                    f"updated_at, updated_by FROM {cfg.T_SERVICE}grade_criteria "
                     f"ORDER BY eval_order")
     for r in rows:
         r["active"] = bool(r["active"])
@@ -89,7 +89,7 @@ def all_criteria() -> list[dict]:
 
 def all_bands() -> list[dict]:
     rows = sr.query(f"SELECT grade_id, grade_letter, score_min, score_max, severity_label, "
-                    f"can_proceed, criteria_description FROM {cfg.DB_SERVICE}.grade_bands")
+                    f"can_proceed, criteria_description FROM {cfg.T_SERVICE}grade_bands")
     for r in rows:
         r["can_proceed"] = bool(r["can_proceed"])
     return rows
@@ -106,7 +106,7 @@ def band(grade: int) -> dict:
 def read_global() -> dict:
     stored = {r["config_key"]: (_json(r["value"]), _stamp(r["updated_at"]), r["updated_by"])
               for r in sr.query(f"SELECT config_key, CAST(value AS VARCHAR) AS value, "
-                                f"updated_at, updated_by FROM {cfg.DB_SERVICE}.engine_config")}
+                                f"updated_at, updated_by FROM {cfg.T_SERVICE}engine_config")}
     result = {}
     for key, default in GLOBAL_DEFAULTS.items():
         if key in stored and stored[key][0] is not None:
@@ -129,7 +129,7 @@ def read_rules() -> dict[int, dict]:
                CAST(missing_elements AS VARCHAR) AS missing_elements,
                CAST(name_cleaning AS VARCHAR) AS name_cleaning, date_match,
                updated_at, updated_by
-          FROM {cfg.DB_SERVICE}.grade_rules""")
+          FROM {cfg.T_SERVICE}grade_rules""")
     result = {}
     for r in rows:
         g = int(r["grade_code"])
@@ -151,7 +151,7 @@ def read_rules() -> dict[int, dict]:
 def read_blocking() -> dict[int, dict]:
     return {int(r["grade_code"]): _json(r["blocking"]) for r in sr.query(
         f"SELECT grade_code, CAST(blocking AS VARCHAR) AS blocking "
-        f"FROM {cfg.DB_SERVICE}.matching_queries")}
+        f"FROM {cfg.T_SERVICE}matching_queries")}
 
 
 def matching_rules(grade: int) -> dict:
@@ -212,9 +212,9 @@ def record_version() -> str:
     content = snapshot()
     version = version_of(content)
     try:
-        if not sr.scalar(f"SELECT count(*) FROM {cfg.DB_SERVICE}.config_versions "
+        if not sr.scalar(f"SELECT count(*) FROM {cfg.T_SERVICE}config_versions "
                          f"WHERE version = {sq(version)}"):
-            sr.execute(f"INSERT INTO {cfg.DB_SERVICE}.config_versions VALUES "
+            sr.execute(f"INSERT INTO {cfg.T_SERVICE}config_versions VALUES "
                        f"({sq(version)}, {sjson(content)}, {sq(now_text())})")
     except Exception as e:  # noqa: BLE001
         print(f"[config] version {version} not stored: {e}")

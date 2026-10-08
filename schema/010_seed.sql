@@ -1,5 +1,5 @@
 -- seed: grade_bands
-INSERT INTO ${DB_SERVICE}.grade_bands VALUES
+INSERT INTO ${SERVICE}grade_bands VALUES
  (1, 'A', 90, 100, 'Sangat Baik', TRUE,
   'Kualitas Data Sangat Baik. Seluruh 6 elemen skema wajib terisi lengkap dan 100% NIK valid serta tepercaya.'),
  (2, 'B', 70, 89, 'Baik', TRUE,
@@ -14,7 +14,7 @@ INSERT INTO ${DB_SERVICE}.grade_bands VALUES
   'Kolom berkas tidak dikenali sebagai elemen kependudukan. Memerlukan pemetaan kolom kustom sebelum dapat dicocokkan.');
 
 -- seed: grade_criteria
-INSERT INTO ${DB_SERVICE}.grade_criteria
+INSERT INTO ${SERVICE}grade_criteria
  (grade_id, eval_order, nik_column, min_nik, min_nama, min_tempat_lahir, min_tanggal_lahir,
   min_jenis_kelamin, min_nama_ibu, min_nik_trusted, active, updated_at, updated_by) VALUES
  (1, 1, 'required',  1.0,  1.0, 1.0, 1.0, 1.0, 1.0, 1.0,  TRUE, NULL, NULL),
@@ -23,7 +23,7 @@ INSERT INTO ${DB_SERVICE}.grade_criteria
  (4, 4, 'forbidden', NULL, 1.0, 0.7, 0.7, 0.7, 0.6, NULL, TRUE, NULL, NULL);
 
 -- seed: grade_rules
-INSERT INTO ${DB_SERVICE}.grade_rules
+INSERT INTO ${SERVICE}grade_rules
  (grade_code, auto_missing_max, auto_score_min, review_missing_count, review_score_min,
   review_score_max, weights, missing_elements, name_cleaning, date_match, updated_at, updated_by)
 SELECT 1, 99, 80.001, 99, 0.0, 80.001, parse_json('[["nama", 100]]'), parse_json('[]'),
@@ -49,7 +49,7 @@ SELECT 5, 1, 81.0, 2, 80.0, 81.0,
        parse_json('{"titles": false, "patronym": false, "abbreviations": false}'), NULL, NULL, NULL;
 
 -- seed: matching_queries
-INSERT INTO ${DB_SERVICE}.matching_queries (grade_code, blocking, description)
+INSERT INTO ${SERVICE}matching_queries (grade_code, blocking, description)
 SELECT 1, parse_json('{"join": "left", "branches": ["(CASE WHEN i.nik_trusted THEN i.nik END) = m.nik"]}'),
        'NIK berkas (hanya yang tepercaya) = NIK master'
 UNION ALL

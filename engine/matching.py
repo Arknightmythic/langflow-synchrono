@@ -7,7 +7,7 @@ from . import settings as cfg
 from .jobs import post_json
 from .sql import now_text, sjson, sq
 
-SVC, KL, PORTAL, MASTER = cfg.DB_SERVICE, cfg.DB_KL, cfg.DB_PORTAL, cfg.DB_MASTER
+SVC, KL, PORTAL, MASTER = cfg.T_SERVICE, cfg.T_KL, cfg.T_PORTAL, cfg.DB_MASTER
 MAX_CANDIDATES = reasoning.MAX_CANDIDATES
 NEAR_NIK_DIGITS = 2
 NAME_TOTAL_MISMATCH = 0.70
@@ -47,19 +47,19 @@ def build_job(payload: dict) -> dict:
 
 
 def register(job: dict) -> None:
-    existing = sr.query(f"SELECT status FROM {PORTAL}.matching_jobs WHERE id = {sq(job['job_id'])}")
+    existing = sr.query(f"SELECT status FROM {PORTAL}matching_jobs WHERE id = {sq(job['job_id'])}")
     if existing:
-        sr.execute(f"UPDATE {PORTAL}.matching_jobs SET status = 'PENDING', current_stage = NULL, "
+        sr.execute(f"UPDATE {PORTAL}matching_jobs SET status = 'PENDING', current_stage = NULL, "
                    f"last_error = NULL, updated_at = {sq(now_text())} "
                    f"WHERE id = {sq(job['job_id'])}")
         return
-    sr.execute(f"INSERT INTO {PORTAL}.matching_jobs (id, file_id, master_file_id, status, "
+    sr.execute(f"INSERT INTO {PORTAL}matching_jobs (id, file_id, master_file_id, status, "
                f"created_at, created_by) VALUES ({sq(job['job_id'])}, {sq(job['file_id'])}, "
                f"{sq(job['master_file_id'])}, 'PENDING', {sq(now_text())}, {sq(job['actor'])})")
 
 
 def portal_status(job_id: str) -> str | None:
-    rows = sr.query(f"SELECT status FROM {PORTAL}.matching_jobs WHERE id = {sq(job_id)}")
+    rows = sr.query(f"SELECT status FROM {PORTAL}matching_jobs WHERE id = {sq(job_id)}")
     return rows[0]["status"] if rows else None
 
 
@@ -73,7 +73,7 @@ def mark(job_id: str, **columns) -> None:
         else:
             parts.append(f"{key} = {sq(value)}")
     parts += [f"updated_at = {sq(now_text())}", f"updated_by = {sq(cfg.ENGINE_ACTOR)}"]
-    sr.execute(f"UPDATE {PORTAL}.matching_jobs SET {', '.join(parts)} WHERE id = {sq(job_id)}")
+    sr.execute(f"UPDATE {PORTAL}matching_jobs SET {', '.join(parts)} WHERE id = {sq(job_id)}")
 
 
 def check_cancelled(job: dict) -> None:
@@ -85,7 +85,7 @@ def find_grade(job: dict) -> int:
     if job.get("grade") not in (None, ""):
         return int(job["grade"])
     rows = sr.query(f"SELECT get_json_int(CAST(result AS VARCHAR), '$.summary.grade') AS grade "
-                    f"FROM {SVC}.grading_jobs WHERE file_id = {sq(job['file_id'])} "
+                    f"FROM {SVC}grading_jobs WHERE file_id = {sq(job['file_id'])} "
                     f"AND status = 'COMPLETED' ORDER BY created_at DESC LIMIT 1")
     if not rows or rows[0]["grade"] is None:
         raise ValueError(f"Berkas '{job['file_id']}' belum pernah digrading oleh engine ini, "
@@ -99,16 +99,31 @@ def find_grade(job: dict) -> int:
 
 class Work:
     def __init__(self, job_id: str):
-        self.prefix = "w_" + hashlib.sha1(job_id.encode()).hexdigest()[:10]
+        self.prefix = cfg.P_SERVICE + "w_" + hashlib.sha1(job_id.encode()).hexdigest()[:10]
 
     def t(self, name: str) -> str:
-        return f"{SVC}.{self.prefix}_{name}"
+        return f"{cfg.DB}.{self.prefix}_{name}"
 
     def name(self, name: str) -> str:
         return f"{self.prefix}_{name}"
 
     def drop(self) -> None:
-        sr.drop_tables(SVC, self.prefix + "_")
+        sr.drop_tables(cfg.DB, self.prefix + "_")
+
+
+def release_incoming(job: dict) -> None:
+    """K/L rows only feed matching: drop the file's partition once no other job of the same file is
+    waiting or running. A later matching job loads them again from enriched.parquet."""
+    others = sr.scalar(f"SELECT count(*) FROM {PORTAL}matching_jobs "
+                       f"WHERE file_id = {sq(job['file_id'])} AND id <> {sq(job['job_id'])} "
+                       f"AND status IN ('PENDING', 'IN_PROGRESS')")
+    if others:
+        print(f"[M] K/L of {job['file_id']} kept: {others} other job(s) still need it", flush=True)
+        return
+    try:
+        sr.drop_file(f"{KL}records", job["file_id"])
+    except Exception as e:  # noqa: BLE001
+        print(f"[M] K/L of {job['file_id']} not dropped: {e}", flush=True)
 
 
 def _lacks_variant(table: str, where: str, variant: str) -> bool:
@@ -131,9 +146,9 @@ def ensure_master(job: dict, report, variant: str = "v0") -> str:
 
 def ensure_incoming(job: dict, con, variant: str = "v0") -> int:
     where = f"file_id = {sq(job['file_id'])}"
-    n = sr.scalar(f"SELECT count(*) FROM {KL}.records WHERE {where}")
-    if n and _lacks_variant(f"{KL}.records", where, variant):
-        sr.execute(f"DELETE FROM {KL}.records WHERE {where}")
+    n = sr.scalar(f"SELECT count(*) FROM {KL}records WHERE {where}")
+    if n and _lacks_variant(f"{KL}records", where, variant):
+        sr.execute(f"DELETE FROM {KL}records WHERE {where}")
         n = 0
     if not n:
         source = f"s3://{job['s3_bucket']}/{job['incoming_key']}"
@@ -147,9 +162,9 @@ def ensure_incoming(job: dict, con, variant: str = "v0") -> int:
                     f"file_row_number + 1 AS __row_no FROM enriched_src")
         columns = [r[0] for r in con.execute("DESCRIBE enriched_df").fetchall()]
         sr.stream_load_query(con, grading.kl_select(columns, job["file_id"], None, "enriched_df"),
-                             KL, "records", grading.KL_COLUMNS)
-        n = sr.scalar(f"SELECT count(*) FROM {KL}.records WHERE file_id = {sq(job['file_id'])}")
-    dup = sr.scalar(f"SELECT count(*) - count(DISTINCT row_id) FROM {KL}.records "
+                             cfg.DB, cfg.P_KL + "records", grading.KL_COLUMNS)
+        n = sr.scalar(f"SELECT count(*) FROM {KL}records WHERE file_id = {sq(job['file_id'])}")
+    dup = sr.scalar(f"SELECT count(*) - count(DISTINCT row_id) FROM {KL}records "
                     f"WHERE file_id = {sq(job['file_id'])}")
     if dup:
         raise ValueError(f"Kolom id pada berkas incoming tidak unik ({dup:,} duplikat). "
@@ -184,7 +199,7 @@ def pass1(w: Work, con, file_id: str, master_id: str, nv: str, mv: str, contradi
                (nullif(i.{mv}, '') IS NOT NULL AND nullif(m.{mv}, '') IS NOT NULL
                 AND i.{mv} <> m.{mv}) AS mother_check,
                i.{mv} AS mother_i, m.{mv} AS mother_m
-          FROM {KL}.records i
+          FROM {KL}records i
           JOIN {MASTER}.persons m ON i.nik = m.nik
          WHERE i.file_id = {sq(file_id)} AND m.master_id = {sq(master_id)} AND i.nik_trusted""")
     pulled = sr.pull(con, "mother_pairs", f"SELECT id, nik, mother_i, mother_m FROM {w.t('nik')} "
@@ -196,7 +211,7 @@ def pass1(w: Work, con, file_id: str, master_id: str, nv: str, mv: str, contradi
     exclude = ""
     if bad:
         _create(w.t("mother_bad"), "id VARCHAR(255), nik VARCHAR(64)")
-        sr.stream_load_query(con, "SELECT id, nik FROM mother_bad", SVC, w.name("mother_bad"),
+        sr.stream_load_query(con, "SELECT id, nik FROM mother_bad", cfg.DB, w.name("mother_bad"),
                              ["id", "nik"])
         exclude = (f"LEFT ANTI JOIN {w.t('mother_bad')} b ON b.id = n.id AND b.nik = n.nik")
     sr.execute(f"DROP TABLE IF EXISTS {w.t('p1')} FORCE")
@@ -220,7 +235,7 @@ def pass2(w: Work, con, file_id: str, master_id: str, nv: str, mv: str) -> list:
         SELECT i.row_id AS id, m.nik AS nik, i.nik AS nik_i,
                (o.id IS NOT NULL AND m.nik <> i.nik) AS owned,
                i.pob_c AS pob_i, m.pob_c AS pob_m
-          FROM (SELECT * FROM {KL}.records
+          FROM (SELECT * FROM {KL}records
                  WHERE file_id = {sq(file_id)} AND nullif({nv}, '') IS NOT NULL
                    AND dob IS NOT NULL AND nullif({mv}, '') IS NOT NULL
                    AND row_id NOT IN (SELECT id FROM {w.t('p1')})) i
@@ -332,7 +347,7 @@ def _rules_row(r: dict) -> str:
 
 
 def blocking_sql(w: Work, blocking: dict, file_id: str, master_id: str, nv: str, mv: str) -> str:
-    remaining = (f"(SELECT * FROM {KL}.records WHERE file_id = {sq(file_id)} "
+    remaining = (f"(SELECT * FROM {KL}records WHERE file_id = {sq(file_id)} "
                  f"AND row_id NOT IN (SELECT id FROM {w.t('p1')}) "
                  f"AND row_id NOT IN (SELECT id FROM {w.t('dec')}))")
     persons = f"(SELECT * FROM {MASTER}.persons WHERE master_id = {sq(master_id)})"
@@ -532,7 +547,7 @@ def _sr_branches(w: Work, blocking: dict, file_id: str, master_id: str, nv: str,
     if part:
         index, parts = part
         where += f" AND (murmur_hash3_32(row_id) % {parts} + {parts}) % {parts} = {index}"
-    remaining = f"(SELECT * FROM {KL}.records WHERE {where})"
+    remaining = f"(SELECT * FROM {KL}records WHERE {where})"
     persons = f"(SELECT * FROM {MASTER}.persons WHERE master_id = {sq(master_id)})"
     join = "LEFT JOIN" if blocking.get("join") == "left" else "JOIN"
     return [f"SELECT {select} FROM {remaining} i {join} {persons} m ON "
@@ -566,7 +581,7 @@ def blocking_sr_sql(w: Work, blocking: dict, file_id: str, master_id: str, nv: s
     incoming_cols = ", ".join(f"i.{c.format(nv=nv, mv=mv)} AS {alias}"
                               for alias, c in INCOMING_SIDE.items())
     return (f"SELECT b.*, {incoming_cols} FROM ({core}) b "
-            f"JOIN (SELECT * FROM {KL}.records WHERE file_id = {sq(file_id)}) i "
+            f"JOIN (SELECT * FROM {KL}records WHERE file_id = {sq(file_id)}) i "
             f"ON i.row_id = b.incoming_row_id")
 
 
@@ -691,15 +706,15 @@ def _load_decisions(w: Work, con, table: str, candidates: str) -> None:
     if con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]:
         select = ", ".join(f"CAST({c} AS INTEGER)" if c in ("rank_conflict", "owned") else c
                            for c in DECISION_COLUMNS)
-        sr.stream_load_query(con, f"SELECT {select} FROM {table}", SVC, w.name("dec"),
+        sr.stream_load_query(con, f"SELECT {select} FROM {table}", cfg.DB, w.name("dec"),
                              DECISION_COLUMNS)
     if con.execute(f"SELECT count(*) FROM {candidates}").fetchone()[0]:
-        sr.stream_load_query(con, f"SELECT id, rk, nik, score FROM {candidates}", SVC,
+        sr.stream_load_query(con, f"SELECT id, rk, nik, score FROM {candidates}", cfg.DB,
                              w.name("cand"), CANDIDATE_COLUMNS)
 
 
 def _records(file_id: str) -> str:
-    return f"(SELECT * FROM {KL}.records WHERE file_id = {sq(file_id)})"
+    return f"(SELECT * FROM {KL}records WHERE file_id = {sq(file_id)})"
 
 
 def decisions_cte(w: Work, file_id: str, p3: bool = False) -> str:
@@ -833,10 +848,10 @@ def assemble(w: Work, job: dict, master_id: str, n: int) -> tuple[int, dict]:
         "'nik', m_nik, 'tanggal_lahir', date_format(m_tgl, '%Y-%m-%d'), 'jenis_kelamin', m_jk, "
         "'nama_ibu', m_ibu, 'tempat_lahir', m_tmp, 'provinsi', m_provinsi) END")
     previous = (f"csv_file_id = {sq(file_id)} AND master_file_id = {sq(job['master_file_id'])}")
-    if sr.query(f"SELECT 1 FROM {PORTAL}.matching_results WHERE {previous} LIMIT 1"):
-        sr.execute(f"DELETE FROM {PORTAL}.matching_results WHERE {previous}")
+    if sr.query(f"SELECT 1 FROM {PORTAL}matching_results WHERE {previous} LIMIT 1"):
+        sr.execute(f"DELETE FROM {PORTAL}matching_results WHERE {previous}")
     sr.execute(f"""
-        INSERT INTO {PORTAL}.matching_results
+        INSERT INTO {PORTAL}matching_results
         {ctes}
         SELECT uuid(), {sq(file_id)}, {sq(job['master_file_id'])}, {sq(job['job_id'])}, id,
                master_nik, score, status, method, rank_conflict, pattern_group,
@@ -926,7 +941,8 @@ def run(job: dict, report=lambda stage: None) -> dict:
              review_count=m["reviewCount"], unmatch_count=m["unmatchCount"],
              conflict_count=m["conflictCount"], stage_durations=timings,
              blocking_metrics=detail, peak_rss_mb=rss,
-             result_parquet_key=f"starrocks:{PORTAL}.matching_results")
+             result_parquet_key=f"starrocks:{PORTAL}matching_results")
+        release_incoming(job)
     finally:
         try:
             w.drop()
@@ -940,7 +956,7 @@ def run(job: dict, report=lambda stage: None) -> dict:
     m["rulesApplied"] = applied
     body = {"jobId": job["job_id"], "fileId": job["file_id"],
             "masterFileId": job["master_file_id"], "status": "COMPLETED",
-            "resultParquetKey": None, "resultTable": f"{PORTAL}.matching_results", "metrics": m,
+            "resultParquetKey": None, "resultTable": f"{PORTAL}matching_results", "metrics": m,
             "message": "Pencocokan data selesai; hasil tersimpan di StarRocks."}
     ok, detail_text, _ = post_json(job["callback_url"], body, {"x-callback-source": "matching-engine"})
     print(f"[M] {job['job_id']} done in {timings['totalMs']:,} ms — AUTO {m['autoCount']:,} "

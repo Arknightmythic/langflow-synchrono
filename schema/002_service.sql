@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.grading_jobs (
+CREATE TABLE IF NOT EXISTS ${SERVICE}grading_jobs (
     job_id              VARCHAR(64)    NOT NULL,
     file_id             VARCHAR(255)   NOT NULL,
     status              VARCHAR(16)    NOT NULL,
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.grading_jobs (
 DISTRIBUTED BY HASH(job_id) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
 
-CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.grade_criteria (
+CREATE TABLE IF NOT EXISTS ${SERVICE}grade_criteria (
     grade_id          INT          NOT NULL,
     eval_order        INT          NOT NULL,
     nik_column        VARCHAR(16)  NOT NULL,
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.grade_criteria (
 DISTRIBUTED BY HASH(grade_id) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
 
-CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.grade_bands (
+CREATE TABLE IF NOT EXISTS ${SERVICE}grade_bands (
     grade_id             INT           NOT NULL,
     grade_letter         VARCHAR(2)    NOT NULL,
     score_min            INT           NOT NULL,
@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.grade_bands (
 DISTRIBUTED BY HASH(grade_id) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
 
-CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.grade_rules (
+CREATE TABLE IF NOT EXISTS ${SERVICE}grade_rules (
     grade_code           INT          NOT NULL,
     auto_missing_max     INT,
     auto_score_min       DOUBLE,
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.grade_rules (
 DISTRIBUTED BY HASH(grade_code) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
 
-CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.matching_queries (
+CREATE TABLE IF NOT EXISTS ${SERVICE}matching_queries (
     grade_code  INT          NOT NULL,
     blocking    JSON         NOT NULL,
     description VARCHAR(1024)
@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.matching_queries (
 DISTRIBUTED BY HASH(grade_code) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
 
-CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.engine_config (
+CREATE TABLE IF NOT EXISTS ${SERVICE}engine_config (
     config_key VARCHAR(128) NOT NULL,
     value      JSON,
     updated_at DATETIME,
@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.engine_config (
 DISTRIBUTED BY HASH(config_key) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
 
-CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.config_versions (
+CREATE TABLE IF NOT EXISTS ${SERVICE}config_versions (
     version    VARCHAR(16) NOT NULL,
     content    JSON,
     first_used DATETIME
@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.config_versions (
 DISTRIBUTED BY HASH(version) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
 
-CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.masters (
+CREATE TABLE IF NOT EXISTS ${SERVICE}masters (
     master_id  VARCHAR(128)  NOT NULL,
     source     VARCHAR(1024),
     status     VARCHAR(16)   NOT NULL,
@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.masters (
 DISTRIBUTED BY HASH(master_id) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
 
-CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.config_history (
+CREATE TABLE IF NOT EXISTS ${SERVICE}config_history (
     id         BIGINT       NOT NULL,
     changed_at DATETIME     NOT NULL,
     changed_by VARCHAR(255),
@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.config_history (
 DISTRIBUTED BY HASH(id) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
 
-CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.reasoning_patterns (
+CREATE TABLE IF NOT EXISTS ${SERVICE}reasoning_patterns (
     pattern_hash      VARCHAR(64)   NOT NULL,
     pattern_name      VARCHAR(255)  NOT NULL,
     pattern_signature VARCHAR(4096) NOT NULL,
@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.reasoning_patterns (
 DISTRIBUTED BY HASH(pattern_hash) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
 
-CREATE TABLE IF NOT EXISTS ${DB_SERVICE}.service_api_keys (
+CREATE TABLE IF NOT EXISTS ${SERVICE}service_api_keys (
     id           VARCHAR(36)  NOT NULL,
     name         VARCHAR(512),
     key_hash     VARCHAR(64)  NOT NULL,

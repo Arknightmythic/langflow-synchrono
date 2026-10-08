@@ -51,12 +51,12 @@ curl -s -H "x-api-key: <kunci>" localhost:7870/health/db
 
 - Port API `7870` (ubah lewat `API_PORT` di `.env`). Service lama tetap di `7860`.
 - Skema StarRocks diterapkan otomatis oleh container `schema` dan aman diulang.
-  Database `synchrono_service`, `synchrono_kl`, `synchrono_portal`, `synchrono_master`
+  Database `syncrono_starrock` (tabel service, K/L, portal) dan `syncrono_master`
   sudah ada di cluster ini (dibuat saat pengujian 2 Okt 2026), termasuk master
   `um-master` (2 juta baris).
 - Memuat master lain:
   `docker compose run --rm api python tools/load_master.py <masterId> s3://<bucket>/<key>`
-- **Catatan:** hasil matching versi ini disimpan di `synchrono_portal` (StarRocks),
+- **Catatan:** hasil matching versi ini disimpan di `syncrono_starrock.syncrono_portal_matching_results` (StarRocks),
   bukan di PostgreSQL portal. Portal yang sekarang tidak akan menampilkannya.
 
 Redeploy setelah kode berubah: `docker compose up -d --build`.
@@ -98,7 +98,7 @@ python3 bench/summarize.py                  # ringkasan -> bench/results/summary
 
 StarRocks kantor (4.0.8, 24 core, ±70 GB untuk BE) dipakai setiap hari; database
 `synchrono` di sana milik aplikasi lain. Uji ini hanya membuat dan memakai
-`synchrono_service`, `synchrono_kl`, `synchrono_portal`, `synchrono_master`.
+`syncrono_starrock` dan `syncrono_master`.
 
 ### 1. Cara StarRocks dipasang
 
@@ -171,7 +171,7 @@ ss -ltn | grep -E ':(8040|9060|9050|8060)\b'
 ```
 
 Fungsi UDF dibuat otomatis oleh service pada job matching pertama
-(`SHOW FUNCTIONS FROM synchrono_service`). Bila gagal, alasannya ada di
+(`SHOW FUNCTIONS FROM syncrono_starrock`). Bila gagal, alasannya ada di
 `docker logs srb-new-worker-matching 2>&1 | grep -i udf`; worker mencoba lagi setelah 5 menit.
 
 Bila FE tidak naik: kembalikan `cp $CONF.bak-<tanggal> $CONF`, lalu jalankan lagi
@@ -208,7 +208,7 @@ export TEST_DATA=/opt/synchrono-uji/bench-data/uji-master-ae
 export MASTER_PARQUET=/opt/synchrono-uji/bench-data/1790325476460_23223dc0_master.parquet
 
 bash bench/stack.sh all       # S3, Postgres, harness, service DuckDB & StarRocks, unggah data uji
-bash bench/stack.sh master    # master 2 juta -> synchrono_master (um-master)
+bash bench/stack.sh master    # master 2 juta -> syncrono_master (um-master)
 
 # kesetaraan baris per baris dengan service DuckDB
 P="docker run --rm --network synchrono-shared --env-file .env.bench -e WORK_DIR=/work -e DUCKDB_TEMP_DIR=/work/spill -v $PWD:/srv:ro -v $PWD/bench/.data/work-new:/work -w /srv synchrono-service-starrocks:dev python"
@@ -389,7 +389,7 @@ for n in 20 30; do
     python /bench/make_master.py /d/1790325476460_23223dc0_master.parquet /d/master-${n}m.parquet ${n}000000
   export MASTER_PARQUET=/opt/synchrono-uji/bench-data/master-${n}m.parquet
   bash bench/stack.sh data
-  mysql -h127.0.0.1 -P9030 -uroot -e "TRUNCATE TABLE synchrono_master.persons"
+  mysql -h127.0.0.1 -P9030 -uroot -e "TRUNCATE TABLE syncrono_master.persons"
   bash bench/stack.sh master
   bash bench/run_bench.sh new A,B,C,D,E 3
   python3 bench/summarize.py
@@ -401,7 +401,7 @@ docker run --rm -v /opt/synchrono-uji/bench-data:/d -v "$PWD/bench:/bench:ro" sy
   python /bench/make_master.py /d/1790325476460_23223dc0_master.parquet /d/master-100m.parquet 100000000
 export MASTER_PARQUET=/opt/synchrono-uji/bench-data/master-100m.parquet
 bash bench/stack.sh data
-mysql -h127.0.0.1 -P9030 -uroot -e 'TRUNCATE TABLE synchrono_master.persons'
+mysql -h127.0.0.1 -P9030 -uroot -e 'TRUNCATE TABLE syncrono_master.persons'
 nohup bash bench/stack.sh master > bench/results/load-master-100m.log 2>&1 &
 # selesai bila log memuat "rows": 100000000; cek sisa disk: df -h /opt
 nohup bash -c 'bash bench/run_bench.sh new A,B,C,D,E 1; python3 bench/summarize.py' > bench/results/starrocks-100m.log 2>&1 &
@@ -411,3 +411,90 @@ nohup bash -c 'bash bench/run_bench.sh new A,B,C,D,E 1; python3 bench/summarize.
 Terakhir, catat `fase2-info.txt` seperti fase 1, ditambah `SELECT current_version()`,
 `MemLimit` dari `SHOW BACKENDS`, dan `java -version`. Setelah itu salin `bench/results`
 ke laptop.
+
+## E. Cluster dua node (R&D): BE kedua di serverai
+
+FE dan BE pertama tetap di 158. BE kedua dipasang terpisah di serverai (172.16.12.98), di
+samping StarRocks kantor: folder, port, dan memori sendiri, dan hanya terdaftar ke FE 158.
+StarRocks kantor (`/opt/starrocks`, `starrocks.service`, port 9050/9060/8040/8060) tidak
+disentuh dan tetap satu node. BE kedua dikunci ke 16 core (8-23), sama dengan 158.
+
+**1. Di serverai: BE uji** (tarball yang sama dengan bagian D)
+
+```bash
+mkdir -p /opt/sr-uji
+tar -xzf /root/StarRocks-4.0.8-ubuntu-amd64.tar.gz -C /opt/sr-uji --strip-components=1 StarRocks-4.0.8-ubuntu-amd64/be
+mkdir -p /opt/sr-uji/be/storage
+cat >> /opt/sr-uji/be/conf/be.conf <<'CONF'
+
+# BE uji untuk cluster 158, terpisah dari /opt/starrocks: port, folder, dan memori sendiri
+be_port = 19060
+be_http_port = 18040
+heartbeat_service_port = 19050
+brpc_port = 18060
+starlet_port = 19070
+storage_root_path = /opt/sr-uji/be/storage
+priority_networks = 172.16.12.0/24
+JAVA_HOME = /usr/lib/jvm/java-21-openjdk-amd64
+mem_limit = 27777777778
+# Tanpa dua baris ini BE menganggap mesin 24 core dan mengikat ulang thread-nya ke semua
+# core, sehingga lolos dari taskset (uji pertama: puncak 22,7 core). Dengan ini BE tetap di
+# core 8-23 dan menyesuaikan jumlah thread serta DOP untuk 16 core, sama dengan 158.
+enable_resource_group_bind_cpus = false
+num_cores = 16
+CONF
+cd /opt/sr-uji/be
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+ulimit -n 655350
+taskset -c 8-23 ./bin/start_be.sh --daemon      # setelah reboot: jalankan lagi tiga baris ini
+curl -s http://127.0.0.1:18040/varz | grep -E '^(enable_resource_group_bind_cpus|num_cores)='
+```
+
+**2. Di 158: daftarkan, lalu cek jaringan dua arah**
+
+```bash
+mysql -h127.0.0.1 -P9030 -uroot -e 'ALTER SYSTEM ADD BACKEND "172.16.12.98:19050"'
+mysql -h127.0.0.1 -P9030 -uroot -e 'SHOW BACKENDS\G' | grep -E ' IP:|Alive:|TabletNum:'
+for p in 19050 19060 18040 18060; do timeout 3 bash -c "</dev/tcp/172.16.12.98/$p" && echo "$p ok"; done
+# di serverai: 9020 9060 8040 8060 (StarRocks 158) dan 58102 (jar UDF) harus terbuka ke 158
+```
+
+**3. Uji 20, 30, dan 100 juta** (di 158). Penyeimbang tablet dimatikan selama uji: disk
+serverai sudah 80% terpakai oleh aplikasi lain, sehingga penyeimbang bisa memindahkan
+tablet master kembali ke 158 di tengah pengukuran. Setelan ini kembali ke bawaan saat FE
+di-restart. Master dikosongkan lalu dimuat ulang, supaya tablet barunya terbagi rata ke kedua
+BE (log menampilkan `ADMIN SHOW REPLICA DISTRIBUTION`, harus 50/50). BE di
+serverai dicatat sampler sebagai `be@172.16.12.98` dari `SHOW BACKENDS`: CPU proses BE
+(dalam % satu core) dan memori yang dicatat BE (sekitar 75% dari RSS).
+
+```bash
+cd /opt/synchrono-uji/synchrono-service-starrocks
+export STARROCKS_PASSWORD=$(grep '^STARROCKS_PASSWORD=' .env.bench | cut -d= -f2-)
+export MYSQL_PWD=$STARROCKS_PASSWORD
+export STARROCKS_HOST=172.16.13.158 STARROCKS_PORT=9030 STARROCKS_USER=root
+export STARROCKS_STREAM_LOAD_URL=http://172.16.13.158:8040 UDF_HOST=172.16.13.158
+export TEST_DATA=/opt/synchrono-uji/bench-data/uji-master-ae SAMPLE_BACKENDS=172.16.12.98
+mysql -h127.0.0.1 -P9030 -uroot -e 'ADMIN SET FRONTEND CONFIG ("tablet_sched_disable_balance" = "true")'
+nohup bash -c '
+set -e
+for n in 20 30 100; do
+  test "$(mysql -h127.0.0.1 -P9030 -uroot -e "SHOW BACKENDS\G" | grep -c "Alive: true")" = 2 ||
+    { echo "BERHENTI: BE yang hidup bukan 2"; exit 1; }
+  export MASTER_PARQUET=/opt/synchrono-uji/bench-data/master-${n}m.parquet
+  [ -f "$MASTER_PARQUET" ] || docker run --rm -v /opt/synchrono-uji/bench-data:/d -v "$PWD/bench:/bench:ro" \
+    synchrono-service:2.0.0 python /bench/make_master.py \
+    /d/1790325476460_23223dc0_master.parquet /d/master-${n}m.parquet ${n}000000
+  bash bench/stack.sh data
+  mysql -h127.0.0.1 -P9030 -uroot -e "TRUNCATE TABLE syncrono_master.persons"
+  bash bench/stack.sh master
+  mysql -h127.0.0.1 -P9030 -uroot -e "ADMIN SHOW REPLICA DISTRIBUTION FROM syncrono_master.persons"
+  rounds=3; [ "$n" = 100 ] && rounds=1
+  bash bench/run_bench.sh new A,B,C,D,E $rounds
+  python3 bench/summarize.py
+  cp bench/results/summary.json bench/results/summary-cluster-${n}m.json
+done
+echo SELESAI' > bench/results/cluster.log 2>&1 &
+```
+
+Bandingkan `summary-cluster-*.json` dengan `summary-starrocks2c-*.json` (fase 2c: satu node,
+kode yang sama).

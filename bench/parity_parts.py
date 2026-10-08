@@ -50,10 +50,10 @@ def match(letter: str, file_id: str, label: str, target_pairs: int, min_rows: in
     t = time.perf_counter()
     matching.run(job)
     seconds = time.perf_counter() - t
-    sr.pull(con, label, f"SELECT {COLUMNS} FROM {cfg.DB_PORTAL}.matching_results "
+    sr.pull(con, label, f"SELECT {COLUMNS} FROM {cfg.T_PORTAL}matching_results "
                         f"WHERE job_id = '{job_id}'")
     meta = sr.query(f"SELECT CAST(blocking_metrics AS VARCHAR) AS b, "
-                    f"CAST(stage_durations AS VARCHAR) AS s FROM {cfg.DB_PORTAL}.matching_jobs "
+                    f"CAST(stage_durations AS VARCHAR) AS s FROM {cfg.T_PORTAL}matching_jobs "
                     f"WHERE id = '{job_id}'")[0]
     return {"seconds": seconds, "pass3": json.loads(meta["b"] or "{}").get("pass3") or {},
             "stages": json.loads(meta["s"] or "{}")}

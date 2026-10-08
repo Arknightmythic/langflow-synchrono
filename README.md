@@ -10,7 +10,8 @@ diarahkan ke sini tanpa mengubah kode.
 ```
 Unggah → S3 ─► worker grading (DuckDB, logika sama dengan synchrono-service)
                  ├─ enriched.parquet ke S3 (kontrak lama tetap)
-                 └─ Stream Load (gzip) ─► synchrono_kl.records
+                 ├─ Stream Load (gzip) ─► syncrono_starrock.syncrono_kl_records (bahan matching)
+                 └─ Stream Load (gzip) ─► syncrono_starrock.syncrono_kl_enriched (hasil grading untuk portal)
 
 worker matching:
   Pass 1   join NIK berkas × master                       StarRocks
@@ -27,14 +28,44 @@ Master **dibersihkan sekali** saat dimuat (semua varian pembersihan nama dihitun
 lebih dulu), jadi matching tidak lagi membersihkan ratusan juta baris master di
 setiap job.
 
-## Empat database (StarRocks: skema = database)
+## Dua database (StarRocks: skema = database)
 
-| Database | Isi |
+Tabel service, K/L, dan portal ada di `syncrono_starrock`. Nama tabelnya diawali nama
+kelompoknya: `syncrono_service_`, `syncrono_kl_`, `syncrono_portal_`. Master punya database
+sendiri, `syncrono_master`. Nama keduanya bisa diganti lewat `DB_STARROCK` dan `DB_MASTER`.
+
+| Tabel | Isi |
 |---|---|
-| `synchrono_service` | job grading, aturan (`grade_rules`, `grade_criteria`, `grade_bands`, `matching_queries`), `engine_config`, `config_versions`, `config_history`, `reasoning_patterns`, `service_api_keys`, registri `masters`, tabel kerja matching `w_*` (dihapus setelah job) |
-| `synchrono_kl` | `records`: data K/L hasil grading, dipartisi per `file_id` |
-| `synchrono_portal` | `matching_jobs`, `matching_results` (bentuk sama dengan tabel portal) |
-| `synchrono_master` | `persons` (master, dipartisi per `master_id`), `dictionary` (kamus pengenalan kolom) |
+| `syncrono_starrock.syncrono_service_*` | job grading (`grading_jobs`), aturan (`grade_rules`, `grade_criteria`, `grade_bands`, `matching_queries`), `engine_config`, `config_versions`, `config_history`, `reasoning_patterns`, `service_api_keys`, registri `masters`, tabel kerja matching `syncrono_service_w_*` (dihapus setelah job) |
+| `syncrono_starrock.syncrono_kl_records` | data K/L hasil grading untuk matching, dipartisi per `file_id`. Partisi berkas dihapus begitu job matching-nya selesai (kecuali masih ada job lain untuk berkas itu); matching berikutnya memuatnya lagi dari `enriched.parquet` |
+| `syncrono_starrock.syncrono_kl_enriched` | hasil grading untuk portal: satu baris = satu baris `enriched.parquet`, dipartisi per `file_id`. Lihat di bawah |
+| `syncrono_starrock.syncrono_portal_*` | `matching_jobs`, `matching_results` (bentuk sama dengan tabel portal) |
+| `syncrono_master.persons`, `syncrono_master.dictionary` | master (dipartisi per `master_id`), kamus pengenalan kolom |
+
+### Hasil grading untuk portal (`syncrono_kl_enriched`)
+
+Diisi di akhir grading dengan membaca ulang `enriched.parquet` yang baru ditulis, jadi isinya
+sama dengan parquet (parquet tetap ditulis seperti biasa). Grading ulang berkas yang sama
+mengganti isinya.
+
+| Kolom | Isi |
+|---|---|
+| `file_id`, `row_no` | berkas dan nomor baris di parquet (mulai 1, urutan parquet) |
+| `data` | seluruh kolom parquet untuk baris itu, sebagai JSON dengan nama kolom yang sama. NaN/infinity menjadi `null` |
+| `nik_trusted`, `is_anomaly`, `anomaly_type` | salinan kolom parquet yang sama, untuk filter |
+
+StarRocks mengurutkan kunci JSON menurut abjad. Urutan kolom parquet ada di hasil grading,
+`enrichedStorage.columns` (callback grading dan `syncrono_service_grading_jobs.result`).
+
+```sql
+SELECT row_no, data
+  FROM syncrono_starrock.syncrono_kl_enriched
+ WHERE file_id = '<fileId>'          -- tambah AND is_anomaly untuk baris beranomali saja
+ ORDER BY row_no
+ LIMIT 100 OFFSET 0;
+```
+
+Cek kesamaan dengan parquet: `python bench/parity_enriched.py [fileId ...]`.
 
 ## Menjalankan
 
@@ -66,7 +97,7 @@ Kontrak sama dengan synchrono-service. Portal bisa diarahkan ke sini tanpa mengu
 
 | Endpoint | Fungsi |
 |---|---|
-| `POST /api/v1/login`, `GET/POST /api/v1/api_key/`, `DELETE /api/v1/api_key/{id}` | login & API key ala Langflow (kunci disimpan di `synchrono_service.service_api_keys`) |
+| `POST /api/v1/login`, `GET/POST /api/v1/api_key/`, `DELETE /api/v1/api_key/{id}` | login & API key ala Langflow (kunci disimpan di `syncrono_starrock.syncrono_service_service_api_keys`) |
 | `POST /api/v1/run/{flow}` | enam flow Langflow: `grading-dispatch`, `grading-status`, `grading` (sinkron), `config-rules`, `config-rules-update`, `matching-dispatch` (nama endpoint atau flow_id) |
 | `POST /api/v1/grading/jobs`, `GET /api/v1/grading/jobs/{fileId}`, `/by-id/{jobId}` | dispatch & status grading |
 | `POST /api/v1/grading/run` | grading sinkron |
@@ -85,7 +116,7 @@ dipisah koma) atau kunci yang dibuat lewat `/api/v1/api_key/`.
   Contoh nilai hanya dikirim ke endpoint luar jika `NORMALISASI_AI_IZIN_SAMPEL_LUAR=1`.
 - **Penghalusan reasoning**: `REASONING_AI_BASE_URL`, `REASONING_AI_MODEL`, `REASONING_AI_API_KEY`,
   `REASONING_AI_ALLOW_EXTERNAL=1` untuk endpoint di luar jaringan. Yang dikirim hanya kalimat
-  berplaceholder; hasil disimpan di `synchrono_service.reasoning_patterns`.
+  berplaceholder; hasil disimpan di `syncrono_starrock.syncrono_service_reasoning_patterns`.
 
 ## Konversi dump basis data
 
@@ -114,8 +145,8 @@ dimuat ulang otomatis saat job pertama yang membutuhkannya.
   `/udf/synchrono-udf.jar` dan didaftarkan worker matching ke StarRocks. FE dan BE harus bisa
   mengunduhnya dari `UDF_JAR_URL`; kalau tidak bisa, Pass 3 otomatis kembali ke DuckDB.
   Hasil Java-nya identik bit per bit dengan `jaro_winkler_similarity` dan `round` DuckDB
-  (diuji 3 juta pasangan). Nama fungsi (`synchrono_jw_<kunci>`) diturunkan dari isi jar dan
+  (diuji 3 juta pasangan). Nama fungsi (`syncrono_jw_<kunci>`) diturunkan dari isi jar dan
   `UDF_JAR_URL`, jadi tiap deployment memakai fungsinya sendiri; BE yang restart mengunduh
   ulang jar dari URL itu, sehingga api harus tetap hidup. Fungsi lama tidak dihapus otomatis:
-  `SHOW FUNCTIONS FROM synchrono_service`, lalu `DROP FUNCTION` bila perlu.
+  `SHOW FUNCTIONS FROM syncrono_starrock`, lalu `DROP FUNCTION` bila perlu.
 - Penyusunan hasil tidak satu transaksi (DELETE lalu INSERT).

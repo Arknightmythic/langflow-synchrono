@@ -534,16 +534,58 @@ def kl_select(columns: list[str], file_id: str, job_id: str | None, source: str)
 def load_kl(s: dict) -> dict:
     con = s["con"]
     started = time.perf_counter()
-    sr.execute(f"DELETE FROM {cfg.DB_KL}.records WHERE file_id = '{s['file_id']}'")
+    sr.drop_file(f"{cfg.T_KL}records", s["file_id"])
     columns = [r[0] for r in con.execute("DESCRIBE anomaly_df").fetchall()]
     select = kl_select(columns, s["file_id"], s.get("job_id"), "anomaly_df")
-    loaded = sr.stream_load_query(con, select, cfg.DB_KL, "records", KL_COLUMNS,
+    loaded = sr.stream_load_query(con, select, cfg.DB, cfg.P_KL + "records", KL_COLUMNS,
                                   label_prefix=f"kl_{re.sub(r'[^A-Za-z0-9_]', '_', s['file_id'])}"
                                                f"_{int(time.time())}")
     loaded["totalMs"] = int((time.perf_counter() - started) * 1000)
-    print(f"[G6] {loaded['rows']:,} rows loaded into {cfg.DB_KL}.records in "
+    print(f"[G6] {loaded['rows']:,} rows loaded into {cfg.T_KL}records in "
           f"{loaded['totalMs']:,} ms ({loaded['files']} files, {loaded['bytes']:,} bytes)")
     return {**s, "kl_load": loaded}
+
+
+ENRICHED_COLUMNS = ["file_id", "row_no", "nik_trusted", "is_anomaly", "anomaly_type", "data",
+                    "grading_job_id"]
+
+
+def _json_value(column: str, kind: str) -> str:
+    ident = quote_ident(column)
+    # NaN and infinity have no JSON form, and StarRocks would reject the whole load.
+    if kind.upper() in ("FLOAT", "DOUBLE", "REAL"):
+        return f"CASE WHEN isfinite({ident}) THEN {ident} END"
+    return ident
+
+
+def load_enriched(s: dict) -> dict:
+    """enriched.parquet as rows of syncrono_kl_enriched, so the portal can page through the
+    grading result in StarRocks. Read back from the written file: same rows, order and values.
+    StarRocks sorts JSON keys, so the parquet's column order goes into the result
+    (enrichedStorage.columns)."""
+    con = s["con"]
+    started = time.perf_counter()
+    con.execute(f"CREATE OR REPLACE VIEW enriched_out AS SELECT * FROM "
+                f"read_parquet('{s['enriched_path']}', file_row_number = true)")
+    described = [(r[0], r[1]) for r in con.execute("DESCRIBE enriched_out").fetchall()
+                 if r[0] != "file_row_number"]
+    fields = ", ".join(f"{q(name)}: {_json_value(name, kind)}" for name, kind in described)
+    row_json = sr.clean_text("to_json({" + fields + "})")
+    select = f"""
+        SELECT {q(s['file_id'])} AS file_id, file_row_number + 1 AS row_no,
+               CAST(nik_trusted AS INTEGER) AS nik_trusted,
+               CAST(is_anomaly AS INTEGER) AS is_anomaly,
+               {sr.clean_text('anomaly_type')} AS anomaly_type, {row_json} AS data,
+               {q(s.get('job_id') or '')} AS grading_job_id
+          FROM enriched_out"""
+    sr.drop_file(f"{cfg.T_KL}enriched", s["file_id"])
+    loaded = sr.stream_load_query(con, select, cfg.DB, cfg.P_KL + "enriched", ENRICHED_COLUMNS,
+                                  label_prefix=f"en_{re.sub(r'[^A-Za-z0-9_]', '_', s['file_id'])}"
+                                               f"_{int(time.time())}")
+    loaded["totalMs"] = int((time.perf_counter() - started) * 1000)
+    print(f"[G7] {loaded['rows']:,} rows loaded into {cfg.T_KL}enriched in "
+          f"{loaded['totalMs']:,} ms")
+    return {**s, "enriched_load": loaded, "enriched_columns": [name for name, _ in described]}
 
 
 def _normalisation_summary(s: dict) -> dict:
@@ -612,7 +654,9 @@ def build_result(s: dict) -> dict:
         "normalization": _normalisation_summary(s),
         "caseFlags": s["case_flags"],
         "configVersion": s.get("config_version"),
-        "klStorage": {"table": f"{cfg.DB_KL}.records", **(s.get("kl_load") or {})},
+        "klStorage": {"table": f"{cfg.T_KL}records", **(s.get("kl_load") or {})},
+        "enrichedStorage": {"table": f"{cfg.T_KL}enriched", "columns": s.get("enriched_columns"),
+                            **(s.get("enriched_load") or {})},
     }
 
 
@@ -635,7 +679,9 @@ def run(job: dict, report=None) -> dict:
         s = write_enriched(s)
         stage("G6 load into StarRocks K/L")
         s = load_kl(s)
-        stage("G7 build callback payload")
+        stage("G7 load enriched rows into StarRocks")
+        s = load_enriched(s)
+        stage("G8 build callback payload")
         return {"session": s, "result": build_result(s)}
     finally:
         try:

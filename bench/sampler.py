@@ -4,13 +4,16 @@ python sampler.py <output.csv> <container> [<container> ...]
 Needs /var/run/docker.sock mounted; StarRocks is sampled when STARROCKS_PASSWORD is set.
 SAMPLE_PROCESSES="label=pattern,..." also samples host processes whose command line contains
 the pattern (start the sampler with --pid=host), e.g. a StarRocks installed on the host.
-Containers and processes: cpu_pct in % of one core, memory in MB. starrocks-be (SHOW BACKENDS):
+SAMPLE_BACKENDS="ip,..." samples the BEs of the cluster that run on other machines as be@<ip>.
+Containers, processes and be@<ip>: cpu_pct in % of one core, memory in MB (be@<ip>: memory the
+BE tracks, about 75% of its RSS). starrocks-be (SHOW BACKENDS, first BE not in SAMPLE_BACKENDS):
 cpu in % of the machine, memory in % of the BE memory limit.
 """
 import csv
 import http.client
 import json
 import os
+import re
 import socket
 import sys
 import time
@@ -21,7 +24,9 @@ sys.path.insert(0, "/srv")
 INTERVAL = float(os.getenv("SAMPLE_SECONDS", "5"))
 PROCESSES = [tuple(item.split("=", 1)) for item in os.getenv("SAMPLE_PROCESSES", "").split(",")
              if "=" in item]
+REMOTE_BACKENDS = [ip.strip() for ip in os.getenv("SAMPLE_BACKENDS", "").split(",") if ip.strip()]
 TICKS = os.sysconf("SC_CLK_TCK")
+UNITS = {"B": 1, "KB": 2**10, "MB": 2**20, "GB": 2**30, "TB": 2**40}
 
 
 class UnixConnection(http.client.HTTPConnection):
@@ -105,16 +110,33 @@ def process_stats(pattern: str) -> tuple[float, float] | None:
     return round(cpu, 1), round(memory, 1)
 
 
-def starrocks_stats():
+def _percent(value) -> float:
+    return float(str(value or "0").rstrip(" %"))
+
+
+def _size_bytes(value) -> float:
+    match = re.fullmatch(r"([\d.]+)\s*([KMGT]?B)", str(value or "").strip().upper())
+    return float(match.group(1)) * UNITS[match.group(2)] if match else 0.0
+
+
+def starrocks_stats() -> list[tuple[str, tuple[float, float]]]:
+    """CpuUsedPct is the BE process only (not the whole machine), in % of the machine's cores."""
     if not os.getenv("STARROCKS_PASSWORD"):
-        return None
-    try:
-        from engine import sr
-        row = sr.query("SHOW BACKENDS")[0]
-        return float(str(row.get("CpuUsedPct", "0")).rstrip(" %")), \
-            float(str(row.get("MemUsedPct", "0")).rstrip(" %"))
-    except Exception:  # noqa: BLE001
-        return None
+        return []
+    from engine import sr
+    rows = sr.query("SHOW BACKENDS")
+    out = []
+    local = next((r for r in rows if r.get("IP") not in REMOTE_BACKENDS), None)
+    if local:
+        out.append(("starrocks-be", (_percent(local.get("CpuUsedPct")),
+                                     _percent(local.get("MemUsedPct")))))
+    for row in rows:
+        if row.get("IP") in REMOTE_BACKENDS:
+            cores = int(row.get("CpuCores") or 0)
+            memory = _percent(row.get("MemUsedPct")) / 100 * _size_bytes(row.get("MemLimit"))
+            out.append((f"be@{row['IP']}", (round(_percent(row.get("CpuUsedPct")) * cores, 1),
+                                            round(memory / 2**20, 1))))
+    return out
 
 
 def _safe(fn, *args):
@@ -134,11 +156,13 @@ def main(path: str, containers: list[str]) -> None:
             now = round(time.time(), 1)
             jobs = [(name, pool.submit(_safe, container_stats, name)) for name in containers]
             jobs += [(label, pool.submit(_safe, process_stats, pattern)) for label, pattern in PROCESSES]
-            jobs.append(("starrocks-be", pool.submit(starrocks_stats)))
+            backends = pool.submit(_safe, starrocks_stats)
             for name, job in jobs:
                 stats = job.result()
                 if stats:
                     writer.writerow([now, name, *stats])
+            for name, stats in backends.result() or []:
+                writer.writerow([now, name, *stats])
             fh.flush()
             time.sleep(INTERVAL)
 

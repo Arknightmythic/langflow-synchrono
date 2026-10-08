@@ -34,7 +34,7 @@ sleep 10
 
 docker rm -f srb-sampler srb-k6 >/dev/null 2>&1 || true
 docker run -d --name srb-sampler --network "$NET" --pid=host --env-file "$NEW/.env.bench" \
-  -e SAMPLE_PROCESSES="$PROCS" \
+  -e SAMPLE_PROCESSES="$PROCS" -e SAMPLE_BACKENDS="${SAMPLE_BACKENDS:-}" \
   -v /var/run/docker.sock:/var/run/docker.sock -v "$NEW:/srv:ro" -v "$RESULTS:/results" \
   synchrono-service-starrocks:dev python /srv/bench/sampler.py \
   "/results/sampler-$TARGET-$RUN_ID.csv" $WATCH >/dev/null

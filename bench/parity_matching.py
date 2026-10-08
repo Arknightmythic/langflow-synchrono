@@ -68,7 +68,7 @@ for letter in LETTERS:
     sr.pull(con, "b", f"SELECT id_incoming, master_nik, score, status, method, rank_conflict, "
                       f"pattern_group, reasoning, CAST(incoming_snapshot AS VARCHAR) AS i_snap, "
                       f"CAST(master_snapshot AS VARCHAR) AS m_snap "
-                      f"FROM {cfg.DB_PORTAL}.matching_results WHERE job_id = '{new_id}'")
+                      f"FROM {cfg.T_PORTAL}matching_results WHERE job_id = '{new_id}'")
     counts = con.execute("SELECT (SELECT count(*) FROM a), (SELECT count(*) FROM b)").fetchone()
     diff = {}
     for column in ("status", "master_nik", "score", "method", "rank_conflict", "pattern_group",

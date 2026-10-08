@@ -17,7 +17,7 @@ DICTIONARY_SOURCES = {"tempat_lahir": "tempat_lahir", "nama": "nama_lengkap",
 
 
 def _mark(master_id: str, status: str, **values) -> None:
-    current = sr.query(f"SELECT master_id FROM {cfg.DB_SERVICE}.masters "
+    current = sr.query(f"SELECT master_id FROM {cfg.T_SERVICE}masters "
                        f"WHERE master_id = {sq(master_id)}")
     detail = values.get("detail")
     row = {"source": values.get("source"), "row_count": values.get("row_count"),
@@ -27,10 +27,10 @@ def _mark(master_id: str, status: str, **values) -> None:
         parts += [f"{k} = {sq(v)}" for k, v in row.items() if v is not None]
         if detail is not None:
             parts.append(f"detail = {sjson(detail)}")
-        sr.execute(f"UPDATE {cfg.DB_SERVICE}.masters SET {', '.join(parts)} "
+        sr.execute(f"UPDATE {cfg.T_SERVICE}masters SET {', '.join(parts)} "
                    f"WHERE master_id = {sq(master_id)}")
     else:
-        sr.execute(f"INSERT INTO {cfg.DB_SERVICE}.masters VALUES ({sq(master_id)}, "
+        sr.execute(f"INSERT INTO {cfg.T_SERVICE}masters VALUES ({sq(master_id)}, "
                    f"{sq(row['source'])}, {sq(status)}, {sq(row['row_count'])}, "
                    f"{sq(row['load_ms'])}, {sjson(detail)}, {sq(row['error'])}, "
                    f"{sq(now_text())})")
@@ -38,7 +38,7 @@ def _mark(master_id: str, status: str, **values) -> None:
 
 def status(master_id: str) -> dict | None:
     rows = sr.query(f"SELECT master_id, source, status, row_count, load_ms, error, "
-                    f"CAST(detail AS VARCHAR) AS detail FROM {cfg.DB_SERVICE}.masters "
+                    f"CAST(detail AS VARCHAR) AS detail FROM {cfg.T_SERVICE}masters "
                     f"WHERE master_id = {sq(master_id)}")
     return rows[0] if rows else None
 

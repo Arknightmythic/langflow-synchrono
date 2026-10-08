@@ -12,8 +12,8 @@ from engine import sr  # noqa: E402
 
 FOLDER = os.path.dirname(os.path.abspath(__file__))
 VALUES = {
-    "DB_SERVICE": cfg.DB_SERVICE, "DB_KL": cfg.DB_KL, "DB_PORTAL": cfg.DB_PORTAL,
-    "DB_MASTER": cfg.DB_MASTER, "REPLICATION": str(cfg.SR_REPLICATION),
+    "DB": cfg.DB, "DB_MASTER": cfg.DB_MASTER, "SERVICE": cfg.T_SERVICE, "KL": cfg.T_KL,
+    "PORTAL": cfg.T_PORTAL, "REPLICATION": str(cfg.SR_REPLICATION),
     "BUCKETS": str(cfg.SR_BUCKETS),
 }
 
@@ -37,7 +37,7 @@ def statements(text: str) -> list[tuple[str | None, str]]:
 
 
 ADDED_COLUMNS = {
-    (cfg.DB_KL, "records"): [(c, "VARCHAR(512)") for c in
+    (cfg.DB, cfg.P_KL + "records"): [(c, "VARCHAR(512)") for c in
                              names.variant_columns("name") + names.variant_columns("mother")],
     (cfg.DB_MASTER, "persons"): [(c, "VARCHAR(512)") for c in
                                  names.variant_columns("name") + names.variant_columns("mother")],
@@ -64,30 +64,34 @@ def add_columns() -> None:
 
 
 def ensure_rows() -> None:
-    if not sr.scalar(f"SELECT count(*) FROM {cfg.DB_SERVICE}.grade_rules WHERE grade_code = 6"):
-        sr.execute(f"INSERT INTO {cfg.DB_SERVICE}.grade_rules (grade_code, auto_missing_max, "
+    if not sr.scalar(f"SELECT count(*) FROM {cfg.T_SERVICE}grade_rules WHERE grade_code = 6"):
+        sr.execute(f"INSERT INTO {cfg.T_SERVICE}grade_rules (grade_code, auto_missing_max, "
                    f"auto_score_min, review_missing_count, review_score_min, review_score_max, "
                    f"updated_by) VALUES (6, 1, 90.0, NULL, 70.0, 90.0, NULL)")
         print("[schema] grade_rules: grade 6 added")
     for table in ("grade_criteria", "grade_rules"):
-        sr.execute(f"UPDATE {cfg.DB_SERVICE}.{table} SET updated_by = NULL "
+        sr.execute(f"UPDATE {cfg.T_SERVICE}{table} SET updated_by = NULL "
                    f"WHERE updated_by = 'seed'")
 
 
-def main() -> None:
+def main(seed_rows: bool = True) -> None:
+    """seed_rows=False creates databases, tables and columns only (tools/rename_databases.py)."""
     for name in sorted(f for f in os.listdir(FOLDER) if f.endswith(".sql")):
         with open(os.path.join(FOLDER, name), encoding="utf-8") as fh:
             text = render(fh.read())
         for seed, sql in statements(text):
             if seed:
-                count = sr.scalar(f"SELECT count(*) FROM {cfg.DB_SERVICE}.{seed}")
+                if not seed_rows:
+                    continue
+                count = sr.scalar(f"SELECT count(*) FROM {cfg.T_SERVICE}{seed}")
                 if count:
                     print(f"[schema] {name}: {seed} already seeded ({count} rows)")
                     continue
             sr.execute(sql)
         print(f"[schema] {name} applied")
     add_columns()
-    ensure_rows()
+    if seed_rows:
+        ensure_rows()
 
 
 if __name__ == "__main__":

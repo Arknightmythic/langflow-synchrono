@@ -9,7 +9,7 @@ from . import settings as cfg
 from . import sr
 from .sql import now_text, sjson, sq
 
-TABLE = f"{cfg.DB_SERVICE}.grading_jobs"
+TABLE = f"{cfg.T_SERVICE}grading_jobs"
 STALE_MESSAGE = ("Pekerja berhenti tanpa kabar (kemungkinan worker restart). "
                  "Job ditandai gagal karena tidak berdetak lebih dari "
                  f"{cfg.STALE_MINUTES} menit.")

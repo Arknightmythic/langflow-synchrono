@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS ${DB_PORTAL}.matching_jobs (
+CREATE TABLE IF NOT EXISTS ${PORTAL}matching_jobs (
     id                     VARCHAR(64)   NOT NULL,
     file_id                VARCHAR(255)  NOT NULL,
     master_file_id         VARCHAR(255)  NOT NULL,
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS ${DB_PORTAL}.matching_jobs (
 DISTRIBUTED BY HASH(id) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
 
-CREATE TABLE IF NOT EXISTS ${DB_PORTAL}.matching_results (
+CREATE TABLE IF NOT EXISTS ${PORTAL}matching_results (
     id                VARCHAR(64)    NOT NULL,
     csv_file_id       VARCHAR(255)   NOT NULL,
     master_file_id    VARCHAR(255)   NOT NULL,

@@ -21,8 +21,8 @@ def jar_version() -> str | None:
 
 def names() -> dict[str, str]:
     key = hashlib.md5(f"{jar_version()}|{cfg.UDF_JAR_URL}".encode()).hexdigest()[:10]
-    return {"jw": f"{cfg.DB_SERVICE}.synchrono_jw_{key}",
-            "round": f"{cfg.DB_SERVICE}.synchrono_round_{key}"}
+    return {"jw": f"{cfg.DB}.syncrono_jw_{key}",
+            "round": f"{cfg.DB}.syncrono_round_{key}"}
 
 
 def _works(fn: dict) -> bool:

@@ -13,7 +13,7 @@ from . import settings as cfg
 from . import sr
 from .sql import now_text, sq
 
-TABLE = f"{cfg.DB_SERVICE}.service_api_keys"
+TABLE = f"{cfg.T_SERVICE}service_api_keys"
 USER_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, f"synchrono-service/user/{cfg.SUPERUSER}"))
 NO_KEY = "An API key must be passed as query or header"
 BAD_KEY = "Invalid or missing API key"

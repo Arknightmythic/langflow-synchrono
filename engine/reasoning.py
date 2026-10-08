@@ -325,7 +325,7 @@ def reasoning_sql(templates: dict[str, str]) -> str:
 
 
 VERSION = "id-2"
-PATTERN_TABLE = f"{cfg.DB_SERVICE}.reasoning_patterns"
+PATTERN_TABLE = f"{cfg.T_SERVICE}reasoning_patterns"
 PROMPT = """Anda adalah penyunting bahasa untuk penjelasan hasil pencocokan data kependudukan. Anda menerima satu teks penjelasan yang isinya sudah BENAR. Tugas Anda hanya memperhalus bahasanya agar enak dibaca operator.
 
 ATURAN WAJIB:

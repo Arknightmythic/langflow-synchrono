@@ -51,10 +51,13 @@ SR_PASS3_SPLIT_ABOVE_PAIRS = env_int("STARROCKS_PASS3_SPLIT_ABOVE_PAIRS", 40_000
 # Counting the pairs costs one extra join, so smaller masters always run in one part.
 SR_PASS3_MIN_MASTER_ROWS = env_int("STARROCKS_PASS3_MIN_MASTER_ROWS", 5_000_000)
 
-DB_SERVICE = env("DB_SERVICE", "synchrono_service")
-DB_KL = env("DB_KL", "synchrono_kl")
-DB_PORTAL = env("DB_PORTAL", "synchrono_portal")
-DB_MASTER = env("DB_MASTER", "synchrono_master")
+# Service, K/L and portal tables share one database; each table name starts with the database
+# it used to live in. T_* is "<database>.<table prefix>", e.g. f"{cfg.T_KL}records".
+# The master keeps a database of its own.
+DB = env("DB_STARROCK", "syncrono_starrock")
+DB_MASTER = env("DB_MASTER", "syncrono_master")
+P_SERVICE, P_KL, P_PORTAL = "syncrono_service_", "syncrono_kl_", "syncrono_portal_"
+T_SERVICE, T_KL, T_PORTAL = f"{DB}.{P_SERVICE}", f"{DB}.{P_KL}", f"{DB}.{P_PORTAL}"
 
 S3_ENDPOINT = env("S3_ENDPOINT", "seaweedfs:8333")
 S3_KEY = env("S3_ACCESS_KEY", "synchrono")
