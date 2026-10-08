@@ -37,7 +37,7 @@ sendiri, `syncrono_master`. Nama keduanya bisa diganti lewat `DB_STARROCK` dan `
 | Tabel | Isi |
 |---|---|
 | `syncrono_starrock.syncrono_service_*` | job grading (`grading_jobs`), aturan (`grade_rules`, `grade_criteria`, `grade_bands`, `matching_queries`), `engine_config`, `config_versions`, `config_history`, `reasoning_patterns`, `service_api_keys`, registri `masters`, tabel kerja matching `syncrono_service_w_*` (dihapus setelah job) |
-| `syncrono_starrock.syncrono_kl_records` | data K/L hasil grading untuk matching, dipartisi per `file_id`. Partisi berkas dihapus begitu job matching-nya selesai (kecuali masih ada job lain untuk berkas itu); matching berikutnya memuatnya lagi dari `enriched.parquet` |
+| `syncrono_starrock.syncrono_kl_records` | data K/L hasil grading untuk matching, dipartisi per `file_id`. Partisi berkas dihapus oleh task latar `kl.release` (antrean matching) setelah job matching selesai dan callback terkirim, kecuali masih ada job lain untuk berkas itu; matching berikutnya memuatnya lagi dari `enriched.parquet` |
 | `syncrono_starrock.syncrono_kl_enriched` | hasil grading untuk portal: satu baris = satu baris `enriched.parquet`, dipartisi per `file_id`. Lihat di bawah |
 | `syncrono_starrock.syncrono_portal_*` | `matching_jobs`, `matching_results` (bentuk sama dengan tabel portal) |
 | `syncrono_master.persons`, `syncrono_master.dictionary` | master (dipartisi per `master_id`), kamus pengenalan kolom |

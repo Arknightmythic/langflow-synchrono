@@ -1,9 +1,9 @@
 """syncrono_kl_enriched against enriched.parquet: python bench/parity_enriched.py [fileId ...]
 
-Without file ids it checks the files of the last 20 completed grading jobs. Every parquet row must
-be in the table, in parquet order (row_no), with the same columns and values (NaN and infinity
-become null), and enrichedStorage.columns in the grading result must be the parquet's column
-order. Only reads.
+Without file ids it checks the last 20 files graded since the table exists (their grading result
+has enrichedStorage). Every parquet row must be in the table, in parquet order (row_no), with the
+same columns and values (NaN and infinity become null), and enrichedStorage.columns in the
+grading result must be the parquet's column order. Only reads.
 """
 import json
 import sys
@@ -18,7 +18,8 @@ TABLE = f"{cfg.T_KL}enriched"
 
 
 def latest_jobs(file_ids: list[str]) -> list[dict]:
-    where = f"AND file_id IN ({', '.join(sq(f) for f in file_ids)})" if file_ids else ""
+    where = (f"AND file_id IN ({', '.join(sq(f) for f in file_ids)})" if file_ids
+             else "AND json_query(result, '$.enrichedStorage') IS NOT NULL")
     rows = sr.query(f"SELECT file_id, s3_bucket, enriched_key, CAST(result AS STRING) AS result, "
                     f"row_number() OVER (PARTITION BY file_id ORDER BY created_at DESC) AS k "
                     f"FROM {cfg.T_SERVICE}grading_jobs WHERE status = 'COMPLETED' {where}")
@@ -54,10 +55,19 @@ def check(con, job: dict) -> bool:
     return ok
 
 
+def safe_check(con, job: dict) -> bool:
+    try:
+        return check(con, job)
+    except Exception as e:  # noqa: BLE001
+        print(f"FAIL {job['file_id']}: {type(e).__name__}: {' '.join(str(e).split())[:200]}",
+              flush=True)
+        return False
+
+
 con = duck.connect()
 jobs = latest_jobs(sys.argv[1:])
 if not jobs:
-    raise SystemExit("no completed grading job found")
-results = [check(con, job) for job in jobs]
+    raise SystemExit("no completed grading job with enrichedStorage found")
+results = [safe_check(con, job) for job in jobs]
 print(f"{sum(results)} of {len(results)} files identical")
 raise SystemExit(0 if all(results) else 1)

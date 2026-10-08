@@ -113,7 +113,8 @@ class Work:
 
 def release_incoming(job: dict) -> None:
     """K/L rows only feed matching: drop the file's partition once no other job of the same file is
-    waiting or running. A later matching job loads them again from enriched.parquet."""
+    waiting or running. A later matching job loads them again from enriched.parquet. Runs as the
+    background task kl.release (worker/tasks.py), queued after the job's callback."""
     others = sr.scalar(f"SELECT count(*) FROM {PORTAL}matching_jobs "
                        f"WHERE file_id = {sq(job['file_id'])} AND id <> {sq(job['job_id'])} "
                        f"AND status IN ('PENDING', 'IN_PROGRESS')")
@@ -942,7 +943,6 @@ def run(job: dict, report=lambda stage: None) -> dict:
              conflict_count=m["conflictCount"], stage_durations=timings,
              blocking_metrics=detail, peak_rss_mb=rss,
              result_parquet_key=f"starrocks:{PORTAL}matching_results")
-        release_incoming(job)
     finally:
         try:
             w.drop()

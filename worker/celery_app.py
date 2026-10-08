@@ -17,5 +17,6 @@ app.conf.update(
         "grading.run": {"queue": "grading"},
         "matching.run": {"queue": "matching"},
         "master.load": {"queue": "matching"},
+        "kl.release": {"queue": "matching"},
     },
 )

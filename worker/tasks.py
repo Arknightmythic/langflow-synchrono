@@ -72,11 +72,22 @@ def match(job: dict) -> None:
         with Heartbeat(lambda stage: matching.mark(job["job_id"])):
             matching.run(job, report=lambda stage: print(f"[M] {job['job_id']} {stage}",
                                                          flush=True))
+        try:
+            release_kl.delay(job["file_id"], job["job_id"])
+        except Exception as e:  # noqa: BLE001
+            print(f"[M] {job['job_id']} K/L release not queued: {_summary(e)}", flush=True)
     except matching.Cancelled:
         print(f"[M] {job['job_id']} cancelled by operator", flush=True)
     except Exception as e:  # noqa: BLE001
         print(f"[M] {job['job_id']} FAILED:\n{traceback.format_exc()}", flush=True)
         matching.fail(job, _summary(e))
+
+
+@app.task(name="kl.release")
+def release_kl(file_id: str, job_id: str) -> None:
+    """Queued after a matching job has finished and sent its callback, so dropping the file's
+    K/L rows never holds up the job or the API."""
+    matching.release_incoming({"file_id": file_id, "job_id": job_id})
 
 
 @app.task(name="master.load")

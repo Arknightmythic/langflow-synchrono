@@ -131,7 +131,7 @@ def _g1(v: dict, _) -> dict:
 
 
 def _g5(_, s: dict) -> dict:
-    return grading.load_kl(grading.write_enriched(s))
+    return grading.load_enriched(grading.load_kl(grading.write_enriched(s)))
 
 
 def _g6(_, s: dict) -> str:
