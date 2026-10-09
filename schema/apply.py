@@ -100,6 +100,11 @@ WIB_SHIFT = {
     (cfg.DB_MASTER, "dictionary"): {},
 }
 MARK = "tz_wib"  # set on the rows already moved, so an interrupted run never moves a row twice
+# Database renamed on 2026-10-09; apply.py renames an existing database once. Rows written before
+# carry the old name in text (grading result storage tables, matching result_parquet_key).
+RENAMED_FROM = {"syncrono_starrocks": "syncrono_starrock"}
+OLD_NAME_TEXT = [(cfg.T_SERVICE + "grading_jobs", "result", True),
+                 (cfg.T_PORTAL + "matching_jobs", "result_parquet_key", False)]
 
 
 def columns_of(db: str, table: str) -> set[str]:
@@ -120,6 +125,33 @@ def wait_for_alter(db: str, table: str) -> None:
 def alter(db: str, table: str, change: str) -> None:
     sr.execute(f"ALTER TABLE {db}.{table} {change}")
     wait_for_alter(db, table)
+
+
+def rename_database() -> None:
+    names = {r["Database"] for r in sr.query("SHOW DATABASES")}
+    stale = {old: new for new, old in RENAMED_FROM.items()}
+    if cfg.DB in stale:
+        raise SystemExit(f"DB_STARROCK={cfg.DB}: the database is now called {stale[cfg.DB]}. "
+                         f"Update DB_STARROCK in the env file.")
+    old = RENAMED_FROM.get(cfg.DB)
+    if not old or old not in names:
+        return
+    if cfg.DB in names:
+        raise SystemExit(f"Both {old} and {cfg.DB} exist. Keep the one with the data and drop "
+                         f"the other before running apply.py again.")
+    sr.execute(f"ALTER DATABASE {old} RENAME {cfg.DB}")
+    print(f"[schema] database {old} renamed to {cfg.DB}")
+
+
+def rename_references() -> None:
+    old = RENAMED_FROM.get(cfg.DB)
+    if not old:
+        return
+    for table, column, is_json in OLD_NAME_TEXT:
+        text = f"CAST({column} AS VARCHAR)" if is_json else column
+        value = f"replace({text}, '{old}.', '{cfg.DB}.')"
+        sr.execute(f"UPDATE {table} SET {column} = {f'parse_json({value})' if is_json else value} "
+                   f"WHERE {text} LIKE '%{old}.%'")
 
 
 def to_wib() -> None:
@@ -190,6 +222,7 @@ def backfill_audit() -> None:
 
 def main(seed_rows: bool = True) -> None:
     """seed_rows=False creates databases, tables and columns only (tools/rename_databases.py)."""
+    rename_database()
     for name in sorted(f for f in os.listdir(FOLDER) if f.endswith(".sql")):
         with open(os.path.join(FOLDER, name), encoding="utf-8") as fh:
             text = render(fh.read())
@@ -205,6 +238,7 @@ def main(seed_rows: bool = True) -> None:
         print(f"[schema] {name} applied")
     to_wib()
     add_columns()
+    rename_references()
     if seed_rows:
         ensure_rows()
         backfill_audit()

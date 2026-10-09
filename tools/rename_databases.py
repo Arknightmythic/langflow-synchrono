@@ -1,9 +1,9 @@
 """Move an existing cluster to the new database names (one-off, 2026-10-08).
 
   synchrono_master                     -> syncrono_master (renamed in place, nothing copied)
-  synchrono_service.<table>            -> syncrono_starrock.syncrono_service_<table>
-  synchrono_kl.<table>                 -> syncrono_starrock.syncrono_kl_<table>
-  synchrono_portal.<table>             -> syncrono_starrock.syncrono_portal_<table>
+  synchrono_service.<table>            -> syncrono_starrocks.syncrono_service_<table>
+  synchrono_kl.<table>                 -> syncrono_starrocks.syncrono_kl_<table>
+  synchrono_portal.<table>             -> syncrono_starrocks.syncrono_portal_<table>
   (107 already used the syncrono_ spelling for the same four databases: handled the same way)
 
 python tools/rename_databases.py                     show the plan; changes nothing
@@ -29,7 +29,7 @@ from engine import settings as cfg  # noqa: E402
 from engine import sr  # noqa: E402
 from schema import apply as schema  # noqa: E402
 
-NEW_DB, NEW_MASTER, OLD_MASTER = "syncrono_starrock", "syncrono_master", "synchrono_master"
+NEW_DB, NEW_MASTER, OLD_MASTER = "syncrono_starrocks", "syncrono_master", "synchrono_master"
 MOVES = {f"{spelling}_{group}": prefix for spelling in ("synchrono", "syncrono")
          for group, prefix in (("service", cfg.P_SERVICE), ("kl", cfg.P_KL), ("portal", cfg.P_PORTAL))}
 # Databases of other applications that share these clusters (98: synchrono, 107: syncrono_analytics).

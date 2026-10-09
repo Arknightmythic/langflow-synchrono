@@ -54,7 +54,7 @@ SR_PASS3_MIN_MASTER_ROWS = env_int("STARROCKS_PASS3_MIN_MASTER_ROWS", 5_000_000)
 # Service, K/L and portal tables share one database; each table name starts with the database
 # it used to live in. T_* is "<database>.<table prefix>", e.g. f"{cfg.T_KL}records".
 # The master keeps a database of its own.
-DB = env("DB_STARROCK", "syncrono_starrock")
+DB = env("DB_STARROCK", "syncrono_starrocks")
 DB_MASTER = env("DB_MASTER", "syncrono_master")
 P_SERVICE, P_KL, P_PORTAL = "syncrono_service_", "syncrono_kl_", "syncrono_portal_"
 T_SERVICE, T_KL, T_PORTAL = f"{DB}.{P_SERVICE}", f"{DB}.{P_KL}", f"{DB}.{P_PORTAL}"

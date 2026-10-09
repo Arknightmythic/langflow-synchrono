@@ -51,7 +51,7 @@ curl -s -H "x-api-key: <kunci>" localhost:7870/health/db
 
 - Port API `7870` (ubah lewat `API_PORT` di `.env`). Service lama tetap di `7860`.
 - Skema StarRocks diterapkan otomatis oleh container `schema` dan aman diulang.
-  Database `syncrono_starrock` (tabel service, K/L, portal) dan `syncrono_master`
+  Database `syncrono_starrocks` (tabel service, K/L, portal) dan `syncrono_master`
   sudah ada di cluster ini (dibuat saat pengujian 2 Okt 2026), termasuk master
   `um-master` (2 juta baris).
 - **Bila service lama masih berjalan** (DB `syncrono_service/_kl/_portal`): ia memakai
@@ -67,7 +67,7 @@ curl -s -H "x-api-key: <kunci>" localhost:7870/health/db
   jadi pasang kode dan skema bersamaan.
 - Memuat master lain:
   `docker compose run --rm api python tools/load_master.py <masterId> s3://<bucket>/<key>`
-- **Catatan:** hasil matching versi ini disimpan di `syncrono_starrock.syncrono_portal_matching_results` (StarRocks),
+- **Catatan:** hasil matching versi ini disimpan di `syncrono_starrocks.syncrono_portal_matching_results` (StarRocks),
   bukan di PostgreSQL portal. Portal yang sekarang tidak akan menampilkannya.
 
 Redeploy setelah kode berubah: `docker compose up -d --build`.
@@ -78,7 +78,7 @@ Menjalankan salinan **kedua** service dengan penyimpanan sendiri — SeaweedFS
 `srb-s3`, PostgreSQL `srb-pg` (berisi tiruan tabel portal), service DuckDB `srb-old`,
 penerima callback `srb-cb`, dan service StarRocks `srb-new-*`. Tidak menyentuh
 SeaweedFS, PostgreSQL, maupun portal produksi. Hasil StarRocks tetap masuk ke
-database `syncrono_starrock` dan `syncrono_master` di cluster yang sama.
+database `syncrono_starrocks` dan `syncrono_master` di cluster yang sama.
 
 Butuh: image `synchrono-service:2.0.0` (sudah ada dari deploy service lama), data uji
 `test-data-csv/uji-master-ae/`, dan master `1790325476460_23223dc0_master.parquet`.
@@ -109,7 +109,7 @@ python3 bench/summarize.py                  # ringkasan -> bench/results/summary
 
 StarRocks kantor (4.0.8, 24 core, ±70 GB untuk BE) dipakai setiap hari; database
 `synchrono` di sana milik aplikasi lain. Uji ini hanya membuat dan memakai
-`syncrono_starrock` dan `syncrono_master`.
+`syncrono_starrocks` dan `syncrono_master`.
 
 ### 1. Cara StarRocks dipasang
 
@@ -182,7 +182,7 @@ ss -ltn | grep -E ':(8040|9060|9050|8060)\b'
 ```
 
 Fungsi UDF dibuat otomatis oleh service pada job matching pertama
-(`SHOW FUNCTIONS FROM syncrono_starrock`). Bila gagal, alasannya ada di
+(`SHOW FUNCTIONS FROM syncrono_starrocks`). Bila gagal, alasannya ada di
 `docker logs srb-new-worker-matching 2>&1 | grep -i udf`; worker mencoba lagi setelah 5 menit.
 
 Bila FE tidak naik: kembalikan `cp $CONF.bak-<tanggal> $CONF`, lalu jalankan lagi
@@ -237,7 +237,7 @@ python3 bench/summarize.py
   `run_bench.sh new`. Melewati batas → spill ke disk, bukan langsung gagal.
 - UDF terpakai bila callback matching memuat `candidatePullMs: 0`; bila gagal,
   `docker logs srb-new-worker-matching 2>&1 | grep UDF` menyebut sebabnya.
-- Selesai: `bash bench/stack.sh clean` (kontainer uji saja; database `syncrono_starrock`
+- Selesai: `bash bench/stack.sh clean` (kontainer uji saja; database `syncrono_starrocks`
   dan `syncrono_master` di StarRocks tetap ada).
 
 ## D. Uji setara di server kosong (ai-master-db, 172.16.13.158)
