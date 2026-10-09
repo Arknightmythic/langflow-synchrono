@@ -38,14 +38,19 @@ def quote_ident(name: str) -> str:
     return '"' + str(name).replace('"', '""') + '"'
 
 
+# Every DATETIME column in StarRocks holds WIB (UTC+7) wall-clock time without a zone. StarRocks'
+# own now() follows the cluster zone (UTC on our clusters), so SQL never uses it for stored times.
+WIB = timedelta(hours=7)
+ZONE = "+07:00"  # offset appended when a stored time leaves the API as ISO 8601
+
+
 def now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(timezone.utc).replace(tzinfo=None) + WIB
+
+
+def as_text(moment: datetime) -> str:
+    return moment.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def now_text() -> str:
-    return now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def now_wib_text() -> str:
-    """Wall-clock time in WIB (UTC+7) without a zone, for the audit column created_date."""
-    return (now() + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
+    return as_text(now())

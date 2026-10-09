@@ -3,7 +3,7 @@ import json
 
 from . import settings as cfg
 from . import sr
-from .sql import now_text, now_wib_text, sjson, sq
+from .sql import now_text, sjson, sq
 
 ELEMENTS = ["nik", "nama", "tempat_lahir", "tanggal_lahir", "jenis_kelamin", "nama_ibu"]
 SCORE_ELEMENTS = ["nama", "tempat_lahir", "tanggal_lahir", "jenis_kelamin", "nama_ibu", "wilayah"]
@@ -215,8 +215,8 @@ def record_version(by: str | None = None) -> str:
         if not sr.scalar(f"SELECT count(*) FROM {cfg.T_SERVICE}config_versions "
                          f"WHERE version = {sq(version)}"):
             sr.execute(f"INSERT INTO {cfg.T_SERVICE}config_versions (version, content, "
-                       f"first_used, created_date, created_by) VALUES ({sq(version)}, "
-                       f"{sjson(content)}, {sq(now_text())}, {sq(now_wib_text())}, "
+                       f"first_used, created_at, created_by) VALUES ({sq(version)}, "
+                       f"{sjson(content)}, {sq(now_text())}, {sq(now_text())}, "
                        f"{sq(by or cfg.ENGINE_ACTOR)})")
     except Exception as e:  # noqa: BLE001
         print(f"[config] version {version} not stored: {e}")

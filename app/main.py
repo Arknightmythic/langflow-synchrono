@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from engine import auth, config, master, sr, udf
 from engine import settings as cfg
-from engine.sql import sq
+from engine.sql import ZONE, sq
 from worker.celery_app import app as celery
 
 from . import langflow, service
@@ -263,7 +263,7 @@ def matching_job(job_id: str) -> dict:
     row = rows[0]
     for key in ("started_at", "completed_at", "failed_at"):
         if row.get(key) is not None:
-            row[key] = row[key].isoformat() + "+00:00"
+            row[key] = row[key].isoformat() + ZONE
     if row.get("stage_durations"):
         row["stage_durations"] = json.loads(row["stage_durations"])
     return {"found": True, "done": row["status"] in ("COMPLETED", "FAILED", "CANCELLED"), **row}

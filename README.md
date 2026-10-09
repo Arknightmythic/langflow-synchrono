@@ -42,11 +42,15 @@ sendiri, `syncrono_master`. Nama keduanya bisa diganti lewat `DB_STARROCK` dan `
 | `syncrono_starrock.syncrono_portal_*` | `matching_jobs`, `matching_results` (bentuk sama dengan tabel portal). Kolom `reviewed_count`, `reviewed_at`, `reviewed_by` diisi portal saat review; service hanya membuatnya |
 | `syncrono_master.persons`, `syncrono_master.dictionary` | master (dipartisi per `master_id`), kamus pengenalan kolom |
 
-### Kolom audit (`created_date`, `created_by`)
+### Waktu dan kolom audit (`created_at`, `created_by`)
 
-Setiap tabel permanen punya `created_date` (DATETIME, jam WIB tanpa keterangan zona) dan
-`created_by`. Tabel kerja matching (`syncrono_service_w_*`) tidak, karena hanya hidup selama
-satu job.
+Semua kolom DATETIME berisi jam **WIB** (UTC+7) tanpa keterangan zona: `created_at`,
+`updated_at`, `started_at`, dan seterusnya. Kode menulisnya lewat `engine.sql.now_text()`, tidak
+pernah lewat `now()` StarRocks (zona cluster kita UTC). API mengeluarkannya sebagai ISO 8601
+dengan `+07:00`.
+
+Setiap tabel permanen punya `created_at` dan `created_by`. Tabel kerja matching
+(`syncrono_service_w_*`) tidak, karena hanya hidup selama satu job.
 
 | Baris dibuat oleh | `created_by` |
 |---|---|
@@ -55,10 +59,19 @@ satu job.
 | API key | user login (`SERVICE_SUPERUSER`) |
 | grading (job, K/L, enriched), seed, master yang dimuat tanpa job | `DataScienceMatchingEngine` |
 
-Baris yang sudah ada sebelum kolom ini ditambahkan diisi oleh `schema/apply.py` dari kolom
-waktu dan pelaku tabel itu sendiri (`created_at`, `changed_at`, `updated_at`, digeser ke WIB;
-`changed_by`, `updated_by`). Tabel K/L, enriched, dan master tidak bisa di-UPDATE di StarRocks,
-jadi baris lamanya tetap kosong. Kolom waktu lain (`created_at`, dsb.) tetap UTC seperti sebelumnya.
+Sampai 9 Oktober 2026, kolom waktu berisi UTC dan kolom audit bernama `created_date` (WIB).
+`schema/apply.py` (`to_wib()`) mengubah setiap tabel lama satu kali:
+- menggeser kolom waktunya ke WIB;
+- mengganti nama `created_date` menjadi `created_at`, atau menghapusnya di lima tabel yang
+  sudah punya `created_at` (`grading_jobs`, `reasoning_patterns`, `service_api_keys`, dan dua
+  tabel portal).
+
+Penanda `tz_wib` per baris mencegah baris tergeser dua kali. `reviewed_at` portal hanya digeser
+bila nilainya sejalan dengan `updated_at`, karena portal sempat menulisnya dalam WIB.
+
+Baris lama tanpa `created_at` diisi dari kolom waktu dan pelaku tabel itu sendiri
+(`changed_at`, `updated_at`, `first_used`; `changed_by`, `updated_by`). Tabel K/L, enriched,
+dan master tidak bisa di-UPDATE di StarRocks, jadi baris lamanya tetap kosong.
 
 ### Hasil grading untuk portal (`syncrono_kl_enriched`)
 

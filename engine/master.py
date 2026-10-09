@@ -4,14 +4,14 @@ import time
 from . import columns as cols
 from . import duck, grading, names, sr
 from . import settings as cfg
-from .sql import now_text, now_wib_text, q, sjson, sq
+from .sql import now_text, q, sjson, sq
 
 MASTER_COLUMNS = ["master_id", "nik", "nama_lengkap", "tempat_lahir", "tanggal_lahir",
                   "jenis_kelamin", "nama_ibu", "status_kematian", "provinsi", "kabupaten",
                   "kecamatan", "kelurahan",
                   *names.variant_columns("name"), *names.variant_columns("mother"),
                   "pob_c", "dob_md", "sex_c", "alive_c", "prov_c", "kab_c", "kec_c", "kel_c",
-                  "created_date", "created_by"]
+                  "created_at", "created_by"]
 DICTIONARY_SOURCES = {"tempat_lahir": "tempat_lahir", "nama": "nama_lengkap",
                       "nama_ibu": "nama_ibu", "provinsi": "provinsi", "kabupaten": "kabupaten",
                       "kecamatan": "kecamatan", "kelurahan": "kelurahan"}
@@ -32,10 +32,10 @@ def _mark(master_id: str, status: str, **values) -> None:
                    f"WHERE master_id = {sq(master_id)}")
     else:
         sr.execute(f"INSERT INTO {cfg.T_SERVICE}masters (master_id, source, status, row_count, "
-                   f"load_ms, detail, error, updated_at, created_date, created_by) VALUES "
+                   f"load_ms, detail, error, updated_at, created_at, created_by) VALUES "
                    f"({sq(master_id)}, {sq(row['source'])}, {sq(status)}, {sq(row['row_count'])}, "
                    f"{sq(row['load_ms'])}, {sjson(detail)}, {sq(row['error'])}, "
-                   f"{sq(now_text())}, {sq(now_wib_text())}, "
+                   f"{sq(now_text())}, {sq(now_text())}, "
                    f"{sq(values.get('actor') or cfg.ENGINE_ACTOR)})")
 
 
@@ -79,7 +79,7 @@ def master_select(source: str, master_id: str, actor: str | None = None) -> str:
                {text('lower(trim(CAST(kabupaten AS VARCHAR)))')} AS kab_c,
                {text('lower(trim(CAST(kecamatan AS VARCHAR)))')} AS kec_c,
                {text('lower(trim(CAST(kelurahan AS VARCHAR)))')} AS kel_c,
-               {q(now_wib_text())} AS created_date, {q(actor or cfg.ENGINE_ACTOR)} AS created_by
+               {q(now_text())} AS created_at, {q(actor or cfg.ENGINE_ACTOR)} AS created_by
           FROM read_parquet('{source}')"""
 
 
@@ -89,8 +89,8 @@ def rebuild_dictionary(actor: str | None = None) -> None:
         f"FROM {cfg.DB_MASTER}.persons WHERE {column} IS NOT NULL AND trim({column}) <> ''"
         for element, column in DICTIONARY_SOURCES.items())
     sr.execute(f"TRUNCATE TABLE {cfg.DB_MASTER}.dictionary")
-    sr.execute(f"INSERT INTO {cfg.DB_MASTER}.dictionary (element, value, created_date, created_by) "
-               f"SELECT DISTINCT element, value, {sq(now_wib_text())}, "
+    sr.execute(f"INSERT INTO {cfg.DB_MASTER}.dictionary (element, value, created_at, created_by) "
+               f"SELECT DISTINCT element, value, {sq(now_text())}, "
                f"{sq(actor or cfg.ENGINE_ACTOR)} FROM ({parts}) t")
 
 

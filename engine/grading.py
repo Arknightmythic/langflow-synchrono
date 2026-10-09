@@ -5,7 +5,7 @@ import time
 from . import columns as cols
 from . import duck, names, regions, rules, sr
 from . import settings as cfg
-from .sql import now_wib_text, q, quote_ident
+from .sql import now_text, q, quote_ident
 
 CORE = cols.CORE
 DERIVED = ["nik_clean", "nik_prov", "nik_hari", "nik_bulan", "nik_tahun", "nik_trusted",
@@ -485,7 +485,7 @@ KL_COLUMNS = ["file_id", "row_id", "nik", "nama", "tempat_lahir", "tanggal_lahir
               "status_hidup", "nik_trusted", "is_anomaly", "anomaly_type", "anomaly_notes",
               *names.variant_columns("name"), *names.variant_columns("mother"),
               "pob_c", "dob", "dob_md", "sex_c", "alive_c", "prov_c", "kab_c", "kec_c", "kel_c",
-              "grading_job_id", "created_date", "created_by"]
+              "grading_job_id", "created_at", "created_by"]
 
 
 def kl_select(columns: list[str], file_id: str, job_id: str | None, source: str,
@@ -529,7 +529,7 @@ def kl_select(columns: list[str], file_id: str, job_id: str | None, source: str,
                {', '.join(f"{text(f'lower(trim(CAST({col(w)} AS VARCHAR)))')} AS {short}_c"
                           for w, short in REGION_SHORT)},
                {q(job_id or '')} AS grading_job_id,
-               {q(now_wib_text())} AS created_date, {q(actor or cfg.ENGINE_ACTOR)} AS created_by
+               {q(now_text())} AS created_at, {q(actor or cfg.ENGINE_ACTOR)} AS created_by
           FROM (SELECT *, {date_sql(col('tanggal_lahir'))} AS __kl_dob FROM {source})"""
 
 
@@ -549,7 +549,7 @@ def load_kl(s: dict) -> dict:
 
 
 ENRICHED_COLUMNS = ["file_id", "row_no", "nik_trusted", "is_anomaly", "anomaly_type", "data",
-                    "grading_job_id", "created_date", "created_by"]
+                    "grading_job_id", "created_at", "created_by"]
 
 
 def _json_value(column: str, kind: str) -> str:
@@ -579,7 +579,7 @@ def load_enriched(s: dict) -> dict:
                CAST(is_anomaly AS INTEGER) AS is_anomaly,
                {sr.clean_text('anomaly_type')} AS anomaly_type, {row_json} AS data,
                {q(s.get('job_id') or '')} AS grading_job_id,
-               {q(now_wib_text())} AS created_date, {q(cfg.ENGINE_ACTOR)} AS created_by
+               {q(now_text())} AS created_at, {q(cfg.ENGINE_ACTOR)} AS created_by
           FROM enriched_out"""
     sr.drop_file(f"{cfg.T_KL}enriched", s["file_id"])
     loaded = sr.stream_load_query(con, select, cfg.DB, cfg.P_KL + "enriched", ENRICHED_COLUMNS,

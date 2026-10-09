@@ -11,7 +11,7 @@ from fastapi import Header, HTTPException, Query
 
 from . import settings as cfg
 from . import sr
-from .sql import now_text, now_wib_text, sq
+from .sql import ZONE, now_text, sq
 
 TABLE = f"{cfg.T_SERVICE}service_api_keys"
 USER_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, f"synchrono-service/user/{cfg.SUPERUSER}"))
@@ -69,17 +69,16 @@ def _hash(key: str) -> str:
 
 
 def _iso(t) -> str | None:
-    return None if t is None else t.replace(microsecond=0).isoformat() + "+00:00"
+    return None if t is None else t.replace(microsecond=0).isoformat() + ZONE
 
 
 def create_key(name: str | None) -> dict:
     key = f"sk-{secrets.token_urlsafe(32)}"
     key_id = str(uuid.uuid4())
     sr.execute(f"INSERT INTO {TABLE} (id, name, key_hash, key_prefix, key_length, user_id, "
-               f"created_at, total_uses, is_active, created_date, created_by) VALUES "
+               f"created_at, total_uses, is_active, created_by) VALUES "
                f"({sq(key_id)}, {sq(name)}, {sq(_hash(key))}, {sq(key[:8])}, {len(key)}, "
-               f"{sq(USER_ID)}, {sq(now_text())}, 0, TRUE, {sq(now_wib_text())}, "
-               f"{sq(cfg.SUPERUSER)})")
+               f"{sq(USER_ID)}, {sq(now_text())}, 0, TRUE, {sq(cfg.SUPERUSER)})")
     return {"name": name, "last_used_at": None, "total_uses": 0, "is_active": True,
             "expires_at": None, "id": key_id, "api_key": key, "user_id": USER_ID}
 

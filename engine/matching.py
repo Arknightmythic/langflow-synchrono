@@ -5,7 +5,7 @@ import time
 from . import duck, grading, master, names, reasoning, rules, sr, udf
 from . import settings as cfg
 from .jobs import post_json
-from .sql import now_text, now_wib_text, sjson, sq
+from .sql import now_text, sjson, sq
 
 SVC, KL, PORTAL, MASTER = cfg.T_SERVICE, cfg.T_KL, cfg.T_PORTAL, cfg.DB_MASTER
 MAX_CANDIDATES = reasoning.MAX_CANDIDATES
@@ -54,9 +54,9 @@ def register(job: dict) -> None:
                    f"WHERE id = {sq(job['job_id'])}")
         return
     sr.execute(f"INSERT INTO {PORTAL}matching_jobs (id, file_id, master_file_id, status, "
-               f"created_at, created_by, created_date) VALUES ({sq(job['job_id'])}, "
+               f"created_at, created_by) VALUES ({sq(job['job_id'])}, "
                f"{sq(job['file_id'])}, {sq(job['master_file_id'])}, 'PENDING', {sq(now_text())}, "
-               f"{sq(job['actor'])}, {sq(now_wib_text())})")
+               f"{sq(job['actor'])})")
 
 
 def portal_status(job_id: str) -> str | None:
@@ -854,16 +854,17 @@ def assemble(w: Work, job: dict, master_id: str, n: int) -> tuple[int, dict]:
     if sr.query(f"SELECT 1 FROM {PORTAL}matching_results WHERE {previous} LIMIT 1"):
         sr.execute(f"DELETE FROM {PORTAL}matching_results WHERE {previous}")
     # The portal adds its own review columns (reviewed_at, reviewed_by), so name ours.
+    stamp = sq(now_text())
     sr.execute(f"""
         INSERT INTO {PORTAL}matching_results
             (id, csv_file_id, master_file_id, job_id, id_incoming, master_nik, score, status,
              method, rank_conflict, pattern_group, reasoning, incoming_snapshot, master_snapshot,
-             review_decision, created_at, updated_at, created_by, updated_by, created_date)
+             review_decision, created_at, updated_at, created_by, updated_by)
         {ctes}
         SELECT uuid(), {sq(file_id)}, {sq(job['master_file_id'])}, {sq(job['job_id'])}, id,
                master_nik, score, status, method, rank_conflict, pattern_group,
                {reasoning.reasoning_sql(templates)}, {incoming_snapshot}, {master_snapshot},
-               NULL, now(), now(), {actor}, {actor}, {sq(now_wib_text())}
+               NULL, {stamp}, {stamp}, {actor}, {actor}
           FROM signed""")
     return len(patterns), metrics
 

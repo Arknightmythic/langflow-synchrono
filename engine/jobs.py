@@ -3,11 +3,11 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from datetime import datetime, timezone
+from datetime import timedelta
 
 from . import settings as cfg
 from . import sr
-from .sql import now_text, now_wib_text, sjson, sq
+from .sql import ZONE, as_text, now, now_text, sjson, sq
 
 TABLE = f"{cfg.T_SERVICE}grading_jobs"
 STALE_MESSAGE = ("Pekerja berhenti tanpa kabar (kemungkinan worker restart). "
@@ -18,11 +18,11 @@ REGISTER_COLUMNS = ["job_id", "file_id", "status", "filename", "s3_bucket", "s3_
                     "csv_key", "raw_source_key", "parquet_key", "enriched_key", "row_count",
                     "institution_id", "institution_name", "callback_url", "callback_token",
                     "callback_status", "callback_attempts", "created_at", "heartbeat_at",
-                    "created_date", "created_by"]
+                    "created_by"]
 
 
 def new_job_id() -> str:
-    return f"ds-grade-{datetime.now(timezone.utc):%Y%m%d}-{uuid.uuid4().hex[:8]}"
+    return f"ds-grade-{now():%Y%m%d}-{uuid.uuid4().hex[:8]}"
 
 
 def build_job(payload: dict, defaults: dict | None = None) -> dict:
@@ -69,7 +69,6 @@ def register(job: dict) -> None:
     values["callback_attempts"] = 0
     values["created_at"] = now_text()
     values["heartbeat_at"] = now_text()
-    values["created_date"] = now_wib_text()
     values["created_by"] = cfg.ENGINE_ACTOR  # grading requests carry no user
     sr.execute(f"INSERT INTO {TABLE} ({', '.join(REGISTER_COLUMNS)}) VALUES "
                f"({', '.join(sq(values.get(c)) for c in REGISTER_COLUMNS)})")
@@ -99,8 +98,9 @@ def reap_stale(every_seconds: int = 60) -> int:
     if time.monotonic() - _last_reap[0] < every_seconds:
         return 0
     _last_reap[0] = time.monotonic()
+    limit = as_text(now() - timedelta(minutes=cfg.STALE_MINUTES))
     stale = sr.query(f"SELECT job_id FROM {TABLE} WHERE status = 'RUNNING' AND "
-                     f"heartbeat_at < date_sub(now(), INTERVAL {cfg.STALE_MINUTES} MINUTE)")
+                     f"heartbeat_at < {sq(limit)}")
     for row in stale:
         sr.execute(f"UPDATE {TABLE} SET status = 'FAILED', finished_at = {sq(now_text())}, "
                    f"error = {sq(STALE_MESSAGE)} WHERE job_id = {sq(row['job_id'])}")
@@ -128,7 +128,7 @@ def fetch(file_id: str | None = None, job_id: str | None = None) -> dict | None:
     job = rows[0]
     for key in ("created_at", "started_at", "finished_at", "heartbeat_at"):
         if job.get(key) is not None:
-            job[key] = job[key].isoformat() + "+00:00"
+            job[key] = job[key].isoformat() + ZONE
     if job.get("result"):
         job["result"] = json.loads(job["result"])
     return job

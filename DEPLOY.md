@@ -54,6 +54,17 @@ curl -s -H "x-api-key: <kunci>" localhost:7870/health/db
   Database `syncrono_starrock` (tabel service, K/L, portal) dan `syncrono_master`
   sudah ada di cluster ini (dibuat saat pengujian 2 Okt 2026), termasuk master
   `um-master` (2 juta baris).
+- **Bila service lama masih berjalan** (DB `syncrono_service/_kl/_portal`): ia memakai
+  `syncrono_master` yang sama. Sejak 9 Okt 2026, `syncrono_master.dictionary` di 107
+  sudah punya kolom audit. Kode lama (sebelum commit 2e537c2) mengosongkan tabel itu lalu
+  mengisinya tanpa daftar kolom, sehingga muat master lewat service lama akan gagal dan
+  meninggalkan kamus kosong. Muat master hanya lewat versi ini, atau matikan service lama.
+- Semua kolom waktu berisi WIB tanpa zona. Portal juga harus menulis `created_at`,
+  `updated_at`, dan `reviewed_at` dalam WIB.
+- Deploy versi ini ke cluster yang masih memakai skema 9 Okt 2026 pagi (ada `created_date`)
+  sekaligus memigrasi skemanya: kolom waktu digeser ke WIB satu kali, dan `created_date`
+  menjadi `created_at`. Kode lama yang menulis `created_date` berhenti bekerja setelah migrasi,
+  jadi pasang kode dan skema bersamaan.
 - Memuat master lain:
   `docker compose run --rm api python tools/load_master.py <masterId> s3://<bucket>/<key>`
 - **Catatan:** hasil matching versi ini disimpan di `syncrono_starrock.syncrono_portal_matching_results` (StarRocks),
@@ -67,7 +78,7 @@ Menjalankan salinan **kedua** service dengan penyimpanan sendiri — SeaweedFS
 `srb-s3`, PostgreSQL `srb-pg` (berisi tiruan tabel portal), service DuckDB `srb-old`,
 penerima callback `srb-cb`, dan service StarRocks `srb-new-*`. Tidak menyentuh
 SeaweedFS, PostgreSQL, maupun portal produksi. Hasil StarRocks tetap masuk ke
-database `synchrono_*` di cluster yang sama.
+database `syncrono_starrock` dan `syncrono_master` di cluster yang sama.
 
 Butuh: image `synchrono-service:2.0.0` (sudah ada dari deploy service lama), data uji
 `test-data-csv/uji-master-ae/`, dan master `1790325476460_23223dc0_master.parquet`.
@@ -226,8 +237,8 @@ python3 bench/summarize.py
   `run_bench.sh new`. Melewati batas → spill ke disk, bukan langsung gagal.
 - UDF terpakai bila callback matching memuat `candidatePullMs: 0`; bila gagal,
   `docker logs srb-new-worker-matching 2>&1 | grep UDF` menyebut sebabnya.
-- Selesai: `bash bench/stack.sh clean` (kontainer uji saja; database `synchrono_*` di
-  StarRocks tetap ada).
+- Selesai: `bash bench/stack.sh clean` (kontainer uji saja; database `syncrono_starrock`
+  dan `syncrono_master` di StarRocks tetap ada).
 
 ## D. Uji setara di server kosong (ai-master-db, 172.16.13.158)
 

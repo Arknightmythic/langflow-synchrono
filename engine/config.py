@@ -5,7 +5,7 @@ import time
 from . import rules as R
 from . import settings as cfg
 from . import sr
-from .sql import now_text, now_wib_text, sjson, sq
+from .sql import now_text, sjson, sq
 
 LETTERS = R.LETTERS
 NIK_VALUES = tuple(R.NIK_FROM_API)
@@ -551,9 +551,9 @@ def _diff(before: dict, after: dict) -> list[dict]:
 def _record_history(scope: str, grade_id: int | None, by: str | None, changes: list,
                     version: str | None) -> None:
     sr.execute(f"INSERT INTO {cfg.T_SERVICE}config_history (id, changed_at, changed_by, scope, "
-               f"grade_id, changes, version, created_date, created_by) VALUES ("
+               f"grade_id, changes, version, created_at, created_by) VALUES ("
                f"{time.time_ns() // 1000}, {sq(now_text())}, {sq(by)}, {sq(scope)}, "
-               f"{sq(grade_id)}, {sjson(changes)}, {sq(version)}, {sq(now_wib_text())}, "
+               f"{sq(grade_id)}, {sjson(changes)}, {sq(version)}, {sq(now_text())}, "
                f"{sq(by or cfg.ENGINE_ACTOR)})")
 
 
@@ -669,9 +669,9 @@ def update_global(patch: dict, by: str | None = None, dry_run: bool = False) -> 
                            f"WHERE config_key = {sq(key)}")
             else:
                 sr.execute(f"INSERT INTO {cfg.T_SERVICE}engine_config (config_key, value, "
-                           f"updated_at, updated_by, created_date, created_by) VALUES "
+                           f"updated_at, updated_by, created_at, created_by) VALUES "
                            f"({sq(key)}, {sjson(value)}, {sq(now_text())}, {sq(by)}, "
-                           f"{sq(now_wib_text())}, {sq(by or cfg.ENGINE_ACTOR)})")
+                           f"{sq(now_text())}, {sq(by or cfg.ENGINE_ACTOR)})")
         after = _shape_global(R.read_global())
 
     def pick(shape: dict, key: str) -> tuple:
