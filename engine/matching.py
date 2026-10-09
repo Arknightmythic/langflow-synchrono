@@ -5,7 +5,7 @@ import time
 from . import duck, grading, master, names, reasoning, rules, sr, udf
 from . import settings as cfg
 from .jobs import post_json
-from .sql import now_text, sjson, sq
+from .sql import now_text, now_wib_text, sjson, sq
 
 SVC, KL, PORTAL, MASTER = cfg.T_SERVICE, cfg.T_KL, cfg.T_PORTAL, cfg.DB_MASTER
 MAX_CANDIDATES = reasoning.MAX_CANDIDATES
@@ -54,8 +54,9 @@ def register(job: dict) -> None:
                    f"WHERE id = {sq(job['job_id'])}")
         return
     sr.execute(f"INSERT INTO {PORTAL}matching_jobs (id, file_id, master_file_id, status, "
-               f"created_at, created_by) VALUES ({sq(job['job_id'])}, {sq(job['file_id'])}, "
-               f"{sq(job['master_file_id'])}, 'PENDING', {sq(now_text())}, {sq(job['actor'])})")
+               f"created_at, created_by, created_date) VALUES ({sq(job['job_id'])}, "
+               f"{sq(job['file_id'])}, {sq(job['master_file_id'])}, 'PENDING', {sq(now_text())}, "
+               f"{sq(job['actor'])}, {sq(now_wib_text())})")
 
 
 def portal_status(job_id: str) -> str | None:
@@ -162,7 +163,8 @@ def ensure_incoming(job: dict, con, variant: str = "v0") -> int:
         con.execute(f"CREATE OR REPLACE VIEW enriched_df AS SELECT {select}, "
                     f"file_row_number + 1 AS __row_no FROM enriched_src")
         columns = [r[0] for r in con.execute("DESCRIBE enriched_df").fetchall()]
-        sr.stream_load_query(con, grading.kl_select(columns, job["file_id"], None, "enriched_df"),
+        sr.stream_load_query(con, grading.kl_select(columns, job["file_id"], None, "enriched_df",
+                                                    job.get("actor")),
                              cfg.DB, cfg.P_KL + "records", grading.KL_COLUMNS)
         n = sr.scalar(f"SELECT count(*) FROM {KL}records WHERE file_id = {sq(job['file_id'])}")
     dup = sr.scalar(f"SELECT count(*) - count(DISTINCT row_id) FROM {KL}records "
@@ -856,12 +858,12 @@ def assemble(w: Work, job: dict, master_id: str, n: int) -> tuple[int, dict]:
         INSERT INTO {PORTAL}matching_results
             (id, csv_file_id, master_file_id, job_id, id_incoming, master_nik, score, status,
              method, rank_conflict, pattern_group, reasoning, incoming_snapshot, master_snapshot,
-             review_decision, created_at, updated_at, created_by, updated_by)
+             review_decision, created_at, updated_at, created_by, updated_by, created_date)
         {ctes}
         SELECT uuid(), {sq(file_id)}, {sq(job['master_file_id'])}, {sq(job['job_id'])}, id,
                master_nik, score, status, method, rank_conflict, pattern_group,
                {reasoning.reasoning_sql(templates)}, {incoming_snapshot}, {master_snapshot},
-               NULL, now(), now(), {actor}, {actor}
+               NULL, now(), now(), {actor}, {actor}, {sq(now_wib_text())}
           FROM signed""")
     return len(patterns), metrics
 

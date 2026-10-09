@@ -37,10 +37,28 @@ sendiri, `syncrono_master`. Nama keduanya bisa diganti lewat `DB_STARROCK` dan `
 | Tabel | Isi |
 |---|---|
 | `syncrono_starrock.syncrono_service_*` | job grading (`grading_jobs`), aturan (`grade_rules`, `grade_criteria`, `grade_bands`, `matching_queries`), `engine_config`, `config_versions`, `config_history`, `reasoning_patterns`, `service_api_keys`, registri `masters`, tabel kerja matching `syncrono_service_w_*` (dihapus setelah job) |
-| `syncrono_starrock.syncrono_kl_records` | data K/L hasil grading untuk matching, dipartisi per `file_id`. Partisi berkas dihapus oleh task latar `kl.release` (antrean matching) setelah job matching selesai dan callback terkirim, kecuali masih ada job lain untuk berkas itu; matching berikutnya memuatnya lagi dari `enriched.parquet` |
+| `syncrono_starrock.syncrono_kl_records` | data K/L hasil grading untuk matching, dipartisi per `file_id`. Partisi berkas dihapus oleh task latar `kl.release` (antrean matching) setelah job matching selesai dan callback terkirim, kecuali masih ada job lain untuk berkas itu atau `KL_DROP_AFTER_MATCHING=false`; matching berikutnya memuatnya lagi dari `enriched.parquet` |
 | `syncrono_starrock.syncrono_kl_enriched` | hasil grading untuk portal: satu baris = satu baris `enriched.parquet`, dipartisi per `file_id`. Lihat di bawah |
 | `syncrono_starrock.syncrono_portal_*` | `matching_jobs`, `matching_results` (bentuk sama dengan tabel portal). Kolom `reviewed_count`, `reviewed_at`, `reviewed_by` diisi portal saat review; service hanya membuatnya |
 | `syncrono_master.persons`, `syncrono_master.dictionary` | master (dipartisi per `master_id`), kamus pengenalan kolom |
+
+### Kolom audit (`created_date`, `created_by`)
+
+Setiap tabel permanen punya `created_date` (DATETIME, jam WIB tanpa keterangan zona) dan
+`created_by`. Tabel kerja matching (`syncrono_service_w_*`) tidak, karena hanya hidup selama
+satu job.
+
+| Baris dibuat oleh | `created_by` |
+|---|---|
+| job dan hasil matching, K/L yang dimuat ulang saat matching, master yang dimuat saat matching, pola reasoning | `actor` dari permintaan matching |
+| perubahan konfigurasi (riwayat, versi, nilai global) | `updatedBy` penyunting |
+| API key | user login (`SERVICE_SUPERUSER`) |
+| grading (job, K/L, enriched), seed, master yang dimuat tanpa job | `DataScienceMatchingEngine` |
+
+Baris yang sudah ada sebelum kolom ini ditambahkan diisi oleh `schema/apply.py` dari kolom
+waktu dan pelaku tabel itu sendiri (`created_at`, `changed_at`, `updated_at`, digeser ke WIB;
+`changed_by`, `updated_by`). Tabel K/L, enriched, dan master tidak bisa di-UPDATE di StarRocks,
+jadi baris lamanya tetap kosong. Kolom waktu lain (`created_at`, dsb.) tetap UTC seperti sebelumnya.
 
 ### Hasil grading untuk portal (`syncrono_kl_enriched`)
 

@@ -6,7 +6,7 @@ from collections import Counter
 from . import llm, sr
 from . import settings as cfg
 from .columns import GENDER_FEMALE, GENDER_MALE
-from .sql import now_text, sq
+from .sql import now_text, now_wib_text, sq
 
 MAX_CANDIDATES = 5
 EMPTY_TOKENS = ("", "-", "null", "none", "nan", "kosong")
@@ -425,10 +425,13 @@ def refine(job: dict, patterns: list[tuple], base: dict, use: dict) -> Counter:
                       f"{job.get('job_id')}:{sample}", n))
 
     stamp = sq(now_text())
+    audit = f"{sq(now_wib_text())}, {sq(job.get('actor') or cfg.ENGINE_ACTOR)}"
     for h, name, sig, text, sample, n in fresh:
         try:
-            sr.execute(f"INSERT INTO {PATTERN_TABLE} VALUES ({sq(h)}, {sq(name)}, {sq(sig)}, "
-                       f"{sq(text)}, {sq(sample)}, {n}, {stamp}, {stamp})")
+            sr.execute(f"INSERT INTO {PATTERN_TABLE} (pattern_hash, pattern_name, "
+                       f"pattern_signature, reason_template, sample_id, hit_count, created_at, "
+                       f"updated_at, created_date, created_by) VALUES ({sq(h)}, {sq(name)}, "
+                       f"{sq(sig)}, {sq(text)}, {sq(sample)}, {n}, {stamp}, {stamp}, {audit})")
         except Exception as e:  # noqa: BLE001
             print(f"[R] pattern {h[:8]} not cached: {type(e).__name__}: {e}", flush=True)
     for h, n in hits.items():

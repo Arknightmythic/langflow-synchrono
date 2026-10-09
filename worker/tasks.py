@@ -3,6 +3,7 @@ import time
 import traceback
 
 from engine import conversion, grading, jobs, master, matching
+from engine import settings as cfg
 
 from .celery_app import app
 
@@ -72,10 +73,11 @@ def match(job: dict) -> None:
         with Heartbeat(lambda stage: matching.mark(job["job_id"])):
             matching.run(job, report=lambda stage: print(f"[M] {job['job_id']} {stage}",
                                                          flush=True))
-        try:
-            release_kl.delay(job["file_id"], job["job_id"])
-        except Exception as e:  # noqa: BLE001
-            print(f"[M] {job['job_id']} K/L release not queued: {_summary(e)}", flush=True)
+        if cfg.KL_DROP_AFTER_MATCHING:
+            try:
+                release_kl.delay(job["file_id"], job["job_id"])
+            except Exception as e:  # noqa: BLE001
+                print(f"[M] {job['job_id']} K/L release not queued: {_summary(e)}", flush=True)
     except matching.Cancelled:
         print(f"[M] {job['job_id']} cancelled by operator", flush=True)
     except Exception as e:  # noqa: BLE001

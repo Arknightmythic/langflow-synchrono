@@ -4,13 +4,14 @@ import time
 from . import columns as cols
 from . import duck, grading, names, sr
 from . import settings as cfg
-from .sql import now_text, sjson, sq
+from .sql import now_text, now_wib_text, q, sjson, sq
 
 MASTER_COLUMNS = ["master_id", "nik", "nama_lengkap", "tempat_lahir", "tanggal_lahir",
                   "jenis_kelamin", "nama_ibu", "status_kematian", "provinsi", "kabupaten",
                   "kecamatan", "kelurahan",
                   *names.variant_columns("name"), *names.variant_columns("mother"),
-                  "pob_c", "dob_md", "sex_c", "alive_c", "prov_c", "kab_c", "kec_c", "kel_c"]
+                  "pob_c", "dob_md", "sex_c", "alive_c", "prov_c", "kab_c", "kec_c", "kel_c",
+                  "created_date", "created_by"]
 DICTIONARY_SOURCES = {"tempat_lahir": "tempat_lahir", "nama": "nama_lengkap",
                       "nama_ibu": "nama_ibu", "provinsi": "provinsi", "kabupaten": "kabupaten",
                       "kecamatan": "kecamatan", "kelurahan": "kelurahan"}
@@ -30,10 +31,12 @@ def _mark(master_id: str, status: str, **values) -> None:
         sr.execute(f"UPDATE {cfg.T_SERVICE}masters SET {', '.join(parts)} "
                    f"WHERE master_id = {sq(master_id)}")
     else:
-        sr.execute(f"INSERT INTO {cfg.T_SERVICE}masters VALUES ({sq(master_id)}, "
-                   f"{sq(row['source'])}, {sq(status)}, {sq(row['row_count'])}, "
+        sr.execute(f"INSERT INTO {cfg.T_SERVICE}masters (master_id, source, status, row_count, "
+                   f"load_ms, detail, error, updated_at, created_date, created_by) VALUES "
+                   f"({sq(master_id)}, {sq(row['source'])}, {sq(status)}, {sq(row['row_count'])}, "
                    f"{sq(row['load_ms'])}, {sjson(detail)}, {sq(row['error'])}, "
-                   f"{sq(now_text())})")
+                   f"{sq(now_text())}, {sq(now_wib_text())}, "
+                   f"{sq(values.get('actor') or cfg.ENGINE_ACTOR)})")
 
 
 def status(master_id: str) -> dict | None:
@@ -48,7 +51,7 @@ def _value_list(column: str, values: list[str], result: str) -> str:
     return f"WHEN lower(trim(CAST({column} AS VARCHAR))) IN ({items}) THEN '{result}'"
 
 
-def master_select(source: str, master_id: str) -> str:
+def master_select(source: str, master_id: str, actor: str | None = None) -> str:
     def text(expr: str) -> str:
         return sr.clean_text(expr)
 
@@ -75,25 +78,28 @@ def master_select(source: str, master_id: str) -> str:
                {text('lower(trim(CAST(provinsi AS VARCHAR)))')} AS prov_c,
                {text('lower(trim(CAST(kabupaten AS VARCHAR)))')} AS kab_c,
                {text('lower(trim(CAST(kecamatan AS VARCHAR)))')} AS kec_c,
-               {text('lower(trim(CAST(kelurahan AS VARCHAR)))')} AS kel_c
+               {text('lower(trim(CAST(kelurahan AS VARCHAR)))')} AS kel_c,
+               {q(now_wib_text())} AS created_date, {q(actor or cfg.ENGINE_ACTOR)} AS created_by
           FROM read_parquet('{source}')"""
 
 
-def rebuild_dictionary() -> None:
+def rebuild_dictionary(actor: str | None = None) -> None:
     parts = " UNION ALL ".join(
         f"SELECT '{element}' AS element, lower(trim({column})) AS value "
         f"FROM {cfg.DB_MASTER}.persons WHERE {column} IS NOT NULL AND trim({column}) <> ''"
         for element, column in DICTIONARY_SOURCES.items())
     sr.execute(f"TRUNCATE TABLE {cfg.DB_MASTER}.dictionary")
-    sr.execute(f"INSERT INTO {cfg.DB_MASTER}.dictionary "
-               f"SELECT DISTINCT element, value FROM ({parts}) t")
+    sr.execute(f"INSERT INTO {cfg.DB_MASTER}.dictionary (element, value, created_date, created_by) "
+               f"SELECT DISTINCT element, value, {sq(now_wib_text())}, "
+               f"{sq(actor or cfg.ENGINE_ACTOR)} FROM ({parts}) t")
 
 
 def load(master_id: str, source: str, report=lambda stage: None, job: dict | None = None) -> dict:
     if not re.fullmatch(r"[A-Za-z0-9_.\-]{1,128}", master_id):
         raise ValueError(f"master_id {master_id!r} must be 1-128 of [A-Za-z0-9_.-]")
     started = time.perf_counter()
-    _mark(master_id, "LOADING", source=source)
+    actor = (job or {}).get("actor") or cfg.ENGINE_ACTOR
+    _mark(master_id, "LOADING", source=source, actor=actor)
     con = duck.connect()
     if job:
         grading.apply_s3_endpoint(con, job)
@@ -101,13 +107,13 @@ def load(master_id: str, source: str, report=lambda stage: None, job: dict | Non
         report("master: clearing previous rows")
         sr.execute(f"DELETE FROM {cfg.DB_MASTER}.persons WHERE master_id = {sq(master_id)}")
         report("master: cleaning and stream loading")
-        loaded = sr.stream_load_query(con, master_select(source, master_id), cfg.DB_MASTER,
+        loaded = sr.stream_load_query(con, master_select(source, master_id, actor), cfg.DB_MASTER,
                                       "persons", MASTER_COLUMNS,
                                       label_prefix=f"master_{re.sub(r'[^A-Za-z0-9_]', '_', master_id)}"
                                                    f"_{int(time.time())}")
         report("master: dictionary")
         dict_started = time.perf_counter()
-        rebuild_dictionary()
+        rebuild_dictionary(actor)
         loaded["dictionaryMs"] = int((time.perf_counter() - dict_started) * 1000)
         loaded["totalMs"] = int((time.perf_counter() - started) * 1000)
         _mark(master_id, "READY", source=source, row_count=loaded["rows"],

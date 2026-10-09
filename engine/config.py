@@ -5,7 +5,7 @@ import time
 from . import rules as R
 from . import settings as cfg
 from . import sr
-from .sql import now_text, sjson, sq
+from .sql import now_text, now_wib_text, sjson, sq
 
 LETTERS = R.LETTERS
 NIK_VALUES = tuple(R.NIK_FROM_API)
@@ -550,9 +550,11 @@ def _diff(before: dict, after: dict) -> list[dict]:
 
 def _record_history(scope: str, grade_id: int | None, by: str | None, changes: list,
                     version: str | None) -> None:
-    sr.execute(f"INSERT INTO {cfg.T_SERVICE}config_history VALUES ("
+    sr.execute(f"INSERT INTO {cfg.T_SERVICE}config_history (id, changed_at, changed_by, scope, "
+               f"grade_id, changes, version, created_date, created_by) VALUES ("
                f"{time.time_ns() // 1000}, {sq(now_text())}, {sq(by)}, {sq(scope)}, "
-               f"{sq(grade_id)}, {sjson(changes)}, {sq(version)})")
+               f"{sq(grade_id)}, {sjson(changes)}, {sq(version)}, {sq(now_wib_text())}, "
+               f"{sq(by or cfg.ENGINE_ACTOR)})")
 
 
 def update(grade_id: int, patch: dict, by: str | None = None, dry_run: bool = False) -> dict:
@@ -605,7 +607,7 @@ def update(grade_id: int, patch: dict, by: str | None = None, dry_run: bool = Fa
         after = read_all(grade_id)["grades"][0]
     changes = _diff(before, after)
     if not dry_run and changes:
-        version = R.record_version()
+        version = R.record_version(by)
         _record_history("grade", grade_id, by, changes, version)
     return {"applied": not dry_run, "dryRun": dry_run, "problems": [], "warnings": warnings,
             "before": before, "after": after, "changed": changes, "configVersion": version}
@@ -660,9 +662,16 @@ def update_global(patch: dict, by: str | None = None, dry_run: bool = False) -> 
             if value is None:
                 sr.execute(f"DELETE FROM {cfg.T_SERVICE}engine_config "
                            f"WHERE config_key = {sq(key)}")
+            elif sr.scalar(f"SELECT count(*) FROM {cfg.T_SERVICE}engine_config "
+                           f"WHERE config_key = {sq(key)}"):
+                sr.execute(f"UPDATE {cfg.T_SERVICE}engine_config SET value = {sjson(value)}, "
+                           f"updated_at = {sq(now_text())}, updated_by = {sq(by)} "
+                           f"WHERE config_key = {sq(key)}")
             else:
-                sr.execute(f"INSERT INTO {cfg.T_SERVICE}engine_config VALUES ({sq(key)}, "
-                           f"{sjson(value)}, {sq(now_text())}, {sq(by)})")
+                sr.execute(f"INSERT INTO {cfg.T_SERVICE}engine_config (config_key, value, "
+                           f"updated_at, updated_by, created_date, created_by) VALUES "
+                           f"({sq(key)}, {sjson(value)}, {sq(now_text())}, {sq(by)}, "
+                           f"{sq(now_wib_text())}, {sq(by or cfg.ENGINE_ACTOR)})")
         after = _shape_global(R.read_global())
 
     def pick(shape: dict, key: str) -> tuple:
@@ -675,7 +684,7 @@ def update_global(patch: dict, by: str | None = None, dry_run: bool = False) -> 
         if old != new or old_source != new_source:
             changes.append({"section": "global", "field": k, "from": old, "to": new})
     if not dry_run and changes:
-        version = R.record_version()
+        version = R.record_version(by)
         _record_history("global", None, by, changes, version)
     return {"applied": not dry_run, "dryRun": dry_run, "problems": [], "warnings": warnings,
             "before": before, "after": after, "changed": changes, "configVersion": version}

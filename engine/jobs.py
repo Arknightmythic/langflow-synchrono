@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from . import settings as cfg
 from . import sr
-from .sql import now_text, sjson, sq
+from .sql import now_text, now_wib_text, sjson, sq
 
 TABLE = f"{cfg.T_SERVICE}grading_jobs"
 STALE_MESSAGE = ("Pekerja berhenti tanpa kabar (kemungkinan worker restart). "
@@ -17,7 +17,8 @@ STALE_MESSAGE = ("Pekerja berhenti tanpa kabar (kemungkinan worker restart). "
 REGISTER_COLUMNS = ["job_id", "file_id", "status", "filename", "s3_bucket", "s3_endpoint",
                     "csv_key", "raw_source_key", "parquet_key", "enriched_key", "row_count",
                     "institution_id", "institution_name", "callback_url", "callback_token",
-                    "callback_status", "callback_attempts", "created_at", "heartbeat_at"]
+                    "callback_status", "callback_attempts", "created_at", "heartbeat_at",
+                    "created_date", "created_by"]
 
 
 def new_job_id() -> str:
@@ -68,6 +69,8 @@ def register(job: dict) -> None:
     values["callback_attempts"] = 0
     values["created_at"] = now_text()
     values["heartbeat_at"] = now_text()
+    values["created_date"] = now_wib_text()
+    values["created_by"] = cfg.ENGINE_ACTOR  # grading requests carry no user
     sr.execute(f"INSERT INTO {TABLE} ({', '.join(REGISTER_COLUMNS)}) VALUES "
                f"({', '.join(sq(values.get(c)) for c in REGISTER_COLUMNS)})")
 

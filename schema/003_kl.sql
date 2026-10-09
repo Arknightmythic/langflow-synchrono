@@ -41,7 +41,9 @@ CREATE TABLE IF NOT EXISTS ${KL}records (
     kab_c          VARCHAR(255),
     kec_c          VARCHAR(255),
     kel_c          VARCHAR(255),
-    grading_job_id VARCHAR(64)
+    grading_job_id VARCHAR(64),
+    created_date   DATETIME,
+    created_by     VARCHAR(255)
 ) DUPLICATE KEY (file_id, row_id)
 PARTITION BY (file_id)
 DISTRIBUTED BY HASH(row_id) BUCKETS ${BUCKETS}
@@ -54,7 +56,9 @@ CREATE TABLE IF NOT EXISTS ${KL}enriched (
     is_anomaly      BOOLEAN,
     anomaly_type    VARCHAR(1024),
     data            JSON          NOT NULL,
-    grading_job_id  VARCHAR(64)
+    grading_job_id  VARCHAR(64),
+    created_date    DATETIME,
+    created_by      VARCHAR(255)
 ) DUPLICATE KEY (file_id, row_no)
 PARTITION BY (file_id)
 DISTRIBUTED BY HASH(row_no) BUCKETS 1

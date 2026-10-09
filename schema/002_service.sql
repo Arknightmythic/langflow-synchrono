@@ -26,7 +26,9 @@ CREATE TABLE IF NOT EXISTS ${SERVICE}grading_jobs (
     created_at          DATETIME       NOT NULL,
     started_at          DATETIME,
     finished_at         DATETIME,
-    heartbeat_at        DATETIME
+    heartbeat_at        DATETIME,
+    created_date        DATETIME,
+    created_by          VARCHAR(255)
 ) PRIMARY KEY (job_id)
 DISTRIBUTED BY HASH(job_id) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
@@ -44,7 +46,9 @@ CREATE TABLE IF NOT EXISTS ${SERVICE}grade_criteria (
     min_nik_trusted   DOUBLE,
     active            BOOLEAN      NOT NULL,
     updated_at        DATETIME,
-    updated_by        VARCHAR(255)
+    updated_by        VARCHAR(255),
+    created_date      DATETIME,
+    created_by        VARCHAR(255)
 ) PRIMARY KEY (grade_id)
 DISTRIBUTED BY HASH(grade_id) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
@@ -56,7 +60,9 @@ CREATE TABLE IF NOT EXISTS ${SERVICE}grade_bands (
     score_max            INT           NOT NULL,
     severity_label       VARCHAR(64)   NOT NULL,
     can_proceed          BOOLEAN       NOT NULL,
-    criteria_description VARCHAR(1024)
+    criteria_description VARCHAR(1024),
+    created_date         DATETIME,
+    created_by           VARCHAR(255)
 ) PRIMARY KEY (grade_id)
 DISTRIBUTED BY HASH(grade_id) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
@@ -73,7 +79,9 @@ CREATE TABLE IF NOT EXISTS ${SERVICE}grade_rules (
     name_cleaning        JSON,
     date_match           VARCHAR(16),
     updated_at           DATETIME,
-    updated_by           VARCHAR(255)
+    updated_by           VARCHAR(255),
+    created_date         DATETIME,
+    created_by           VARCHAR(255)
 ) PRIMARY KEY (grade_code)
 DISTRIBUTED BY HASH(grade_code) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
@@ -81,7 +89,9 @@ PROPERTIES ("replication_num" = "${REPLICATION}");
 CREATE TABLE IF NOT EXISTS ${SERVICE}matching_queries (
     grade_code  INT          NOT NULL,
     blocking    JSON         NOT NULL,
-    description VARCHAR(1024)
+    description VARCHAR(1024),
+    created_date DATETIME,
+    created_by   VARCHAR(255)
 ) PRIMARY KEY (grade_code)
 DISTRIBUTED BY HASH(grade_code) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
@@ -90,7 +100,9 @@ CREATE TABLE IF NOT EXISTS ${SERVICE}engine_config (
     config_key VARCHAR(128) NOT NULL,
     value      JSON,
     updated_at DATETIME,
-    updated_by VARCHAR(255)
+    updated_by VARCHAR(255),
+    created_date DATETIME,
+    created_by   VARCHAR(255)
 ) PRIMARY KEY (config_key)
 DISTRIBUTED BY HASH(config_key) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
@@ -98,7 +110,9 @@ PROPERTIES ("replication_num" = "${REPLICATION}");
 CREATE TABLE IF NOT EXISTS ${SERVICE}config_versions (
     version    VARCHAR(16) NOT NULL,
     content    JSON,
-    first_used DATETIME
+    first_used DATETIME,
+    created_date DATETIME,
+    created_by   VARCHAR(255)
 ) PRIMARY KEY (version)
 DISTRIBUTED BY HASH(version) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
@@ -111,7 +125,9 @@ CREATE TABLE IF NOT EXISTS ${SERVICE}masters (
     load_ms    BIGINT,
     detail     JSON,
     error      VARCHAR(4096),
-    updated_at DATETIME
+    updated_at DATETIME,
+    created_date DATETIME,
+    created_by   VARCHAR(255)
 ) PRIMARY KEY (master_id)
 DISTRIBUTED BY HASH(master_id) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
@@ -123,7 +139,9 @@ CREATE TABLE IF NOT EXISTS ${SERVICE}config_history (
     scope      VARCHAR(10)  NOT NULL,
     grade_id   INT,
     changes    JSON,
-    version    VARCHAR(16)
+    version    VARCHAR(16),
+    created_date DATETIME,
+    created_by   VARCHAR(255)
 ) PRIMARY KEY (id)
 DISTRIBUTED BY HASH(id) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
@@ -136,7 +154,9 @@ CREATE TABLE IF NOT EXISTS ${SERVICE}reasoning_patterns (
     sample_id         VARCHAR(1024),
     hit_count         BIGINT,
     created_at        DATETIME,
-    updated_at        DATETIME
+    updated_at        DATETIME,
+    created_date      DATETIME,
+    created_by        VARCHAR(255)
 ) PRIMARY KEY (pattern_hash)
 DISTRIBUTED BY HASH(pattern_hash) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");
@@ -152,7 +172,9 @@ CREATE TABLE IF NOT EXISTS ${SERVICE}service_api_keys (
     last_used_at DATETIME,
     total_uses   BIGINT,
     is_active    BOOLEAN      NOT NULL,
-    expires_at   DATETIME
+    expires_at   DATETIME,
+    created_date DATETIME,
+    created_by   VARCHAR(255)
 ) PRIMARY KEY (id)
 DISTRIBUTED BY HASH(id) BUCKETS 1
 PROPERTIES ("replication_num" = "${REPLICATION}");

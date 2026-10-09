@@ -58,6 +58,9 @@ DB = env("DB_STARROCK", "syncrono_starrock")
 DB_MASTER = env("DB_MASTER", "syncrono_master")
 P_SERVICE, P_KL, P_PORTAL = "syncrono_service_", "syncrono_kl_", "syncrono_portal_"
 T_SERVICE, T_KL, T_PORTAL = f"{DB}.{P_SERVICE}", f"{DB}.{P_KL}", f"{DB}.{P_PORTAL}"
+# Drop a file's K/L rows once its matching job is done (background task kl.release); a later
+# matching job loads them again from enriched.parquet. false keeps them.
+KL_DROP_AFTER_MATCHING = env_flag("KL_DROP_AFTER_MATCHING", True)
 
 S3_ENDPOINT = env("S3_ENDPOINT", "seaweedfs:8333")
 S3_KEY = env("S3_ACCESS_KEY", "synchrono")

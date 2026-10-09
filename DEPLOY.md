@@ -344,8 +344,46 @@ export MYSQL_PWD="$STARROCKS_PASSWORD"
 mysql -h127.0.0.1 -P9030 -uroot -e 'SELECT current_version()'
 ```
 
-FE/BE tidak dipasang sebagai service systemd: setelah reboot, jalankan lagi kedua
-`start_*.sh --daemon` di atas (dengan `JAVA_HOME` dan `ulimit` yang sama).
+Agar FE dan BE menyala sendiri setiap server boot, pasang `starrocks.service` (oneshot, sama
+dengan cara server kantor). Skripnya hanya menyalakan yang belum jalan, jadi aman dijalankan
+saat FE/BE sudah hidup:
+
+```bash
+cat > /opt/starrocks/start-all.sh <<'EOS'
+#!/bin/bash
+# FE lalu BE host ini, masing-masing hanya bila belum jalan (dipanggil starrocks.service).
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ulimit -n 655350
+pgrep -f com.starrocks.StarRocksFE >/dev/null || /opt/starrocks/fe/bin/start_fe.sh --daemon
+for i in $(seq 1 90); do (echo > /dev/tcp/127.0.0.1/9030) 2>/dev/null && break; sleep 2; done
+pgrep -f /opt/starrocks/be/lib/starrocks_be >/dev/null || /opt/starrocks/be/bin/start_be.sh --daemon
+EOS
+cat > /opt/starrocks/stop-all.sh <<'EOS'
+#!/bin/bash
+/opt/starrocks/be/bin/stop_be.sh
+/opt/starrocks/fe/bin/stop_fe.sh
+EOS
+chmod +x /opt/starrocks/start-all.sh /opt/starrocks/stop-all.sh
+cat > /etc/systemd/system/starrocks.service <<'EOS'
+[Unit]
+Description=StarRocks FE + BE (/opt/starrocks)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+LimitNOFILE=655350
+ExecStart=/opt/starrocks/start-all.sh
+ExecStop=/opt/starrocks/stop-all.sh
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
+EOS
+systemctl daemon-reload
+systemctl enable --now starrocks.service
+```
 
 **2. Kode, image, dan data** (`synchrono-service` dikunci ke commit fase 1, karena
 `make_master.py` harus menghasilkan master 20, 30, dan 100 juta yang sama persis)
@@ -446,8 +484,42 @@ CONF
 cd /opt/sr-uji/be
 export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 ulimit -n 655350
-taskset -c 8-23 ./bin/start_be.sh --daemon      # setelah reboot: jalankan lagi tiga baris ini
+taskset -c 8-23 ./bin/start_be.sh --daemon
 curl -s http://127.0.0.1:18040/varz | grep -E '^(enable_resource_group_bind_cpus|num_cores)='
+```
+
+Agar BE uji menyala sendiri setiap serverai boot, pasang unit terpisah `sr-uji-be.service`.
+`starrocks.service` milik StarRocks kantor tidak diubah.
+
+```bash
+cat > /opt/sr-uji/start-be.sh <<'EOS'
+#!/bin/bash
+# BE uji cluster 158 (bukan StarRocks kantor di /opt/starrocks); hanya bila belum jalan.
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+ulimit -n 655350
+cd /opt/sr-uji/be
+pgrep -f /opt/sr-uji/be/lib/starrocks_be >/dev/null || taskset -c 8-23 ./bin/start_be.sh --daemon
+EOS
+chmod +x /opt/sr-uji/start-be.sh
+cat > /etc/systemd/system/sr-uji-be.service <<'EOS'
+[Unit]
+Description=StarRocks BE uji untuk cluster 158 (/opt/sr-uji, bukan StarRocks kantor)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+LimitNOFILE=655350
+ExecStart=/opt/sr-uji/start-be.sh
+ExecStop=/opt/sr-uji/be/bin/stop_be.sh
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
+EOS
+systemctl daemon-reload
+systemctl enable --now sr-uji-be.service
 ```
 
 **2. Di 158: daftarkan, lalu cek jaringan dua arah**

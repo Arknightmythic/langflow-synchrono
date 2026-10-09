@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 def q(value) -> str:
@@ -44,3 +44,8 @@ def now() -> datetime:
 
 def now_text() -> str:
     return now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def now_wib_text() -> str:
+    """Wall-clock time in WIB (UTC+7) without a zone, for the audit column created_date."""
+    return (now() + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")

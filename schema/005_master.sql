@@ -34,7 +34,9 @@ CREATE TABLE IF NOT EXISTS ${DB_MASTER}.persons (
     prov_c          VARCHAR(255),
     kab_c           VARCHAR(255),
     kec_c           VARCHAR(255),
-    kel_c           VARCHAR(255)
+    kel_c           VARCHAR(255),
+    created_date    DATETIME,
+    created_by      VARCHAR(255)
 ) DUPLICATE KEY (master_id, nik)
 PARTITION BY (master_id)
 DISTRIBUTED BY HASH(nik) BUCKETS ${BUCKETS}
@@ -42,7 +44,9 @@ PROPERTIES ("replication_num" = "${REPLICATION}");
 
 CREATE TABLE IF NOT EXISTS ${DB_MASTER}.dictionary (
     element VARCHAR(32)  NOT NULL,
-    value   VARCHAR(512) NOT NULL
+    value   VARCHAR(512) NOT NULL,
+    created_date DATETIME,
+    created_by   VARCHAR(255)
 ) DUPLICATE KEY (element, value)
 DISTRIBUTED BY HASH(value) BUCKETS 4
 PROPERTIES ("replication_num" = "${REPLICATION}");
